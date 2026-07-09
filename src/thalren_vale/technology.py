@@ -23,6 +23,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 from .world   import world, BIOME_MAX, coast_score
 from .beliefs import add_belief, core_of, inh_cores, MAX_BELIEFS
+from .events import emit_event
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -312,7 +313,16 @@ def _complete_research(faction, tech: str, t: int, event_log: list) -> None:
     print(f"{sep}\n")
     msg = (f"Tick {t:04d}: 💡 TECH DISCOVERED: {faction.name} → "
            f"{tech.upper()} [{desc}]")
-    event_log.append(msg)
+    emit_event(
+        event_log,
+        tick=t,
+        event_type='tech_researched',
+        actor=faction.name,
+        target=tech,
+        detail=tech,
+        message=msg,
+        metadata={'branch': TECH_TREE[tech]['branch']},
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════

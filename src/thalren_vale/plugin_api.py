@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 if TYPE_CHECKING:
@@ -58,13 +59,26 @@ if TYPE_CHECKING:
 # SimulationBridge — read-only snapshot
 # ══════════════════════════════════════════════════════════════════════════
 
+@dataclass(frozen=True)
+class FactionSnapshot:
+    """Immutable public view of a faction at one simulation tick."""
+
+    name: str
+    members: tuple[str, ...]
+    shared_beliefs: tuple[str, ...]
+    territory: tuple[tuple[int, int], ...]
+    founded_tick: int
+    food_reserve: float
+    techs: tuple[str, ...]
+    is_settled: bool
+
+
 class SimulationBridge:
     """Immutable snapshot of simulation state passed to every plugin call.
 
     All properties are computed once at construction time from live module
-    state.  Plugins may read these freely; they cannot write back through
-    this object.  Mutating the underlying lists returned by ``active_factions``
-    or ``biome_map`` is undefined behaviour — treat them as read-only.
+    state. Plugins receive immutable copies; no live engine object crosses
+    this boundary.
     """
 
     def __init__(
@@ -78,16 +92,39 @@ class SimulationBridge:
         biome_max: dict,
         event_log: list,
     ) -> None:
-        # Snapshot scalars
-        self._tick       : int   = tick
-        self._pop        : int   = len(people)
-        self._pop_cap    : int   = pop_cap
-        self._biome_max  : dict  = biome_max   # reference; plugins must not mutate
-        # Snapshot references (plugins use these read-only)
-        self._people     : list  = people
-        self._factions   : list  = factions
-        self._world      : list  = world
-        self._event_log  : list  = event_log
+        self._tick = tick
+        self._pop = len(people)
+        self._pop_cap = pop_cap
+        self._biome_max = MappingProxyType({
+            biome: MappingProxyType(dict(resources))
+            for biome, resources in biome_max.items()
+        })
+        self._factions = tuple(
+            FactionSnapshot(
+                name=faction.name,
+                members=tuple(member.name for member in faction.members),
+                shared_beliefs=tuple(faction.shared_beliefs),
+                territory=tuple(tuple(tile) for tile in faction.territory),
+                founded_tick=faction.founded_tick,
+                food_reserve=float(faction.food_reserve),
+                techs=tuple(sorted(getattr(faction, 'techs', set()))),
+                is_settled=bool(faction.is_settled),
+            )
+            for faction in factions
+            if faction.members
+        )
+        self._world = tuple(
+            tuple(
+                MappingProxyType({
+                    key: (MappingProxyType(dict(value))
+                          if key == 'resources' else value)
+                    for key, value in tile.items()
+                })
+                for tile in row
+            )
+            for row in world
+        )
+        self._event_log = tuple(event_log[-20:])
 
     # ── Read-only properties ───────────────────────────────────────────────
 
@@ -107,22 +144,18 @@ class SimulationBridge:
         return self._pop_cap
 
     @property
-    def active_factions(self) -> list:
-        """Factions with at least one living member (read-only list)."""
-        return [f for f in self._factions if f.members]
+    def active_factions(self) -> tuple[FactionSnapshot, ...]:
+        """Immutable snapshots of factions with living members."""
+        return self._factions
 
     @property
-    def faction_names(self) -> list[str]:
+    def faction_names(self) -> tuple[str, ...]:
         """Names of all active factions."""
-        return [f.name for f in self.active_factions]
+        return tuple(f.name for f in self.active_factions)
 
     @property
-    def biome_map(self) -> list:
-        """The raw ``world`` grid list.  Shape: world[r][c] is a tile dict.
-
-        Tile keys: 'biome', 'resources', 'habitable', …
-        Do not modify tile dicts from within a plugin.
-        """
+    def biome_map(self) -> tuple:
+        """Immutable grid snapshot preserving mapping-style tile reads."""
         return self._world
 
     @property
@@ -131,31 +164,31 @@ class SimulationBridge:
         return len(self._world)
 
     @property
-    def habitable_tiles(self) -> list[tuple[int, int]]:
+    def habitable_tiles(self) -> tuple[tuple[int, int], ...]:
         """List of (r, c) coordinates that are currently habitable."""
         g = len(self._world)
-        return [
+        return tuple(
             (r, c)
             for r in range(g)
             for c in range(g)
             if self._world[r][c]['habitable']
-        ]
+        )
 
     @property
-    def recent_events(self) -> list[str]:
-        """Last 20 entries from the shared event log (read-only copy)."""
-        return list(self._event_log[-20:])
+    def recent_events(self) -> tuple[str, ...]:
+        """Immutable snapshot of the last 20 text events."""
+        return self._event_log
 
     def tile_biome(self, r: int, c: int) -> str:
         """Return the biome string for tile (r, c)."""
         return self._world[r][c]['biome']
 
-    def tile_resources(self, r: int, c: int) -> dict:
-        """Return a *copy* of the resource dict for tile (r, c)."""
-        return dict(self._world[r][c]['resources'])
+    def tile_resources(self, r: int, c: int):
+        """Return a read-only resource mapping for tile (r, c)."""
+        return self._world[r][c]['resources']
 
     def faction_by_name(self, name: str):
-        """Return the first Faction whose name matches *name*, or None."""
+        """Return the matching immutable faction snapshot, or None."""
         for f in self._factions:
             if f.name == name:
                 return f

@@ -10,6 +10,7 @@ from .world   import (world, grid_move,
                       SETTLEMENT_STORAGE_CAP,
                       coast_score, tile_is_sea)
 from .beliefs import core_of, inh_cores, LABELS, add_belief
+from .events import emit_event
 
 # module-level rivalry scores: {(name_a, name_b): int}  (names always sorted)
 RIVALRIES: dict = {}
@@ -197,7 +198,16 @@ def _announce(faction, t, event_log):
     print(f"Founded   : Tick {t:02d}")
     print(sep)
     names_str = ', '.join(m.name for m in faction.members)
-    event_log.append(f"Tick {t:02d}: FACTION — {faction.name} formed ({names_str})")
+    msg = f"Tick {t:02d}: FACTION — {faction.name} formed ({names_str})"
+    emit_event(
+        event_log,
+        tick=t,
+        event_type='faction_formed',
+        actor=faction.name,
+        detail=names_str,
+        message=msg,
+        metadata={'members': sorted(m.name for m in faction.members)},
+    )
 
 # ── Formation check (every 5 ticks) ──────────────────────────────────────────
 def check_faction_formation(people, factions, t, event_log):
@@ -535,7 +545,15 @@ def _try_found_settlement(faction, t, event_log):
     msg = (f"Tick {t:04d}: 🏰 SETTLEMENT FOUNDED — {faction.name} "
            f"raises walls at ({r},{c}){port_tag}  "
            f"[housing cap {s.housing_capacity}]")
-    event_log.append(msg)
+    emit_event(
+        event_log,
+        tick=t,
+        event_type='settlement_founded',
+        actor=faction.name,
+        detail=f'{r},{c}',
+        message=msg,
+        metadata={'position': [r, c], 'housing_capacity': s.housing_capacity},
+    )
     print(msg)
 
 
@@ -584,7 +602,16 @@ def _try_schism(faction, factions, t, event_log):
         print(f"{sep}\n")
         msg = (f"Tick {t:03d}: ⚡ SCHISM — {new_name} breaks from "
                f"{faction.name} ({ba} vs {bb})")
-        event_log.append(msg)
+        emit_event(
+            event_log,
+            tick=t,
+            event_type='schism',
+            actor=new_name,
+            target=faction.name,
+            detail=f'{ba} vs {bb}',
+            message=msg,
+            metadata={'members': sorted(gone)},
+        )
         return   # one schism per faction per check
 
 
@@ -622,7 +649,15 @@ def _merge_solo_factions(factions, t, event_log):
             merged.add(donor.name)
             msg = (f"Tick {t:03d}: \U0001f91d FACTION MERGE \u2014 "
                    f"{donor_m.name} ({donor.name}) joins {keeper.name}")
-            event_log.append(msg)
+            emit_event(
+                event_log,
+                tick=t,
+                event_type='merger',
+                actor=donor.name,
+                target=keeper.name,
+                detail=donor_m.name,
+                message=msg,
+            )
             print(msg)
             break
 
@@ -705,7 +740,15 @@ def _try_diplomatic_merge(factions, t, event_log):
         names_str = ', '.join(m.name for m in donor_members)
         msg = (f"Tick {t:04d}: \U0001f91d DIPLOMATIC MERGE — {donor.name} "
                f"unites with {keeper.name} ({names_str})")
-        event_log.append(msg)
+        emit_event(
+            event_log,
+            tick=t,
+            event_type='merger',
+            actor=donor.name,
+            target=keeper.name,
+            detail=names_str,
+            message=msg,
+        )
         print(msg)
 
 
@@ -841,7 +884,15 @@ def check_for_merger(factions, t, event_log):
         msg = (f"Tick {t:04d}: 🏛 MERGER — {donor.name} absorbed into "
                f"{keeper.name} ({names_str}) "
                f"[rep {_dip.get_rep(fa.name):+d}/{_dip.get_rep(fb.name):+d}]")
-        event_log.append(msg)
+        emit_event(
+            event_log,
+            tick=t,
+            event_type='merger',
+            actor=donor.name,
+            target=keeper.name,
+            detail=names_str,
+            message=msg,
+        )
         print(msg)
 
 

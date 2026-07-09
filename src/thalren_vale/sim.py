@@ -15,19 +15,29 @@ Layer architecture
   Layer 5 · combat      — war declarations, battles, alliances, tribute
   Layer 6 · technology  — research tree, passive bonuses, writing spread
   Layer 7 · diplomacy   — council votes, treaties, reputation, surrender
-  Layer 8 · mythology   — LLM narrative: chronicles, myths, epitaphs
+  Layer 8 · religion    — institutions, temples, priests, holy wars
+  Layer 9 · mythology   — LLM narrative: chronicles, myths, epitaphs
   Display               — per-tick render + periodic summaries
 """
+import os
+import sys
 
-import sys, time, re, random, pathlib, gc, threading, importlib, importlib.util, argparse
+# Force Python to recognize the 'src' directory as a root lookup path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+# Now change your import to an absolute import style:
+from thalren_vale import config
+import sys, time, re, random, pathlib, gc, threading, importlib, importlib.util, argparse, traceback
 from datetime import datetime
-from . import config
 from .plugin_api import (
     SimulationBridge, ThalrenPlugin, PluginCommand,
     SpawnInhabitants, AdjustResource,
 )
-sys.stdout.reconfigure(encoding='utf-8')
-
+from .state import SimulationState
+from .reproducibility import canonical_state_hash, write_run_manifest
+from .events import StructuredEventLog, emit_event
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 # ── Layer imports ──────────────────────────────────────────────────────────
 from .world       import (world, tick as _world_tick, GRID, BIOME_MAX,
                           grid_add, grid_remove, update_map_bounds,
@@ -38,6 +48,7 @@ from .inhabitants import (Inhabitant, do_tick, do_tick_preamble, do_tick_body,
                           procreation_lock)
 from .beliefs     import assign_beliefs, share_beliefs, add_belief
 from .factions    import check_faction_formation, faction_tick, Faction, _faction_name as _gen_faction_name
+from . import factions as factions_module
 from . import economy
 from . import combat
 from . import technology
@@ -50,19 +61,39 @@ from . import religion
 TICKS = config.TICKS
 
 # ── Shared simulation state ────────────────────────────────────────────────
-people:          list   = []
-factions:        list   = []
-all_dead:        list   = []
-event_log:       list   = []
-_loaded_plugins: list   = []   # ThalrenPlugin instances registered by load_plugins()
-era_summaries:   list   = []   # {'start_t', 'end_t', 'name', 'text'} — archived 100-tick windows
-_key_events_archive: list = []  # important events kept forever (never pruned), used by final_report
-_dead_factions:  list   = []   # defunct factions kept for reference
+state = SimulationState(
+    event_log=StructuredEventLog(),
+    active_wars=combat.active_wars,
+    war_history=combat.war_history,
+    rivalries=factions_module.RIVALRIES,
+    treaties=diplomacy._treaties,
+    treaty_log=diplomacy.treaty_log,
+    reputation=diplomacy._reputation,
+    faction_currencies=economy.faction_currencies,
+    faction_prices=economy.faction_prices,
+    price_history=economy.price_history,
+    trade_routes=economy.trade_routes,
+    raid_log=economy.raid_log,
+    scarcity_events=economy.scarcity_events,
+    religions=religion._religions,
+    holy_wars=religion._HOLY_WARS,
+)
+
+# Compatibility aliases while layer APIs migrate from module globals to state.
+people             = state.people
+factions           = state.factions
+all_dead           = state.all_dead
+event_log          = state.event_log
+_loaded_plugins    = state.loaded_plugins
+era_summaries      = state.era_summaries
+_key_events_archive = state.key_events_archive
+_dead_factions     = state.dead_factions
 _last_dynamic_t: int    = 0    # last tick with war / schism / faction-formation
 _event_log_fh:   object = None  # file handle used to flush pruned log lines to disk
 _disabled_layers: set   = set() # layers to skip (set from --disable-layer CLI arg)
 _run_seed:       int    = 0     # seed for current run (set in run())
 _run_condition:  str    = 'baseline'  # condition label for current run (set in run())
+_log_mode:       str    = 'full'      # full, summary, metrics_only, or off
 
 # ── Threading locks (Layer 1) ──────────────────────────────────────────────
 # _world_lock  : guards read-modify-write on world[r][c]['resources']
@@ -72,6 +103,38 @@ _LAYER1_THREADS = 4   # one per logical core (N95)
 _world_lock  = threading.Lock()
 _log_lock    = threading.Lock()
 _trade_lock  = threading.Lock()
+
+
+def reset_runtime_state() -> None:
+    """Reset all mutable stores that can leak across in-process runs."""
+    global _last_dynamic_t
+
+    for plugin in _loaded_plugins:
+        try:
+            plugin.on_unload()
+        except Exception:
+            pass
+    state.reset()
+    _last_dynamic_t = 0
+
+    combat._alliances.clear()
+    factions_module._ra_tracker = None
+
+    economy._last_shock_res = ''
+
+    diplomacy._faction_propose_cd.clear()
+    diplomacy._faction_break_cd.clear()
+    diplomacy._last_neg_tick.clear()
+    diplomacy._ra_tracker = None
+
+    mythology.chronicles.clear()
+    mythology.faction_myths.clear()
+    mythology.epitaphs.clear()
+    mythology._epitaphed.clear()
+    mythology._myth_last_t.clear()
+    mythology._last_chr_t = 0
+    mythology._llm_fired = False
+    display._FACT_ABBREV.clear()
 
 
 def _spawn(inh) -> None:
@@ -124,24 +187,116 @@ class _LogTee:
         self._buf  = ''
 
     def write(self, text: str) -> None:
-        self._log.write(text)
-        self._log.flush()
-        self._buf += text
-        while '\n' in self._buf:
-            line, self._buf = self._buf.split('\n', 1)
-            show = self.passthrough or (
-                any(kw in line for kw in self._SHOW)
-                and '\u2502' not in line   # skip box-border lines (│)
-            )
-            if show:
-                self._real.write(line + '\n')
-                self._real.flush()
+            # Check if the log file stream is still open before writing/flushing
+            if self._log and not getattr(self._log, 'closed', False):
+                try:
+                    self._log.write(text)
+                    self._log.flush()
+                except ValueError:
+                    pass  # Catch race condition if closed mid-operation
 
+            self._buf += text
+            while '\n' in self._buf:
+                line, self._buf = self._buf.split('\n', 1)
+                show = self.passthrough or (
+                    any(kw in line for kw in self._SHOW)
+                    and '\u2502' not in line   # skip box-border lines (│)
+                )
+                if show:
+                    # Also ensure the console stream is still open and writable
+                    if self._real and not getattr(self._real, 'closed', False):
+                        try:
+                            self._real.write(line + '\n')
+                            self._real.flush()
+                        except ValueError:
+                            pass
     def flush(self) -> None:
         self._log.flush()
 
     def fileno(self) -> int:          # lets sys.stderr etc. work
         return self._real.fileno()
+
+
+class _FilteredStdout:
+    """Drop routine simulation text while preserving selected diagnostics."""
+
+    _SUMMARY_SHOW = frozenset({
+        'Warning:',
+        'ERROR',
+        'Error',
+        '[Simulation interrupted',
+        'All inhabitants have perished',
+        'State hash:',
+        'Run manifest:',
+    })
+    _FATAL_SHOW = frozenset({
+        'ERROR',
+        'Error',
+        '[Simulation interrupted',
+        'Traceback',
+        'Fatal',
+    })
+
+    passthrough: bool = False
+
+    def __init__(self, real_stdout, mode: str):
+        self._real = real_stdout
+        self._mode = mode
+        self._buf = ''
+
+    def write(self, text: str) -> None:
+        self._buf += text
+        while '\n' in self._buf:
+            line, self._buf = self._buf.split('\n', 1)
+            if self._should_show(line):
+                self._real.write(line + '\n')
+                self._real.flush()
+
+    def _should_show(self, line: str) -> bool:
+        if self.passthrough:
+            return True
+        if self._mode == 'summary':
+            return any(token in line for token in self._SUMMARY_SHOW)
+        if self._mode in {'metrics_only', 'off'}:
+            return any(token in line for token in self._FATAL_SHOW)
+        return False
+
+    def flush(self) -> None:
+        if self._buf and self._should_show(self._buf):
+            self._real.write(self._buf)
+            self._real.flush()
+        self._buf = ''
+
+    def fileno(self) -> int:
+        return self._real.fileno()
+
+
+def _write_full_text() -> bool:
+    return _log_mode == 'full'
+
+
+def _write_summary_text() -> bool:
+    return _log_mode in {'full', 'summary'}
+
+
+def _write_structured_outputs() -> bool:
+    return True
+
+
+def _optional_output_policy(mode: str) -> dict:
+    optional = {
+        'full_text_log': mode == 'full',
+        'manual_chronicle': mode == 'full',
+        'era_export': mode == 'full',
+        'dashboard_snapshot': mode == 'full',
+        'per_tick_render': mode == 'full',
+        'console_progress': mode == 'full',
+        'final_text_report': mode in {'full', 'summary'},
+    }
+    return {
+        'written': [name for name, enabled in optional.items() if enabled],
+        'suppressed': [name for name, enabled in optional.items() if not enabled],
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -223,6 +378,19 @@ def inhabitants_layer(t: int) -> tuple[list, dict]:
     for d in deaths:
         grid_remove(d)   # evict from spatial partition before removing from list
         people.remove(d)
+        death_message = next(
+            (entry for entry in reversed(event_log) if d.name in entry),
+            f"Tick {t:04d}: {d.name} died",
+        )
+        emit_event(
+            event_log,
+            tick=t,
+            event_type='death',
+            actor=d.name,
+            detail=death_message,
+            message=death_message,
+            append_text=False,
+        )
     all_dead.extend(deaths)
     return deaths, prev_positions
 
@@ -292,15 +460,13 @@ def load_plugins() -> None:
     This function is idempotent: calling it again clears _loaded_plugins and
     re-scans, which allows in-process hot-reload if needed.
     """
-    global _loaded_plugins
-
     # Unload any previously registered plugins
     for plugin in _loaded_plugins:
         try:
             plugin.on_unload()
         except Exception:
             pass
-    _loaded_plugins = []
+    _loaded_plugins.clear()
 
     # Locate plugins/ relative to the package root
     pkg_root   = pathlib.Path(__file__).parent.parent.parent   # …/AI Sandbox (Refactored)/
@@ -376,10 +542,10 @@ def _execute_plugin_command(cmd: PluginCommand, t: int) -> None:
     All mutations go through the same helpers used by the rest of the engine
     so the spatial grid, POP_CAP, and resource caps are always respected.
     """
-    if isinstance(cmd, SpawnInhabitants):
+    if type(cmd) is SpawnInhabitants:
         _plugin_spawn_inhabitants(cmd, t)
 
-    elif isinstance(cmd, AdjustResource):
+    elif type(cmd) is AdjustResource:
         _plugin_adjust_resource(cmd, t)
 
     else:
@@ -525,8 +691,9 @@ def plugin_layer(t: int) -> None:
             continue
 
         for cmd in commands:
-            if not isinstance(cmd, PluginCommand):
-                print(f"[Plugin] {plugin.name!r} returned a non-PluginCommand object — ignored.")
+            if type(cmd) not in (SpawnInhabitants, AdjustResource):
+                print(f"[Plugin] {plugin.name!r} returned an unsupported "
+                      f"command type {type(cmd).__name__} — ignored.")
                 continue
             try:
                 _execute_plugin_command(cmd, t)
@@ -666,7 +833,20 @@ def procreation_layer(t: int) -> None:
             faction_tag = f" of {child.faction}" if child.faction else ""
             msg = (f"Tick {t:04d}: 🍼 BIRTH: {child.name} born to "
                    f"{pa.name} and {pb.name}{faction_tag}")
-            event_log.append(msg)
+            emit_event(
+                event_log,
+                tick=t,
+                event_type='birth',
+                actor=pa.name,
+                target=pb.name,
+                detail=child.name,
+                message=msg,
+                metadata={
+                    'child': child.name,
+                    'generation': child.generation,
+                    'faction': child.faction,
+                },
+            )
             print(msg)
 
 
@@ -912,7 +1092,13 @@ def world_event_layer(t: int) -> None:
                 msg = (f'Tick {t:04d}: 🎁 WORLD EVENT — FREE DISCOVERY '
                        f'({target.name} receives {gift.upper()})')
 
-    event_log.append(msg)
+    emit_event(
+        event_log,
+        tick=t,
+        event_type='world_event',
+        detail=msg,
+        message=msg,
+    )
     print(msg)
 
 
@@ -927,7 +1113,13 @@ def era_shift_layer(t: int) -> None:
             chunk['habitable'] = (chunk['resources']['water'] > 0
                                   and chunk['resources']['food']  > 0)
     msg = f'Tick {t:04d}: ══ A NEW ERA DAWNS ══  (tensions halved, lands refreshed)'
-    event_log.append(msg)
+    emit_event(
+        event_log,
+        tick=t,
+        event_type='era_shift',
+        detail=msg,
+        message=msg,
+    )
     print(msg)
 
 
@@ -1092,7 +1284,13 @@ def disruption_event_layer(t: int) -> None:
             else:
                 msg = f'Tick {t:04d}: ══ A PROPHET arrives but bears no name ══'
 
-    event_log.append(msg)
+    emit_event(
+        event_log,
+        tick=t,
+        event_type='stagnation_trigger',
+        detail=choice,
+        message=msg,
+    )
     print(msg)
 
 
@@ -1366,7 +1564,7 @@ def _classify_and_record_events(logger, t, new_entries):
 
 
 def run() -> None:
-    global _event_log_fh, TICKS, POP_CAP, _serial_mode, _disabled_layers, _run_seed, _run_condition
+    global _event_log_fh, TICKS, POP_CAP, _serial_mode, _disabled_layers, _run_seed, _run_condition, _log_mode
 
     # ── CLI argument parsing ────────────────────────────────────────────────
     _parser = argparse.ArgumentParser(
@@ -1381,7 +1579,8 @@ def run() -> None:
                          help='Turn off all anti-stagnation mechanisms')
     _parser.add_argument('--disable-layer', type=str, default='',
                          help='Comma-separated layers to skip '
-                              '(beliefs,factions,economy,combat,technology,diplomacy)')
+                              '(beliefs,factions,economy,combat,technology,'
+                              'diplomacy,religion,mythology)')
     _parser.add_argument('--faction-trust-threshold', type=int, default=None,
                          help='Override FACTION_TRUST_THRESHOLD')
     _parser.add_argument('--war-tension-threshold', type=int, default=None,
@@ -1394,29 +1593,26 @@ def run() -> None:
                          help='Override STARTING_INHABITANTS')
     _parser.add_argument('--enable-belief-tracking', action='store_true',
                          help='Enable Reverse Assimilation belief-composition logging')
-    _args, _extra = _parser.parse_known_args()
+    _parser.add_argument('--log-mode', choices=sorted(config.VALID_LOG_MODES),
+                         default='full',
+                         help='Output policy: full, summary, metrics_only, or off')
+    _args = _parser.parse_args()
 
-    # ── Apply parameter overrides ───────────────────────────────────────────
-    if _args.ticks is not None:
-        TICKS = _args.ticks
-        config.TICKS = _args.ticks
-    if _args.pop_cap is not None:
-        POP_CAP = _args.pop_cap
-        config.POP_CAP = _args.pop_cap
-    if _args.starting_pop is not None:
-        config.STARTING_INHABITANTS = _args.starting_pop
-    if _args.faction_trust_threshold is not None:
-        config.FACTION_TRUST_THRESHOLD = _args.faction_trust_threshold
-    if _args.war_tension_threshold is not None:
-        config.WAR_TENSION_THRESHOLD = _args.war_tension_threshold
-    if _args.belief_sharing_prob is not None:
-        config.BELIEF_SHARING_PROBABILITY = _args.belief_sharing_prob
+    # ── Validate and apply effective configuration ──────────────────────────
+    try:
+        _run_config = config.SimulationConfig.from_cli(_args)
+    except ValueError as exc:
+        _parser.error(str(exc))
+    _run_config.apply_legacy_globals()
+    TICKS = _run_config.ticks
+    POP_CAP = _run_config.population_cap
+    _disabled_layers = set(_run_config.disabled_layers)
+    _disable_antistag = not _run_config.anti_stagnation_enabled
+    _log_mode = _run_config.log_mode
 
-    if _args.disable_layer:
-        _disabled_layers = {s.strip() for s in _args.disable_layer.split(',')}
-    else:
-        _disabled_layers = set()
-    _disable_antistag = _args.disable_antistag
+    # A run may be invoked repeatedly by tests, notebooks, or experiment
+    # harnesses in the same interpreter. Start from a clean state every time.
+    reset_runtime_state()
 
     # ── Seed control ────────────────────────────────────────────────────────
     _seed_value = _args.seed if _args.seed is not None else random.randint(0, 999_999)
@@ -1425,11 +1621,9 @@ def run() -> None:
     random.seed(_seed_value)
     # Serial mode: guarantees reproducibility by eliminating thread PRNG interleaving
     _serial_mode = (_args.seed is not None)
+    _repro_config = _run_config.manifest_dict()
     # Regenerate the Perlin-noise world after seeding for reproducibility
     reseed_world()
-    # Reset per-run module-level state so reruns start clean
-    _key_events_archive.clear()
-
     # ── MetricsLogger initialisation ────────────────────────────────────────
     from .metrics import MetricsLogger
     _logger = MetricsLogger(seed=_seed_value, condition=_args.condition)
@@ -1445,22 +1639,40 @@ def run() -> None:
         _dip_mod._ra_tracker = _ra_tracker
         _fac_mod._ra_tracker = _ra_tracker
 
-    # ── Set up file logging ────────────────────────────────────────────────
-    pathlib.Path('logs').mkdir(exist_ok=True)
-    _ts       = datetime.now().strftime('%Y%m%d_%H%M%S')
-    _log_path = f'logs/run_{_args.condition}_seed_{_seed_value}_{_ts}.txt'
-    _log_fh   = open(_log_path, 'w', encoding='utf-8')
-    _event_log_fh = _log_fh   # expose to _prune_event_log for direct flush
-    _real     = sys.stdout
-    _tee      = _LogTee(_log_fh, _real)
-    sys.stdout    = _tee
-    mythology.init(_tee)
-    display.LOG_MODE = True
-
-    _real.write(f"Log → {_log_path}\n")
-    _real.write(f"Seed: {_seed_value}  Condition: {_args.condition}\n")
-    _real.write(f"Running {TICKS}-tick simulation  "
-                f"(wars / schisms / deaths show below)\n\n")
+    # ── Set up output policy ───────────────────────────────────────────────
+    _real = sys.stdout
+    _log_fh = None
+    _log_path = None
+    _stdout_proxy = None
+    _event_log_fh = None
+    if _write_full_text():
+        pathlib.Path('logs').mkdir(exist_ok=True)
+        _ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        _log_path = f'logs/run_{_args.condition}_seed_{_seed_value}_{_ts}.txt'
+        _log_fh = open(_log_path, 'w', encoding='utf-8')
+        _event_log_fh = _log_fh
+        _stdout_proxy = _LogTee(_log_fh, _real)
+        sys.stdout = _stdout_proxy
+        mythology.init(_stdout_proxy)
+        display.LOG_MODE = True
+        _real.write(f"Log → {_log_path}\n")
+        _real.write(f"Seed: {_seed_value}  Condition: {_args.condition}\n")
+        _real.write(f"Running {TICKS}-tick simulation  "
+                    f"(wars / schisms / deaths show below)\n\n")
+    else:
+        _stdout_proxy = _FilteredStdout(_real, _log_mode)
+        sys.stdout = _stdout_proxy
+        mythology.init(_stdout_proxy)
+        display.LOG_MODE = True
+        if _write_summary_text():
+            _real.write(
+                f"Seed: {_seed_value}  Condition: {_args.condition}  "
+                f"Log mode: {_log_mode}\n"
+            )
+            _real.write(
+                f"Running {TICKS}-tick simulation with structured outputs only "
+                f"plus final summary.\n\n"
+            )
 
     habitable = init_world()
     init_inhabitants(habitable)
@@ -1537,11 +1749,13 @@ def run() -> None:
 
             # ── Religion & Mythology ────────────────────────────────────────
             _t_rel_start = time.perf_counter()
-            religion_layer(t)
-            if config.MYTHOLOGY_ENABLED:
-                mythology_layer(t)
-            elif t % 50 == 0:
-                export_to_mythology_file(t)
+            if 'religion' not in _disabled_layers:
+                religion_layer(t)
+            if 'mythology' not in _disabled_layers:
+                if config.MYTHOLOGY_ENABLED:
+                    mythology_layer(t)
+                elif _write_full_text() and t % 50 == 0:
+                    export_to_mythology_file(t)
             _t_rel = (time.perf_counter() - _t_rel_start) * 1000
 
             # ── Map expansion (every 25 ticks) ───────────────────────────────────────
@@ -1554,9 +1768,11 @@ def run() -> None:
                              f'grid {_old}×{_old} → {_new}×{_new} '
                              f'(pop {len(people)})')
                     event_log.append(_emsg)
-                    print(_emsg)
+                    if _write_full_text():
+                        print(_emsg)
                 # Dashboard snapshot: piggyback on the same 25-tick cadence
-                if t % dashboard_bridge.DASHBOARD_WRITE_EVERY == 0:
+                if (_write_full_text()
+                        and t % dashboard_bridge.DASHBOARD_WRITE_EVERY == 0):
                     dashboard_bridge.write_dashboard_snapshot(
                         t, people, factions, _tick_times, event_log)
             _t_map = (time.perf_counter() - _t_map_start) * 1000
@@ -1579,7 +1795,20 @@ def run() -> None:
             # ── Metrics: classify events and record per-tick data ───────────
             _t_met_start = time.perf_counter()
             try:
-                _classify_and_record_events(_logger, t, _new_entries)
+                _new_typed_events = list(event_log.events)
+                _logger.record_simulation_events(_new_typed_events)
+                _key_events_archive.extend(
+                    event.message
+                    for event in _new_typed_events
+                    if event.message
+                )
+                _typed_messages = {event.message for event in _new_typed_events}
+                _legacy_entries = [
+                    entry for entry in _new_entries
+                    if entry not in _typed_messages
+                ]
+                _classify_and_record_events(_logger, t, _legacy_entries)
+                event_log.events.clear()
                 _logger.record_tick(
                     tick=t, world=world, inhabitants=people,
                     factions=factions, wars=combat.active_wars,
@@ -1604,7 +1833,7 @@ def run() -> None:
             _f_by_name = {f.name: f for f in factions}
             for _sp in list(people):
                 _sf = _f_by_name.get(_sp.faction) if _sp.faction else None
-                if _sf and len(_sf.members) == 1:
+                if not _disable_antistag and _sf and len(_sf.members) == 1:
                     if t % 10 == 0:                    # despair: -10 hp every 10 ticks → ~100 tick lifespan
                         _sp.health = max(0, _sp.health - 10)
                     if _sp.health <= 0:
@@ -1614,13 +1843,20 @@ def run() -> None:
                         _sf.members = []
                         _dmsg = (f'Tick {t:04d}: 💀 {_sp.name} ({_sp.faction}) '
                                  f'wasted away alone')
-                        event_log.append(_dmsg)
+                        emit_event(
+                            event_log,
+                            tick=t,
+                            event_type='death',
+                            actor=_sp.name,
+                            detail='wasted away alone',
+                            message=_dmsg,
+                        )
                         print(_dmsg)
             _t_solo = (time.perf_counter() - _t_solo_start) * 1000
 
             # ── World event every 200 ticks ─────────────────────────────────
             _t_we_start = time.perf_counter()
-            if t % 200 == 0:
+            if not _disable_antistag and t % 200 == 0:
                 world_event_layer(t)
             _t_we = (time.perf_counter() - _t_we_start) * 1000
 
@@ -1631,7 +1867,7 @@ def run() -> None:
 
             # ── Era shift every 500 ticks ───────────────────────────────────
             _t_era_start = time.perf_counter()
-            if t % 500 == 0:
+            if not _disable_antistag and t % 500 == 0:
                 era_shift_layer(t)
             _t_era = (time.perf_counter() - _t_era_start) * 1000
 
@@ -1640,7 +1876,8 @@ def run() -> None:
             if t % 50 == 0:
                 _prune_event_log(t)
                 _archive_dead_factions()
-                export_era_data(t)
+                if _write_full_text():
+                    export_era_data(t)
                 for p in people:
                     if len(p.memory) > 10:
                         p.memory = p.memory[-10:]
@@ -1650,10 +1887,14 @@ def run() -> None:
             _t_antistag_start = time.perf_counter()
             _active_fac_n = sum(1 for f in factions if f.members)
             _spawn_n      = 0
-            if len(people) < 20:
-                _spawn_n = max(_spawn_n, 5)
-            if _active_fac_n < 3:
-                _spawn_n = max(_spawn_n, 10)  # bigger wave when critically low
+            # Traveler waves are an anti-stagnation intervention. Evaluate
+            # them at the documented 40-tick cadence instead of every tick,
+            # and suppress them completely for ablation runs.
+            if not _disable_antistag and t % 40 == 0:
+                if len(people) < 20:
+                    _spawn_n = max(_spawn_n, 5)
+                if _active_fac_n < 3:
+                    _spawn_n = max(_spawn_n, 10)  # bigger wave when critically low
             if _spawn_n:
                 hab_now    = [(r, c) for r in range(GRID) for c in range(GRID)
                               if world[r][c]['habitable']]
@@ -1760,7 +2001,7 @@ def run() -> None:
             _t_antistag = (time.perf_counter() - _t_antistag_start) * 1000
 
             # ── Per-layer timing summary (every 50 ticks) ────────────────────
-            if t % 50 == 0:
+            if _write_full_text() and t % 50 == 0:
                 _t_total = (_t_world + _t_inh + _t_bel + _t_fac + _t_proc + 
                            _t_eco + _t_comb + _t_tech + _t_dip + _t_rel + 
                            _t_map + _t_dyn + _t_met + _t_solo + _t_we + 
@@ -1793,12 +2034,12 @@ def run() -> None:
             # ── Tick timing ─────────────────────────────────────────────────
             _elapsed = time.time() - _t0
             _tick_times.append(_elapsed)
-            if _elapsed > 120:
+            if _write_summary_text() and _elapsed > 120:
                 _real.write(f'  ⚠ Tick {t} slow: {_elapsed:.1f}s\n')
                 _real.flush()
 
             # ── Progress line (every tick for short runs, every 10 for long) ─
-            if t % _print_every == 0:
+            if _write_full_text() and t % _print_every == 0:
                 alive    = len(people)
                 facts    = sum(1 for f in factions if f.members)
                 wars     = len(combat.active_wars)
@@ -1810,7 +2051,7 @@ def run() -> None:
                 _real.flush()
 
             # ── Mini-summary every 100 ticks ────────────────────────────────
-            if t % 100 == 0:
+            if _write_full_text() and t % 100 == 0:
                 window  = _tick_times[-100:]
                 avg_t   = sum(window) / len(window) if window else 0
                 last_t  = _tick_times[-1] if _tick_times else 0
@@ -1827,9 +2068,10 @@ def run() -> None:
                 _real.flush()
 
             # ── Full tick render → log file only ────────────────────────────
-            display.render(t, people, deaths, event_log,
-                           winter, all_dead, factions)
-            if t % 25 == 0:
+            if _write_full_text():
+                display.render(t, people, deaths, event_log,
+                               winter, all_dead, factions)
+            if _write_full_text() and t % 25 == 0:
                 display.faction_summary(factions, t)
 
             if not people:
@@ -1840,6 +2082,51 @@ def run() -> None:
         print("\n\n[Simulation interrupted by user]\n")
 
     finally:
+        # Events emitted after the regular metrics phase on the final tick
+        # still need to reach the structured event CSV.
+        try:
+            if event_log.events:
+                _logger.record_simulation_events(list(event_log.events))
+                _key_events_archive.extend(
+                    event.message for event in event_log.events if event.message)
+                event_log.events.clear()
+        except Exception:
+            pass
+
+        # ── Reproducibility fingerprint and provenance manifest ────────────
+        try:
+            _state_hash = canonical_state_hash(state, world, _repro_config)
+            _manifest_path = write_run_manifest(
+                'data',
+                seed=_seed_value,
+                condition=_args.condition,
+                configuration=_repro_config,
+                state_hash=_state_hash,
+                execution_mode='serial' if _serial_mode else 'threaded',
+                log_mode=_log_mode,
+                required_outputs=[
+                    'metrics',
+                    'events',
+                    'beliefs',
+                    'run_summary',
+                    'run_manifest',
+                ],
+                optional_outputs=_optional_output_policy(_log_mode),
+            )
+            if _write_summary_text():
+                _real.write(f'State hash: {_state_hash}\n')
+                _real.write(f'Run manifest: {_manifest_path}\n')
+                _real.flush()
+        except Exception as exc:
+            if _log_mode != 'off':
+                _real.write(
+                    f'Warning: could not write reproducibility manifest: {exc}\n')
+                _real.flush()
+            _manifest_error_path = pathlib.Path('data') / (
+                f'run_manifest_{_args.condition}_seed_{_seed_value}.error.txt')
+            _manifest_error_path.write_text(
+                traceback.format_exc(), encoding='utf-8')
+
         # ── Metrics finalisation ────────────────────────────────────────────
         try:
             _logger.finalize(world, people, factions)
@@ -1853,25 +2140,36 @@ def run() -> None:
             except Exception:
                 pass
 
-        # Final report: passthrough so everything shows on terminal AND in log
-        _real.write('\n')
-        _tee.passthrough = True
-        display.final_report(people, all_dead, factions, event_log, TICKS,
-                             key_archive=_key_events_archive)
-        if config.MYTHOLOGY_ENABLED:
-            mythology.mythology_final_summary(factions, all_dead, TICKS, event_log, era_summaries)
-            time.sleep(2)   # flush iGPU shared memory after final narrative LLM job
-            gc.collect()    # reclaim memory after final LLM job
-        else:
-            # Write final chronicle entry and ensure the file is flushed and closed
-            export_to_mythology_file(TICKS)
-            _final_chronicle = f"manual_chronicle_{_run_condition}_seed_{_run_seed}.txt"
-            with open(_final_chronicle, "a", encoding="utf-8") as _mcf:
-                _mcf.write(f"\n{'=' * 60}\n  END OF SIMULATION — {TICKS} ticks total\n{'=' * 60}\n")
-                _mcf.flush()
+        if _write_summary_text():
+            # Final report: passthrough so everything shows on terminal and,
+            # in full mode, in the raw text log.
+            _real.write('\n')
+            _stdout_proxy.passthrough = True
+            display.final_report(people, all_dead, factions, event_log, TICKS,
+                                 key_archive=_key_events_archive)
+        if _write_full_text():
+            if 'mythology' in _disabled_layers:
+                pass
+            elif config.MYTHOLOGY_ENABLED:
+                mythology.mythology_final_summary(
+                    factions, all_dead, TICKS, event_log, era_summaries)
+                time.sleep(2)   # flush iGPU shared memory after final narrative LLM job
+                gc.collect()    # reclaim memory after final LLM job
+            else:
+                # Write final chronicle entry and ensure the file is flushed
+                # and closed.
+                export_to_mythology_file(TICKS)
+                _final_chronicle = (
+                    f"manual_chronicle_{_run_condition}_seed_{_run_seed}.txt")
+                with open(_final_chronicle, "a", encoding="utf-8") as _mcf:
+                    _mcf.write(
+                        f"\n{'=' * 60}\n  END OF SIMULATION — {TICKS} ticks total\n"
+                        f"{'=' * 60}\n")
+                    _mcf.flush()
         sys.stdout = _real
-        _log_fh.close()
-        print(f"\nFull log saved → {_log_path}")
+        if _log_fh is not None:
+            _log_fh.close()
+            print(f"\nFull log saved → {_log_path}")
 
 
 # ══════════════════════════════════════════════════════════════════════════

@@ -12,6 +12,7 @@ import os
 import time
 import tracemalloc
 from pathlib import Path
+from .events import EVENT_SCHEMA_VERSION
 
 
 class MetricsLogger:
@@ -61,7 +62,8 @@ class MetricsLogger:
         self._metrics_fh.flush()
 
         self._events_writer.writerow([
-            'seed', 'tick', 'event_type', 'actor', 'target', 'detail',
+            'event_schema_version', 'seed', 'tick', 'event_type',
+            'actor', 'target', 'detail',
         ])
         self._events_fh.flush()
 
@@ -266,7 +268,8 @@ class MetricsLogger:
         """
         try:
             self._events_writer.writerow([
-                self.seed, tick, event_type, actor, target, detail,
+                EVENT_SCHEMA_VERSION, self.seed, tick, event_type,
+                actor, target, detail,
             ])
             self._events_fh.flush()
 
@@ -311,6 +314,17 @@ class MetricsLogger:
 
         except Exception:
             pass
+
+    def record_simulation_events(self, events) -> None:
+        """Record typed engine events without parsing their display text."""
+        for event in events:
+            self.record_event(
+                event.tick,
+                event.event_type,
+                actor=event.actor,
+                target=event.target,
+                detail=event.detail,
+            )
 
     # ──────────────────────────────────────────────────────────────────────
     # Belief snapshots (every 100 ticks)

@@ -2,5 +2,5 @@
 # Licensed under the Polyform Noncommercial License 1.0.0
 """thalren_vale — Emergent AI Civilization Simulator package."""
 
-__version__ = "1.0.0"
+__version__ = "1.1.1"
 __author__  = "(KriaetvAspie / AspieTheBard)"

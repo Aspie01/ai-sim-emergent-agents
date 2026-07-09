@@ -22,6 +22,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 from .beliefs  import inh_cores, LABELS
 from .factions import RIVALRIES
+from .events import emit_event
 
 # Module-level RA tracker reference (set by sim.py when --enable-belief-tracking)
 _ra_tracker = None
@@ -262,7 +263,15 @@ def break_treaty(name_a: str, name_b: str, t: int,
 
     msg = (f"Tick {t:03d}: 💔 {name_a} broke treaty with {name_b} — "
            f"trust shattered across the land")
-    event_log.append(msg)
+    emit_event(
+        event_log,
+        tick=t,
+        event_type='treaty_broken',
+        actor=name_a,
+        target=name_b,
+        detail=tr['type'],
+        message=msg,
+    )
     print(msg)
 
     # Small tension spike from all other factions toward the treaty-breaker
@@ -292,7 +301,16 @@ def _sign_treaty(fa, fb, treaty_type: str, t: int, event_log: list) -> None:
 
     msg = (f"Tick {t:03d}: 📜 TREATY: {fa.name} and {fb.name} "
            f"sign {treaty_type} (expires tick {expires})")
-    event_log.append(msg)
+    emit_event(
+        event_log,
+        tick=t,
+        event_type='treaty_signed',
+        actor=fa.name,
+        target=fb.name,
+        detail=treaty_type,
+        message=msg,
+        metadata={'expires': expires},
+    )
     print(msg)
 
 

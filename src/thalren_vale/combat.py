@@ -20,6 +20,7 @@ from . import technology
 from . import diplomacy
 from . import religion
 from . import config
+from .events import emit_event
 
 # ══════════════════════════════════════════════════════════════════════════
 # Module-level state
@@ -189,7 +190,16 @@ def _check_war_declarations(active: list, t: int, event_log: list) -> None:
 
         msg = (f"Tick {t:03d}: ⚔ WAR DECLARED — {fa.name} vs {fb.name}  "
                f"[cause: {cause}]  (tension {tension})")
-        event_log.append(msg)
+        emit_event(
+            event_log,
+            tick=t,
+            event_type='war_declared',
+            actor=fa.name,
+            target=fb.name,
+            detail=cause,
+            message=msg,
+            metadata={'tension': tension},
+        )
         print(msg)
 
         # Mutual defense: auto-recruit any treaty-bound allies of the defender
@@ -580,7 +590,16 @@ def _end_war(war: War, outcome: str, t: int, event_log: list,
 
     msg = (f"Tick {t:03d}: 🏳 WAR ENDS — {war.attacker.name} vs {war.defender.name}  "
            f"[{outcome_str}]  (lasted {war.tick_count} ticks)")
-    event_log.append(msg)
+    emit_event(
+        event_log,
+        tick=t,
+        event_type='war_ended',
+        actor=war.attacker.name,
+        target=war.defender.name,
+        detail=outcome_str,
+        message=msg,
+        metadata={'duration': war.tick_count, 'outcome': outcome},
+    )
     print(msg)
 
     if winner_factions and loser_factions:

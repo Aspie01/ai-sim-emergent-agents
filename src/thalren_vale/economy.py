@@ -18,6 +18,7 @@ from .world        import world, GRID
 from .beliefs      import inh_cores, add_belief
 from .factions     import RIVALRIES
 from . import combat
+from .events import emit_event
 
 # ── Module-level state ─────────────────────────────────────────────────────
 faction_currencies: dict  = {}           # faction_name → {'name': str}
@@ -258,7 +259,16 @@ def _faction_raids(active, t, event_log):
         raid_log.append((t, raider.name, victim.name, haul_str))
         msg = (f"Tick {t:03d}: ⚔ RAID: {raider.name} plundered "
                f"{victim.name}'s territory — seized {haul_str} (+10 tension)")
-        event_log.append(msg)
+        emit_event(
+            event_log,
+            tick=t,
+            event_type='raid',
+            actor=raider.name,
+            target=victim.name,
+            detail=haul_str,
+            message=msg,
+            metadata={'haul': dict(haul)},
+        )
         print(msg)
         from . import diplomacy as _dip
         _dip.adjust_rep(raider.name, -1, 'raid', t)

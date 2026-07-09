@@ -1,4 +1,6 @@
 {
+    "schema_version": 1,
+    "experiment_id": "high-war-threshold-v1",
     "default_ticks": 10000,
     "conditions": [
         {

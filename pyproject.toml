@@ -1,17 +1,38 @@
 [build-system]
-requires      = ["setuptools>=42", "wheel"]
+requires      = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name        = "thalren-vale-simulation"
-version     = "1.1.1"
+dynamic     = ["version"]
 description = "Emergent AI Civilization Simulator"
 readme      = "README.md"
-license     = { file = "LICENSE" }
+license     = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 
 dependencies = [
     "noise",
+]
+
+[project.optional-dependencies]
+dashboard = [
+    "streamlit",
+    "streamlit-autorefresh",
+    "plotly",
+    "numpy",
+]
+analysis = [
+    "pandas",
+    "plotly",
+    "numpy",
+]
+dev = [
+    "pytest>=8,<10",
+    "build>=1.2,<2",
+    "twine>=5,<7",
+]
+all = [
     "streamlit",
     "streamlit-autorefresh",
     "pandas",
@@ -24,3 +45,11 @@ thalren-vale = "thalren_vale.sim:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "thalren_vale.__version__" }
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+norecursedirs = ["LLM-Wiki", "experiment_runs", ".git", ".venv", "build", "dist"]

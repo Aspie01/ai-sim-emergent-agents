@@ -1,5 +1,11 @@
 venv/
+.venv/
 __pycache__/
+.pytest_cache/
+build/
+*.egg-info/
+benchmarks/results/
+experiment_runs/
 *.pyc
 logs/
 .env
@@ -10,3 +16,6 @@ logs/
 !experiments.json
 data/*.csv
 !results.csv
+
+# Local nested LLM Wiki repository
+LLM-Wiki/

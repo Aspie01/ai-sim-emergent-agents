@@ -40,8 +40,8 @@ The full 100-run log archive (~12 GB, ~130 million lines) is archived on Zenodo:
 |------|-------|
 | Starting inhabitants | 30 |
 | Population cap | 1,000 (configurable) |
-| Simulation layers | 9 (0–8) |
-| Ticks per run | 10,000 (configurable) |
+| Simulation layers | 10 (0–9) |
+| Ticks per run | 5,000 (configurable) |
 | Terrain generation | Perlin noise (height + moisture + depth) |
 | Biomes | 6 — forest, plains, mountains, desert, coast, sea |
 | LLM mythology | Optional — disabled by default |
@@ -278,7 +278,7 @@ experiments.json         Experiment plan — WAR_TENSION_THRESHOLD sensitivity
 experiments_trust_sweep.json  Experiment plan — FACTION_TRUST_THRESHOLD sweep
 ```
 
-Each layer is a pure function over shared state. Layers 0–7 are deterministic Python. Layer 8 (mythology) is the only one that touches a network socket — disabled by default. The dashboard bridge writes once every 25 ticks via atomic `os.replace()`, so running the dashboard in parallel has no measurable impact on simulation speed.
+Layers 0–8 are deterministic Python. Layer 9 (mythology) is the only one that touches a network socket — disabled by default. The dashboard bridge writes once every 25 ticks via atomic `os.replace()`, so running the dashboard in parallel has no measurable impact on simulation speed.
 
 The terminal output is selectively filtered: only notable events (war declarations, births, deaths, treaties, tech discoveries, schisms, era shifts) appear live via a keyword filter. Full tick-by-tick detail goes to a timestamped log file in `logs/`.
 
@@ -298,7 +298,10 @@ The fastest way to run the simulation.
 
 ```
 pip install thalren-vale-simulation
-thalren-sim
+thalren-vale
+
+# Optional dashboard and analysis dependencies
+pip install "thalren-vale-simulation[dashboard,analysis]"
 ```
 
 ### Option B: By Source
@@ -312,11 +315,11 @@ python -m venv .venv
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # macOS / Linux
 
-# 3. Install dependencies
-pip install -r requirements.txt
+# 3. Install the package with optional dashboard and analysis tools
+pip install -e ".[dashboard,analysis]"
 
 # 4. Run the simulation
-python sim.py
+python -m thalren_vale
 ```
 
 ### Live Dashboard (optional, but recommended)
@@ -324,7 +327,7 @@ python sim.py
 Open a second terminal and run the dashboard while the simulation is running:
 
 ```bash
-streamlit run dashboard.py
+streamlit run src/thalren_vale/dashboard.py
 ```
 
 Then open **http://localhost:8501** in your browser. The world map, reputation graph, and event feed update automatically at 2 FPS as the simulation writes snapshots every 25 ticks.
@@ -357,6 +360,19 @@ Tick 500: 📅 NEW ERA DAWNS — The Age of Iron
 ```
 
 ---
+
+## Performance Benchmarks
+
+Run the controlled inhabitants-layer scaling benchmark across both execution modes:
+
+```bash
+python benchmarks/benchmark_simulation.py \
+  --populations 30,100,500,1000 \
+  --modes serial threaded \
+  --ticks 20
+```
+
+Results are written as JSON and CSV under `benchmarks/results/` by default. Each run records latency, throughput, traced peak memory, Python/platform details, seed, project version, Git revision, and dirty-worktree status. Use `--max-ms-per-tick` to enforce a regression threshold.
 
 ## Hardware
 
@@ -394,9 +410,9 @@ LLM_TEMPERATURE   = 0.7
 LLM_MAX_TOKENS    = 200         # default ceiling; overridden per call type
 ```
 
-In `sim.py`:
+In `config.py`:
 ```python
-TICKS = 10000   # Change to run shorter (300) or longer simulations
+DEFAULT_TICKS = 5000   # Override per run with --ticks
 ```
 
 In `dashboard_bridge.py`:
@@ -429,17 +445,28 @@ python -m thalren_vale --seed 42
 # Ablation: disable the combat layer
 python -m thalren_vale --seed 1 --disable-layer combat
 
+# Multiple layers; accepted values include religion and mythology
+python -m thalren_vale --seed 1 --disable-layer combat,religion,mythology
+
 # Parameter override: raise the war tension threshold
 python -m thalren_vale --seed 1 --war-tension-threshold 400
 
 # Batch run from an experiment plan
 python run_experiments.py --plan experiments.json
+
+# Continue only missing or invalid runs
+python run_experiments.py --plan experiments.json --resume
+
+# Validate an existing batch without running simulations
+python run_experiments.py --plan experiments.json --verify
 ```
 
 Experiment plans are JSON files specifying conditions, seed ranges, and extra CLI arguments:
 
 ```json
 {
+    "schema_version": 1,
+    "experiment_id": "war-threshold-v1",
     "default_ticks": 10000,
     "conditions": [
         {
@@ -450,6 +477,8 @@ Experiment plans are JSON files specifying conditions, seed ranges, and extra CL
     ]
 }
 ```
+
+Outputs are isolated under `experiment_runs/<experiment_id>/<condition>/seed_<N>/`. The runner refuses to reuse a non-empty experiment directory unless `--resume` or `--overwrite` is explicit. `experiment_manifest.json` records the plan hash, code revision, timestamps, commands, per-run state hashes, validation failures, and completion state; `run_index.csv` provides a flat analysis index.
 
 Each run produces:
 - Tick-level metrics CSV (`data/metrics_<condition>_seed_<N>.csv`)
@@ -556,15 +585,15 @@ The `bridge` object passed to `on_trigger` and `execute` is a **read-only snapsh
 | `bridge.current_tick` | `int` | Current tick number |
 | `bridge.total_population` | `int` | Number of living inhabitants |
 | `bridge.population_cap` | `int` | Hard ceiling from `config.POP_CAP` |
-| `bridge.active_factions` | `list[Faction]` | Factions with at least one member |
-| `bridge.faction_names` | `list[str]` | Names of all active factions |
-| `bridge.biome_map` | `list[list[dict]]` | Raw world grid — `biome_map[r][c]` is a tile dict |
+| `bridge.active_factions` | `tuple[FactionSnapshot, ...]` | Immutable snapshots of factions with at least one member |
+| `bridge.faction_names` | `tuple[str, ...]` | Names of all active factions |
+| `bridge.biome_map` | `tuple[tuple[Mapping, ...], ...]` | Immutable world snapshot — mapping-style reads remain supported |
 | `bridge.grid_size` | `int` | Current grid side-length |
-| `bridge.habitable_tiles` | `list[(int,int)]` | All `(r, c)` coordinates that are habitable |
-| `bridge.recent_events` | `list[str]` | Last 20 event log entries |
+| `bridge.habitable_tiles` | `tuple[(int,int), ...]` | All `(r, c)` coordinates that are habitable |
+| `bridge.recent_events` | `tuple[str, ...]` | Last 20 event log entries |
 | `bridge.tile_biome(r, c)` | `str` | Biome name at tile `(r, c)` |
-| `bridge.tile_resources(r, c)` | `dict` | **Copy** of resource dict at tile `(r, c)` |
-| `bridge.faction_by_name(name)` | `Faction \| None` | Look up a faction by name |
+| `bridge.tile_resources(r, c)` | `Mapping` | Read-only resources at tile `(r, c)` |
+| `bridge.faction_by_name(name)` | `FactionSnapshot \| None` | Look up an immutable faction snapshot by name |
 
 ### Optional lifecycle hooks
 
@@ -625,7 +654,7 @@ class Drought(ThalrenPlugin):
 - **Resources are clamped** — `AdjustResource` never sets a resource above its biome maximum or below zero.
 - **Invalid targets are silently rejected** — unknown resource keys and out-of-bounds tile coordinates are logged and skipped; the simulation continues.
 - **Exceptions are caught** — any unhandled exception inside `on_trigger` or `execute` is written to the event log and the simulation continues uninterrupted.
-- **Commands are the only write path** — plugins receive a read-only bridge. Directly mutating `bridge.biome_map` or `bridge.active_factions` is undefined behaviour and will not produce logged events.
+- **Commands are the only write path** — bridge snapshots are immutable and detached from engine state. Direct mutation raises an exception, and plugin-defined command subclasses are rejected.
 
 ---
 

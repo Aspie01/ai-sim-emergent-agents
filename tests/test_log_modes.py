@@ -98,3 +98,32 @@ def test_log_modes_preserve_final_state_hash(tmp_path):
         hashes[mode] = manifest["state_hash"]
 
     assert len(set(hashes.values())) == 1, hashes
+
+
+def test_cli_rejects_invalid_log_mode_clearly(tmp_path):
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "thalren_vale",
+            "--seed",
+            "777",
+            "--ticks",
+            "1",
+            "--log-mode",
+            "verbose",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "--log-mode" in result.stderr
+    assert "invalid choice" in result.stderr

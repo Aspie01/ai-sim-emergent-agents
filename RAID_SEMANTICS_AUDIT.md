@@ -1,112 +1,90 @@
 # Raid Semantics Audit
 
-Question: `no_combat` recorded 5,513,353 `raid` events despite 0 wars. Are raids combat-adjacent, should they be suppressed under `--disable-layer combat`, and are they responsible for the no-combat event/log explosion?
+Status: **needs-audit**
 
-## Findings
+Date: 2026-07-09
 
-Raids are generated in the economy layer, not the combat layer.
+Dataset: `core-replication-v1` (15/15 final runs validated)
 
-Relevant code:
+## Conclusion
 
-- `src/thalren_vale/economy.py`
-  - `_faction_raids(active, t, event_log)`
-  - Called from `economy_tick(...)` when `len(active) >= 2`
-- `src/thalren_vale/sim.py`
-  - `economy_layer(t)` runs when `economy` is not disabled.
-  - `combat_layer(t)` is skipped when `combat` is disabled.
-- `src/thalren_vale/technology.py`
-  - Martial technology affects `raid_multiplier(faction)`.
-- `src/thalren_vale/combat.py`
-  - Combat logic can treat prior raids as a war/vengeance context.
+Raids are **combat-adjacent economic coercion with diplomatic effects**. They are not formal wars or battles, but they are not neutral faction interactions either. The current `--disable-layer combat` switch narrowly disables `combat.combat_tick()` and intentionally leaves the economy layer running, so raids still occur under the `no_combat` condition.
 
-The current `--disable-layer combat` behavior only suppresses `combat.combat_tick(...)`. It does not suppress economy-layer raids.
+This is not clearly an implementation bug. It is an experimental-semantics ambiguity: “no combat” can mean either “no formal battle/war system” or “no hostile coercive interaction.” The completed pilot implements the first meaning.
 
-## What a raid does
+## Generation and classification path
 
-In `_faction_raids(...)`, each active faction pair is eligible when rivalry/tension is above the threshold. A raid:
+Raids originate in `src/thalren_vale/economy.py`:
 
-1. Selects a raider and victim faction.
-2. Picks a tile from the victim's territory.
-3. Steals a percentage of trade resources from that world tile.
-4. Adds the stolen resources to a random raider member's inventory.
-5. Adds the `the_strong_take` belief to that raider member.
-6. Increases pair rivalry/tension by `+10`.
-7. Emits a typed `raid` event.
-8. Prints a legacy text log message in full logging mode.
-9. Lowers raider diplomatic reputation.
-10. Breaks an existing treaty between the raider and victim, if present.
+1. `sim.economy_layer()` calls `economy.economy_tick()` unless the `economy` layer is disabled.
+2. `economy_tick()` calls `_faction_raids()` every tick when at least two active factions exist.
+3. `_faction_raids()` iterates every active faction pair.
+4. A pair is eligible when its rivalry/tension is greater than 35.
+5. Each eligible pair has a 20% raid attempt probability per tick.
+6. A successful raid emits a typed `raid` event and a legacy message.
 
-Raids do not directly kill inhabitants and do not directly apply health damage. They are not war declarations or battles. They are hostile economic actions with diplomatic and tension side effects.
+The combat-layer gate in `src/thalren_vale/sim.py` wraps only `combat_layer(t)`. No raid gate consults `_disabled_layers` for `combat`. A stale economy comment said raids required tension above 50; it was corrected to match the existing `>35` implementation without changing behavior.
 
-## Classification
+Combat code consumes raid history as context: prior raids can motivate alliance recruitment and vengeance. Martial technology can multiply raid loot. These links make the feature combat-adjacent even though its producer is the economy layer.
 
-Raids are best classified as combat-adjacent economy/diplomacy events.
+## State effects of one raid
 
-They are not generic neutral faction interactions:
+A successful raid:
 
-- The event text uses a combat symbol and "RAID".
-- They represent hostile plunder.
-- They increase rivalry/tension.
-- They can break treaties.
-- Martial technology increases raid loot.
-- Combat logic can later interpret raids as a cause/context for conflict.
+- removes 20% of available food, wood, ore, and stone from a randomly selected victim-territory tile, multiplied by the raider’s technology modifier;
+- adds the haul to one raider member’s inventory;
+- adds the `the_strong_take` belief to that member;
+- increases pair tension by 10;
+- lowers the raider’s diplomatic reputation by 1;
+- breaks an existing treaty between raider and victim, with the normal treaty-break reputation and third-party tension effects;
+- appends raid history and emits one typed event plus one full-mode text message.
 
-But they are also not the same as combat-layer wars:
+A raid does **not** directly reduce health, kill an inhabitant, start a war, resolve a battle, remove territory, or dissolve a faction. Resource removal can indirectly affect later hunger, scarcity, faction viability, diplomacy, and population outcomes.
 
-- They are generated entirely in `economy.py`.
-- They do not create active wars.
-- They do not invoke battle resolution.
-- They do not directly kill inhabitants.
+## Event-volume evidence
 
-## Are raids causing most of the no-combat event/log explosion?
+The lightweight `experiment_runs/core-replication-v1/analysis/event_type_counts.csv` gives:
 
-Yes.
+| Condition | Raid events | All structured events | Raid share |
+|---|---:|---:|---:|
+| baseline | 25,303 | 65,997 | 38.340% |
+| no_antistag | 20,174 | 43,978 | 45.873% |
+| no_combat | 5,513,353 | 5,559,667 | 99.167% |
 
-From `experiment_runs/core-replication-v1/analysis/event_type_counts.csv`, no-combat produced:
+No-combat raid counts by seed were 1,186,499; 1,234,028; 1,236,116; 953,037; and 903,673.
 
-- Total structured events: 5,559,667
-- Raid events: 5,513,353
-- Raid share: about 99.17%
+Raids therefore account for nearly all of the no-combat structured-event explosion. Because each raid also prints a full-mode message, they are very likely the dominant semantic source of raw-text growth, although this audit deliberately did not parse the multi-GB logs by event type.
 
-So raids are the dominant source of the no-combat structured event explosion and, in full logging mode, the dominant source of raw text expansion.
+The volume is structurally plausible rather than a legacy-parser duplication: typed event messages are excluded from text reclassification in `sim.py`, and a short-run duplicate-key check found no duplicate raid rows. The principal scaling risk is `_faction_raids()` iterating all faction pairs every tick. With hundreds of active factions, candidate work grows approximately with the square of faction count, and the code has no per-pair cooldown or global raid budget.
 
-## Should `--disable-layer combat` suppress raids?
+## Should no-combat suppress raids?
 
-Not automatically, without a design decision.
+Do not silently redefine `--disable-layer combat`. That would invalidate comparisons with `core-replication-v1` and collapse two distinct causal factors.
 
-There are two defensible interpretations:
+Use explicit semantics instead:
 
-1. Narrow interpretation: `no_combat` means no formal combat layer, no wars, no battles, no alliance calls, no surrender/tribute war resolution. Under this interpretation, economy-layer raids remain valid because they are economic predation rather than war.
-2. Broad interpretation: `no_combat` means no hostile inter-faction violence or coercive plunder. Under this interpretation, raids should be disabled, reclassified, or controlled by a separate layer flag.
+- Preserve `combat` as formal war/battle resolution for backward compatibility.
+- Add a separate future control such as `--disable-layer raids` or `--disable-raids`.
+- Describe the existing pilot condition as **formal combat disabled; economic raids enabled**.
+- For a clean causal design, use a 2×2 combat × raids experiment rather than treating the current condition as complete removal of hostility.
 
-The current behavior matches the narrow interpretation. It is not clearly a code bug, but it is a major experimental-design ambiguity.
+## Rename, reclassify, throttle, aggregate, or leave alone?
 
-## Recommendation
+- **Rename:** keep event type `raid` for backward compatibility. A schema-versioned future event may use `economic_raid`, but a silent rename would break existing analysis.
+- **Reclassify:** add explicit metadata such as `domain: economy`, `hostility: coercive`, and `combat_adjacent: true` in a future event-schema revision.
+- **Suppress:** only behind a separate explicit raid control, not automatically under the existing combat flag.
+- **Throttle simulation behavior:** do not do this without a dedicated research design; cooldowns or budgets would change dynamics.
+- **Aggregate output:** recommended for human-readable logs. Preserve exact structured events when needed, but summarize text by tick or faction pair.
+- **Buffer structured writes:** investigate next. `MetricsLogger.record_event()` currently flushes after each event, so millions of raids create substantial structured-I/O overhead even in `metrics_only` mode.
 
-Do not silently change `--disable-layer combat` semantics yet. That would alter the meaning of the completed `core-replication-v1` dataset.
+## Safest next experiment
 
-Recommended next implementation:
+Before any long replication, run a clean, post-determinism-fix, metrics-only pilot:
 
-1. Add a separate switch or layer:
-   - `--disable-layer raids`, or
-   - `--disable-raids`
-2. Rename or subtype the event for clarity:
-   - Keep event type `raid` for backward compatibility, but add metadata such as `"domain": "economy"` and `"combat_adjacent": true`, or
-   - Introduce `economic_raid` in a schema-versioned event migration.
-3. Add a new short ablation before any long replication:
-   - `no_combat`
-   - `no_combat_no_raids`
-   - seed 1
-   - 100, 250, 500, 1000 ticks
-   - metrics-only logging
-4. Consider aggregating high-frequency raid events in raw text output:
-   - Keep structured event rows if needed for research.
-   - In text logs, summarize per tick or per faction pair instead of printing every raid.
+- conditions: combat on/raids on, combat off/raids on, combat on/raids off, combat off/raids off;
+- 2–3 seeds;
+- 100 and 250 ticks first;
+- collect elapsed time, raid attempts/successes, structured events, population, factions, resource totals, and state hashes;
+- extend to 500 ticks only if individual cells remain below the agreed runtime limit.
 
-## Research implication
-
-The completed no-combat result should be described carefully:
-
-> Disabling the combat layer prevented formal wars but left economy-layer raids active. In no-combat runs, raids became the overwhelming majority of structured events. Therefore the observed no-combat slowdown and output growth combine at least three factors: larger surviving populations, many more active factions, and unbounded hostile economic raid logging/events.
-
-This is stronger and more accurate than saying no-combat is slower purely because of emergent complexity.
+That design separates formal combat, economic coercion, logging volume, and faction-count scaling without rewriting the meaning of the validated pilot.

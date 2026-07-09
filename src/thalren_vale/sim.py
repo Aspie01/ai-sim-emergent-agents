@@ -94,6 +94,7 @@ _disabled_layers: set   = set() # layers to skip (set from --disable-layer CLI a
 _run_seed:       int    = 0     # seed for current run (set in run())
 _run_condition:  str    = 'baseline'  # condition label for current run (set in run())
 _log_mode:       str    = 'full'      # full, summary, metrics_only, or off
+_serial_mode:    bool   = False       # seeded runs avoid shared-PRNG thread races
 
 # ── Threading locks (Layer 1) ──────────────────────────────────────────────
 # _world_lock  : guards read-modify-write on world[r][c]['resources']
@@ -336,13 +337,14 @@ def world_layer(t: int, winter_just_ended: bool) -> None:
 
 
 def inhabitants_layer(t: int) -> tuple[list, dict]:
-    """Layer 1: move, eat, gather, trust — processed across 4 threads.
+    """Layer 1: move, eat, gather, and update trust.
 
     Execution order:
       1. Serial preamble  (shuffle, crowd-control, trust-pruning) in main thread.
-      2. Split population into _LAYER1_THREADS chunks.
-      3. Spawn one threading.Thread per chunk; each calls process_inhabitants_chunk.
-      4. Main thread joins all workers before returning.
+      2. Seeded runs process the shuffled population serially so the shared
+         random-number generator is consumed in a deterministic order.
+      3. Unseeded interactive runs split the population across worker threads.
+      4. Main thread joins any workers before returning.
       5. Dead inhabitants collected from all buckets, removed from people list.
     """
     prev_positions = {p.name: (p.r, p.c) for p in people}
@@ -350,28 +352,36 @@ def inhabitants_layer(t: int) -> tuple[list, dict]:
     # ─ 1. Serial preamble ──────────────────────────────────────────────
     do_tick_preamble(people, t)
 
-    # ─ 2. Split population into chunks ──────────────────────────────────
-    n        = len(people)
-    size     = max(1, (n + _LAYER1_THREADS - 1) // _LAYER1_THREADS)
-    chunks   = [people[i: i + size] for i in range(0, n, size)]
+    if _serial_mode:
+        # Python's module-level PRNG is shared process-wide. Even with locks
+        # around world and inventory writes, worker scheduling changes which
+        # inhabitant receives each random draw. Seeded research runs therefore
+        # execute this layer on the calling thread.
+        dead_buckets: list[list] = [[]]
+        process_inhabitants_chunk(people, people, t, dead_buckets[0])
+    else:
+        # ─ 2. Split population into chunks ──────────────────────────────
+        n        = len(people)
+        size     = max(1, (n + _LAYER1_THREADS - 1) // _LAYER1_THREADS)
+        chunks   = [people[i: i + size] for i in range(0, n, size)]
 
-    # ─ 3. One dead-bucket + one thread per chunk ────────────────────────
-    dead_buckets: list[list] = [[] for _ in chunks]
-    threads: list[threading.Thread] = [
-        threading.Thread(
-            target=process_inhabitants_chunk,
-            args=(chunk, people, t, bucket),
-            daemon=True,
-        )
-        for chunk, bucket in zip(chunks, dead_buckets)
-    ]
+        # ─ 3. One dead-bucket + one thread per chunk ────────────────────
+        dead_buckets = [[] for _ in chunks]
+        threads: list[threading.Thread] = [
+            threading.Thread(
+                target=process_inhabitants_chunk,
+                args=(chunk, people, t, bucket),
+                daemon=True,
+            )
+            for chunk, bucket in zip(chunks, dead_buckets)
+        ]
 
-    for th in threads:
-        th.start()
+        for th in threads:
+            th.start()
 
-    # ─ 4. Wait for all workers ───────────────────────────────────────────
-    for th in threads:
-        th.join()
+        # ─ 4. Wait for all workers ───────────────────────────────────────
+        for th in threads:
+            th.join()
 
     # ─ 5. Collect deaths and update people list ────────────────────────
     deaths: list = [d for bucket in dead_buckets for d in bucket]

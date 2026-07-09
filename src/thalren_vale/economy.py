@@ -392,7 +392,7 @@ def economy_tick(people, factions, t, event_log):
     if t % 3 == 0 and len(active) >= 2:
         _faction_trade(active, t, event_log)
 
-    # 6. Raiding (tension > 50)
+    # 6. Raiding (tension > 35; see _faction_raids)
     if len(active) >= 2:
         _faction_raids(active, t, event_log)
 

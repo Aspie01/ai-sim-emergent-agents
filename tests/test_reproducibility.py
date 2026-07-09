@@ -6,9 +6,44 @@ import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_seeded_layer_one_does_not_spawn_worker_threads(monkeypatch):
+    from thalren_vale import sim
+
+    person = SimpleNamespace(name="A", r=2, c=3)
+    calls = []
+
+    monkeypatch.setattr(sim, "people", [person])
+    monkeypatch.setattr(sim, "all_dead", [])
+    monkeypatch.setattr(sim, "_serial_mode", True)
+    monkeypatch.setattr(sim, "do_tick_preamble", lambda people, tick: None)
+    monkeypatch.setattr(
+        sim,
+        "process_inhabitants_chunk",
+        lambda inhabitants, all_people, tick, bucket: calls.append(
+            (list(inhabitants), all_people, tick, bucket)
+        ),
+    )
+
+    class ForbiddenThread:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("serial mode must not construct worker threads")
+
+    monkeypatch.setattr(sim.threading, "Thread", ForbiddenThread)
+
+    deaths, previous_positions = sim.inhabitants_layer(7)
+
+    assert deaths == []
+    assert previous_positions == {"A": (2, 3)}
+    assert len(calls) == 1
+    assert calls[0][0] == [person]
+    assert calls[0][1] is sim.people
+    assert calls[0][2] == 7
 
 
 def test_canonical_serializer_handles_runtime_container_types():

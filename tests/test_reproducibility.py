@@ -62,7 +62,9 @@ def test_canonical_serializer_handles_runtime_container_types():
     assert converted["route"] == ["A", "B"]
 
 
-def run_and_read_manifest(run_dir: Path, seed: int) -> dict:
+def run_and_read_manifest(
+    run_dir: Path, seed: int, extra_args: tuple[str, ...] = ()
+) -> dict:
     run_dir.mkdir()
     env = os.environ.copy()
     env["PYTHONHASHSEED"] = "0"
@@ -79,6 +81,9 @@ def run_and_read_manifest(run_dir: Path, seed: int) -> dict:
             "--condition",
             "repro",
             "--disable-antistag",
+            "--log-mode",
+            "metrics_only",
+            *extra_args,
         ],
         cwd=run_dir,
         env=env,
@@ -100,6 +105,17 @@ def test_same_seed_has_same_hash_across_processes(tmp_path):
     assert first["state_hash"] == second["state_hash"]
     assert first["configuration"] == second["configuration"]
     assert first["execution_mode"] == second["execution_mode"] == "serial"
+
+
+def test_raid_disabled_runs_are_deterministic_and_record_policy(tmp_path):
+    extra_args = ("--disable-raids",)
+    first = run_and_read_manifest(tmp_path / "first", 456, extra_args)
+    second = run_and_read_manifest(tmp_path / "second", 456, extra_args)
+
+    assert first["state_hash"] == second["state_hash"]
+    assert first["configuration"]["disabled_layers"] == ["raids"]
+    assert first["configuration"]["raids_enabled"] is False
+    assert first["log_mode"] == "metrics_only"
 
 
 def test_different_seeds_have_different_hashes(tmp_path):

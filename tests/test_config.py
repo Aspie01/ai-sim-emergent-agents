@@ -17,6 +17,7 @@ def cli_args(**overrides):
         "war_tension_threshold": None,
         "belief_sharing_prob": None,
         "disable_layer": "",
+        "disable_raids": False,
         "disable_antistag": False,
         "enable_belief_tracking": False,
         "log_mode": "full",
@@ -32,6 +33,25 @@ def test_configuration_normalizes_disabled_layers():
 
     assert result.disabled_layers == ("combat", "religion")
     assert result.manifest_dict()["disabled_layers"] == ["combat", "religion"]
+    assert result.manifest_dict()["raids_enabled"] is True
+
+
+def test_explicit_raid_controls_are_normalized_and_recorded():
+    alias = SimulationConfig.from_cli(cli_args(disable_raids=True))
+    layer = SimulationConfig.from_cli(cli_args(disable_layer="raids"))
+
+    assert alias.disabled_layers == ("raids",)
+    assert layer.disabled_layers == ("raids",)
+    assert alias.manifest_dict()["raids_enabled"] is False
+    assert layer.manifest_dict()["raids_enabled"] is False
+
+
+def test_disabling_combat_alone_keeps_raids_enabled():
+    result = SimulationConfig.from_cli(cli_args(disable_layer="combat"))
+
+    assert result.disabled_layers == ("combat",)
+    assert result.raids_enabled is True
+    assert result.manifest_dict()["raids_enabled"] is True
 
 
 @pytest.mark.parametrize(

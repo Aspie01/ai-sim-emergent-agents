@@ -55,6 +55,7 @@ VALID_DISABLE_LAYERS = frozenset({
     'beliefs',
     'factions',
     'economy',
+    'raids',
     'combat',
     'technology',
     'diplomacy',
@@ -83,11 +84,14 @@ class SimulationConfig:
 
     @classmethod
     def from_cli(cls, args) -> 'SimulationConfig':
-        disabled = tuple(sorted({
+        disabled_set = {
             layer.strip()
             for layer in args.disable_layer.split(',')
             if layer.strip()
-        }))
+        }
+        if getattr(args, 'disable_raids', False):
+            disabled_set.add('raids')
+        disabled = tuple(sorted(disabled_set))
         unknown = set(disabled) - VALID_DISABLE_LAYERS
         if unknown:
             choices = ', '.join(sorted(VALID_DISABLE_LAYERS))
@@ -167,7 +171,13 @@ class SimulationConfig:
         BELIEF_SHARING_PROBABILITY = self.belief_sharing_probability
         BELIEF_TRACKING_ENABLED = self.belief_tracking_enabled
 
+    @property
+    def raids_enabled(self) -> bool:
+        """Whether hostile economy-layer raids run for this configuration."""
+        return 'raids' not in self.disabled_layers
+
     def manifest_dict(self) -> dict:
         result = asdict(self)
         result['disabled_layers'] = list(self.disabled_layers)
+        result['raids_enabled'] = self.raids_enabled
         return result

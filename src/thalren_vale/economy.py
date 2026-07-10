@@ -363,8 +363,8 @@ def wealth_summary_line(factions, people) -> str:
 # Public tick function
 # ══════════════════════════════════════════════════════════════════════════════
 
-def economy_tick(people, factions, t, event_log):
-    """Run one tick of the economy layer (call after factions_layer)."""
+def economy_tick(people, factions, t, event_log, *, raids_enabled=True):
+    """Run one economy tick, optionally suppressing hostile faction raids."""
     active = [f for f in factions if f.members]
 
     # 1. Currency invention (tick 50+)
@@ -393,7 +393,7 @@ def economy_tick(people, factions, t, event_log):
         _faction_trade(active, t, event_log)
 
     # 6. Raiding (tension > 35; see _faction_raids)
-    if len(active) >= 2:
+    if raids_enabled and len(active) >= 2:
         _faction_raids(active, t, event_log)
 
 

@@ -425,7 +425,13 @@ def factions_layer(t: int, dead_names: set) -> None:
 
 def economy_layer(t: int) -> None:
     """Layer 4: currency, pricing, trade, raids, scarcity, wealth."""
-    economy.economy_tick(people, factions, t, event_log)
+    economy.economy_tick(
+        people,
+        factions,
+        t,
+        event_log,
+        raids_enabled='raids' not in _disabled_layers,
+    )
 
 
 def combat_layer(t: int) -> None:
@@ -1589,8 +1595,11 @@ def run() -> None:
                          help='Turn off all anti-stagnation mechanisms')
     _parser.add_argument('--disable-layer', type=str, default='',
                          help='Comma-separated layers to skip '
-                              '(beliefs,factions,economy,combat,technology,'
+                              '(beliefs,factions,economy,raids,combat,technology,'
                               'diplomacy,religion,mythology)')
+    _parser.add_argument('--disable-raids', action='store_true',
+                         help='Disable economy-layer raids without disabling '
+                              'formal combat')
     _parser.add_argument('--faction-trust-threshold', type=int, default=None,
                          help='Override FACTION_TRUST_THRESHOLD')
     _parser.add_argument('--war-tension-threshold', type=int, default=None,

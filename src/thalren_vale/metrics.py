@@ -15,6 +15,9 @@ from pathlib import Path
 from .events import EVENT_SCHEMA_VERSION
 
 
+DEFAULT_EVENT_FLUSH_INTERVAL = 1000
+
+
 class MetricsLogger:
     """Collects per-tick simulation metrics and writes them to CSV."""
 
@@ -27,10 +30,21 @@ class MetricsLogger:
     _WINTER_LEN = 8
     _CYCLE_LEN = 50
 
-    def __init__(self, seed: int, condition: str, output_dir: str = "data"):
+    def __init__(
+        self,
+        seed: int,
+        condition: str,
+        output_dir: str = "data",
+        event_flush_interval: int = DEFAULT_EVENT_FLUSH_INTERVAL,
+    ):
+        if event_flush_interval < 1:
+            raise ValueError('event_flush_interval must be at least 1')
         self.seed = seed
         self.condition = condition
         self.output_dir = output_dir
+        self.event_flush_interval = event_flush_interval
+        self._pending_event_rows = 0
+        self._event_flush_failures = 0
 
         # Create output directory
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -256,6 +270,16 @@ class MetricsLogger:
     # Discrete event recording
     # ──────────────────────────────────────────────────────────────────────
 
+    def flush_events(self) -> bool:
+        """Flush buffered event rows, retaining pending state on failure."""
+        try:
+            self._events_fh.flush()
+        except Exception:
+            self._event_flush_failures += 1
+            return False
+        self._pending_event_rows = 0
+        return True
+
     def record_event(self, tick, event_type, actor="", target="", detail=""):
         """Called whenever a discrete event occurs.  Writes one CSV row
         and increments cumulative counters.
@@ -271,7 +295,9 @@ class MetricsLogger:
                 EVENT_SCHEMA_VERSION, self.seed, tick, event_type,
                 actor, target, detail,
             ])
-            self._events_fh.flush()
+            self._pending_event_rows += 1
+            if self._pending_event_rows >= self.event_flush_interval:
+                self.flush_events()
 
             # Increment cumulative counters
             if event_type == 'war_declared':
@@ -449,6 +475,8 @@ class MetricsLogger:
 
         except Exception:
             pass
+        finally:
+            self.flush_events()
 
     # ──────────────────────────────────────────────────────────────────────
     # Cleanup
@@ -456,6 +484,7 @@ class MetricsLogger:
 
     def close(self):
         """Flush and close all CSV file handles.  Call after finalize()."""
+        self.flush_events()
         for fh in (self._metrics_fh, self._events_fh, self._beliefs_fh):
             try:
                 fh.flush()

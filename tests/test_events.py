@@ -3,6 +3,8 @@
 import csv
 from types import SimpleNamespace
 
+import pytest
+
 from thalren_vale import diplomacy
 from thalren_vale.events import StructuredEventLog, emit_event
 from thalren_vale.metrics import MetricsLogger
@@ -65,6 +67,82 @@ def test_metrics_records_typed_event_fields(tmp_path):
         "target": "B",
         "detail": "Trade Agreement",
     }]
+
+
+def test_event_buffer_flushes_in_order_during_finalize(tmp_path):
+    logger = MetricsLogger(
+        seed=2,
+        condition="buffered",
+        output_dir=str(tmp_path),
+        event_flush_interval=100,
+    )
+    logger.record_event(3, "raid", "A", "B", "2 ore, 1 wood")
+    logger.record_event(4, "treaty_broken", "B", "A", 'said "enough"')
+
+    assert logger._pending_event_rows == 2
+    logger.finalize([], [], [])
+    assert logger._pending_event_rows == 0
+
+    path = tmp_path / "faction_events_buffered_seed_2.csv"
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    logger.close()
+
+    assert [(row["tick"], row["event_type"], row["detail"]) for row in rows] == [
+        ("3", "raid", "2 ore, 1 wood"),
+        ("4", "treaty_broken", 'said "enough"'),
+    ]
+
+
+def test_event_flush_failure_is_nonfatal_and_retryable(tmp_path):
+    logger = MetricsLogger(
+        seed=3,
+        condition="flaky",
+        output_dir=str(tmp_path),
+        event_flush_interval=100,
+    )
+    real_handle = logger._events_fh
+
+    class FailOnce:
+        def __init__(self, wrapped):
+            self.wrapped = wrapped
+            self.failures_remaining = 1
+
+        def flush(self):
+            if self.failures_remaining:
+                self.failures_remaining -= 1
+                raise OSError("simulated flush failure")
+            return self.wrapped.flush()
+
+        def close(self):
+            return self.wrapped.close()
+
+    logger._events_fh = FailOnce(real_handle)
+    logger.record_event(5, "birth", "A", "B", "child")
+
+    logger.finalize([], [], [])
+
+    assert logger.total_births == 1
+    assert logger._event_flush_failures == 1
+    assert logger._pending_event_rows == 1
+    assert logger.flush_events() is True
+    assert logger._pending_event_rows == 0
+    logger.close()
+
+    path = tmp_path / "faction_events_flaky_seed_3.csv"
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [row["event_type"] for row in rows] == ["birth"]
+
+
+def test_event_flush_interval_must_be_positive(tmp_path):
+    with pytest.raises(ValueError, match="event_flush_interval"):
+        MetricsLogger(
+            seed=4,
+            condition="invalid",
+            output_dir=str(tmp_path),
+            event_flush_interval=0,
+        )
 
 
 def test_treaty_lifecycle_emits_typed_events():

@@ -1,0 +1,9 @@
+experiment_id,condition,combat_enabled,raids_enabled,ticks,requested_runs,completed_runs,mean_elapsed_seconds,median_elapsed_seconds,aggregate_ticks_per_second,mean_output_bytes,mean_structured_events,mean_raid_events,aggregate_raid_share,mean_final_population,mean_peak_population,mean_final_factions,mean_peak_factions,mean_total_wars,mean_total_deaths,mean_peak_ram_mb
+raid-control-pilot-v1,combat_on_raids_on,True,True,100,3,3,7.223333,7.73,13.844024,90477.333,684.333,99.0,0.14466634,193.666667,203.333333,52.333333,53.666667,0.333333,71.666667,7.723333
+raid-control-pilot-v1,combat_off_raids_on,False,True,100,3,3,7.36,7.93,13.586957,91291.667,681.0,98.333,0.1443955,199.333333,203.333333,53.666667,54.0,0.0,66.0,7.723333
+raid-control-pilot-v1,combat_on_raids_off,True,False,100,3,3,7.333333,7.98,13.636364,85801.333,569.333,0.0,0.0,207.0,207.0,50.333333,50.666667,0.0,58.666667,7.653333
+raid-control-pilot-v1,combat_off_raids_off,False,False,100,3,3,7.4,8.08,13.513514,85820.333,569.333,0.0,0.0,207.0,207.0,50.333333,50.666667,0.0,58.666667,7.593333
+raid-control-pilot-v1,combat_on_raids_on,True,True,250,3,3,41.61,41.33,6.008171,283098.0,2823.667,865.667,0.30657537,208.0,250.666667,57.333333,80.666667,4.666667,441.0,28.316667
+raid-control-pilot-v1,combat_off_raids_on,False,True,250,3,3,85.833333,100.11,2.912621,497825.0,5865.667,3607.667,0.61504802,338.0,340.666667,132.333333,145.0,0.0,308.0,46.383333
+raid-control-pilot-v1,combat_on_raids_off,True,False,250,3,3,70.99,82.39,3.521623,266136.0,2084.333,0.0,0.0,375.666667,379.0,112.0,115.666667,0.0,271.333333,39.026667
+raid-control-pilot-v1,combat_off_raids_off,False,False,250,3,3,69.726667,79.3,3.585429,266155.0,2084.333,0.0,0.0,375.666667,379.0,112.0,115.666667,0.0,271.333333,38.736667

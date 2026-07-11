@@ -3,6 +3,7 @@
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 from collections.abc import Mapping
@@ -138,6 +139,124 @@ def fresh_cell_spec() -> list[dict]:
         "extra_args": [],
         "timeout_seconds": 5,
     }]
+
+
+ABBREVIATED_SOCIAL_ARGUMENTS = [
+    ["--enable-social-m"],
+    ["--disable-social-m"],
+    ["--enable-social-partner-b"],
+    ["--disable-social-partner-b"],
+    ["--maximum-social-t", "16"],
+    ["--relationship-decay-i", "10"],
+]
+
+FULL_SOCIAL_ARGUMENTS = [
+    ["--enable-social-memory"],
+    ["--disable-social-memory"],
+    ["--enable-social-partner-bias"],
+    ["--disable-social-partner-bias"],
+    ["--maximum-social-ties", "16"],
+    ["--relationship-decay-interval", "10"],
+]
+
+EQUALS_SOCIAL_ARGUMENTS = [
+    ["--enable-social-memory=true"],
+    ["--disable-social-memory=true"],
+    ["--enable-social-partner-bias=true"],
+    ["--disable-social-partner-bias=true"],
+    ["--maximum-social-ties=16"],
+    ["--relationship-decay-interval=10"],
+]
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    ABBREVIATED_SOCIAL_ARGUMENTS
+    + FULL_SOCIAL_ARGUMENTS
+    + EQUALS_SOCIAL_ARGUMENTS,
+)
+def test_runner_rejects_uncontracted_social_controls_before_creating_root(
+    tmp_path,
+    monkeypatch,
+    extra_args,
+):
+    output = tmp_path / "outputs"
+    cell = fresh_cell_spec()[0]
+    cell["extra_args"] = extra_args
+    child_calls = []
+    monkeypatch.setattr(
+        runner,
+        "_simulation_command",
+        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+    )
+
+    with pytest.raises(ValueError, match="uncontracted social control"):
+        runner._run_cells_in_fresh_root([cell], output)
+
+    assert child_calls == []
+    assert not output.exists()
+
+
+def test_runner_accepts_unrelated_valid_extra_arguments():
+    cell = fresh_cell_spec()[0]
+    cell["extra_args"] = ["--disable-raids"]
+
+    frozen = runner._freeze_cell(cell)
+
+    assert frozen.extra_args == ("--disable-raids",)
+
+
+@pytest.mark.parametrize("extra_args", ABBREVIATED_SOCIAL_ARGUMENTS)
+def test_simulator_rejects_abbreviated_social_options_before_execution(
+    tmp_path,
+    extra_args,
+):
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(runner.SOURCE_ROOT)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "thalren_vale",
+            *extra_args,
+            "--ticks",
+            "0",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "unrecognized arguments" in result.stderr
+    assert extra_args[0] in result.stderr
+    assert "ticks must be at least 1" not in result.stderr
+    assert not (tmp_path / "data").exists()
+
+
+def test_plan_loading_rejects_engineering_social_controls(tmp_path):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({
+            "schema_version": runner.PLAN_SCHEMA_VERSION,
+            "experiment_id": "social-not-contracted",
+            "conditions": [{
+                "name": "baseline",
+                "seeds": "1",
+                "ticks": 1,
+                "extra_args": "--enable-social-memory",
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="uncontracted social control"):
+        runner.load_plan(plan_path)
 
 
 class EscapingDict(dict):

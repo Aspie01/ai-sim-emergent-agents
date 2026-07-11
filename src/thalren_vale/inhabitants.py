@@ -59,7 +59,7 @@ def regen_rate(t):
 # ── Inhabitant ─────────────────────────────────────────────────────────────
 class Inhabitant:
     __slots__ = (
-        'name', 'r', 'c', 'health', 'hunger', 'inventory',
+        'name', 'inhabitant_id', 'relationships', 'r', 'c', 'health', 'hunger', 'inventory',
         'beliefs', 'trust', 'trust_last_seen', 'memory', 'trade_count', 'was_pushed',
         'prev_health', 'biome_ticks', 'faction_ticks', 'was_rejected',
         'zero_food_ticks', 'currency',
@@ -80,6 +80,8 @@ class Inhabitant:
 
     def __init__(self, name, r, c):
         self.name      = name
+        self.inhabitant_id = None
+        self.relationships = {}
         self.r, self.c = r, c
         self.health    = 100
         self.hunger    = 0

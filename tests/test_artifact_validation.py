@@ -35,6 +35,7 @@ from thalren_vale.artifact_validation import (
     inspect_run_outputs,
 )
 from thalren_vale.events import EVENT_SCHEMA_VERSION
+from thalren_vale.config import SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY
 from thalren_vale.metrics import MetricsLogger
 from thalren_vale.reproducibility import (
     build_artifact_inventory,
@@ -239,6 +240,12 @@ def make_artifacts(
         "anti_stagnation_enabled": False,
         "disabled_layers": [],
         "raids_enabled": True,
+        "social_memory_enabled": False,
+        "social_partner_bias_enabled": False,
+        "maximum_social_ties": 32,
+        "relationship_decay_interval": 25,
+        "social_controls_status": "disabled",
+        "social_control_notices": [],
     })
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return run_dir, manifest_path
@@ -432,6 +439,314 @@ def test_complete_external_contract_is_required_for_v2_readiness(tmp_path):
     assert "incomplete_expected_run_contract" in readiness_codes(incomplete)
     assert matched.valid and matched.v2_ready
     assert matched.classification == "v2_ready"
+
+
+def test_exact_safe_social_defaults_pass_temporary_readiness_veto(tmp_path):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+
+    report = inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+    assert report.valid and report.v2_ready
+    assert "social_controls_not_v2_ready" not in readiness_codes(report)
+
+
+SOCIAL_CONFIGURATION_FIELDS = {
+    "social_memory_enabled",
+    "social_partner_bias_enabled",
+    "maximum_social_ties",
+    "relationship_decay_interval",
+    "social_controls_status",
+    "social_control_notices",
+}
+
+
+def inspect_social_configuration(
+    tmp_path,
+    updates,
+    *,
+    replace_social_fields=False,
+):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    if replace_social_fields:
+        for field in SOCIAL_CONFIGURATION_FIELDS:
+            manifest["configuration"].pop(field, None)
+    manifest["configuration"].update(updates)
+    write_manifest(manifest_path, manifest)
+    return inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+
+def assert_invalid_social_configuration(report):
+    assert report.valid is False
+    assert report.v2_ready is False
+    assert report.classification == "invalid"
+    assert "invalid_social_configuration" in issue_codes(report)
+
+
+def test_partial_false_memory_true_bias_is_artifact_invalid(tmp_path):
+    report = inspect_social_configuration(
+        tmp_path,
+        {
+            "social_memory_enabled": False,
+            "social_partner_bias_enabled": True,
+        },
+        replace_social_fields=True,
+    )
+
+    assert_invalid_social_configuration(report)
+
+
+def test_complete_false_memory_true_bias_is_artifact_invalid(tmp_path):
+    report = inspect_social_configuration(
+        tmp_path,
+        {"social_partner_bias_enabled": True},
+    )
+
+    assert_invalid_social_configuration(report)
+
+
+def test_partial_disabled_defaults_without_numeric_controls_are_nonready(
+    tmp_path,
+):
+    report = inspect_social_configuration(
+        tmp_path,
+        {
+            "social_memory_enabled": False,
+            "social_partner_bias_enabled": False,
+            "social_controls_status": "disabled",
+            "social_control_notices": [],
+        },
+        replace_social_fields=True,
+    )
+
+    assert report.valid is True
+    assert report.v2_ready is False
+    assert report.classification == "schema2_valid"
+    assert "invalid_social_configuration" not in issue_codes(report)
+    assert "social_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("social_memory_enabled", 0),
+        ("social_partner_bias_enabled", 1),
+    ],
+)
+def test_partial_malformed_social_boolean_is_artifact_invalid(
+    tmp_path,
+    field,
+    value,
+):
+    report = inspect_social_configuration(
+        tmp_path,
+        {field: value},
+        replace_social_fields=True,
+    )
+
+    assert_invalid_social_configuration(report)
+
+
+@pytest.mark.parametrize(
+    "controls",
+    [
+        {
+            "social_controls_status": "disabled",
+            "social_control_notices": [SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY],
+        },
+        {
+            "social_controls_status": "normalized_uncontracted",
+            "social_control_notices": [],
+        },
+        {
+            "social_memory_enabled": True,
+            "social_controls_status": "disabled",
+        },
+        {
+            "social_memory_enabled": True,
+            "social_control_notices": [SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY],
+        },
+        {
+            "social_memory_enabled": False,
+            "social_partner_bias_enabled": False,
+            "maximum_social_ties": 32,
+            "relationship_decay_interval": 25,
+            "social_controls_status": "engineering_only_uncontracted",
+        },
+    ],
+)
+def test_determinable_partial_status_or_notice_conflict_is_invalid(
+    tmp_path,
+    controls,
+):
+    report = inspect_social_configuration(
+        tmp_path,
+        controls,
+        replace_social_fields=True,
+    )
+
+    assert_invalid_social_configuration(report)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "social_memory_enabled": True,
+            "social_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "social_memory_enabled": True,
+            "social_partner_bias_enabled": True,
+            "social_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "maximum_social_ties": 16,
+            "social_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "relationship_decay_interval": 10,
+            "social_controls_status": "engineering_only_uncontracted",
+        },
+    ],
+    ids=("memory", "partner-bias", "tie-cap", "decay-interval"),
+)
+def test_uncontracted_enabled_or_nondefault_social_controls_block_readiness(
+    tmp_path,
+    updates,
+):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    manifest["configuration"].update(updates)
+    write_manifest(manifest_path, manifest)
+
+    report = inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+    assert report.valid and not report.v2_ready
+    assert "social_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "social_memory_enabled",
+        "social_partner_bias_enabled",
+        "maximum_social_ties",
+        "relationship_decay_interval",
+        "social_controls_status",
+        "social_control_notices",
+    ],
+)
+def test_missing_social_control_is_valid_engineering_artifact_but_not_ready(
+    tmp_path,
+    missing,
+):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    del manifest["configuration"][missing]
+    write_manifest(manifest_path, manifest)
+
+    report = inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+    assert report.valid and not report.v2_ready
+    assert "social_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("social_memory_enabled", 0),
+        ("social_partner_bias_enabled", 1),
+        ("maximum_social_ties", True),
+        ("relationship_decay_interval", 0),
+        ("social_controls_status", "unknown"),
+        ("social_control_notices", "normalized"),
+    ],
+)
+def test_malformed_social_control_makes_artifact_invalid(
+    tmp_path,
+    field,
+    value,
+):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    manifest["configuration"][field] = value
+    write_manifest(manifest_path, manifest)
+
+    report = inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+    assert not report.valid and not report.v2_ready
+    assert "invalid_social_configuration" in issue_codes(report)
+
+
+def test_normalized_unsupported_social_request_is_preserved_and_blocks_ready(
+    tmp_path,
+):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    manifest["configuration"].update({
+        "social_memory_enabled": False,
+        "social_partner_bias_enabled": False,
+        "social_controls_status": "normalized_uncontracted",
+        "social_control_notices": [SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY],
+    })
+    write_manifest(manifest_path, manifest)
+
+    report = inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+    assert report.valid and not report.v2_ready
+    assert "social_controls_not_v2_ready" in readiness_codes(report)
+    assert report.manifest["configuration"]["social_control_notices"] == [
+        SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY
+    ]
 
 
 @pytest.mark.parametrize(

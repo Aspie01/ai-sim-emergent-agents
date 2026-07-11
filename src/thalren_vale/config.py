@@ -2,7 +2,7 @@
 config.py — Shared configuration constants for the civilization simulation.
 """
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import re
 
 # ── Ollama / LLM settings ─────────────────────────────────────────────────
@@ -36,6 +36,10 @@ DEFAULT_FACTION_TRUST_THRESHOLD = 5
 DEFAULT_WAR_TENSION_THRESHOLD = 200
 DEFAULT_BELIEF_SHARING_PROBABILITY = 0.5
 DEFAULT_STARTING_INHABITANTS = 30
+DEFAULT_SOCIAL_MEMORY_ENABLED = False
+DEFAULT_SOCIAL_PARTNER_BIAS_ENABLED = False
+DEFAULT_MAXIMUM_SOCIAL_TIES = 32
+DEFAULT_RELATIONSHIP_DECAY_INTERVAL = 25
 FACTION_TRUST_THRESHOLD = DEFAULT_FACTION_TRUST_THRESHOLD
 WAR_TENSION_THRESHOLD = DEFAULT_WAR_TENSION_THRESHOLD
 BELIEF_SHARING_PROBABILITY = DEFAULT_BELIEF_SHARING_PROBABILITY
@@ -65,6 +69,28 @@ VALID_DISABLE_LAYERS = frozenset({
 
 _CONDITION_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
 
+SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY = (
+    'partner_bias_requested_without_social_memory'
+)
+VALID_SOCIAL_CONTROL_NOTICES = frozenset({
+    SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY,
+})
+VALID_SOCIAL_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
+
+@dataclass(frozen=True)
+class SocialMemoryConfig:
+    """Effective social controls passed explicitly to simulation subsystems."""
+
+    social_memory_enabled: bool
+    social_partner_bias_enabled: bool
+    maximum_social_ties: int
+    relationship_decay_interval: int
+
 
 @dataclass(frozen=True)
 class SimulationConfig:
@@ -81,6 +107,19 @@ class SimulationConfig:
     anti_stagnation_enabled: bool = True
     belief_tracking_enabled: bool = False
     log_mode: str = 'full'
+    social_memory_enabled: bool = DEFAULT_SOCIAL_MEMORY_ENABLED
+    social_partner_bias_enabled: bool = DEFAULT_SOCIAL_PARTNER_BIAS_ENABLED
+    maximum_social_ties: int = DEFAULT_MAXIMUM_SOCIAL_TIES
+    relationship_decay_interval: int = DEFAULT_RELATIONSHIP_DECAY_INTERVAL
+    social_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        notices: list[str] = []
+        if not self.social_memory_enabled and self.social_partner_bias_enabled:
+            object.__setattr__(self, 'social_partner_bias_enabled', False)
+            notices.append(SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY)
+        object.__setattr__(self, 'social_control_notices', tuple(notices))
 
     @classmethod
     def from_cli(cls, args) -> 'SimulationConfig':
@@ -128,6 +167,24 @@ class SimulationConfig:
             anti_stagnation_enabled=not args.disable_antistag,
             belief_tracking_enabled=args.enable_belief_tracking,
             log_mode=getattr(args, 'log_mode', 'full'),
+            social_memory_enabled=(
+                bool(getattr(args, 'enable_social_memory', False))
+                and not bool(getattr(args, 'disable_social_memory', False))
+            ),
+            social_partner_bias_enabled=(
+                bool(getattr(args, 'enable_social_partner_bias', False))
+                and not bool(getattr(args, 'disable_social_partner_bias', False))
+            ),
+            maximum_social_ties=(
+                DEFAULT_MAXIMUM_SOCIAL_TIES
+                if getattr(args, 'maximum_social_ties', None) is None
+                else args.maximum_social_ties
+            ),
+            relationship_decay_interval=(
+                DEFAULT_RELATIONSHIP_DECAY_INTERVAL
+                if getattr(args, 'relationship_decay_interval', None) is None
+                else args.relationship_decay_interval
+            ),
         )
         instance.validate()
         return instance
@@ -156,6 +213,27 @@ class SimulationConfig:
             choices = ', '.join(sorted(VALID_LOG_MODES))
             raise ValueError(
                 f'log mode must be one of: {choices}')
+        if type(self.social_memory_enabled) is not bool:
+            raise ValueError('social memory setting must be boolean')
+        if type(self.social_partner_bias_enabled) is not bool:
+            raise ValueError('social partner bias setting must be boolean')
+        if self.social_partner_bias_enabled and not self.social_memory_enabled:
+            raise ValueError('social partner bias requires social memory')
+        if (
+            type(self.maximum_social_ties) is not int
+            or not 1 <= self.maximum_social_ties <= 128
+        ):
+            raise ValueError('maximum social ties must be an integer from 1 to 128')
+        if (
+            type(self.relationship_decay_interval) is not int
+            or self.relationship_decay_interval < 1
+        ):
+            raise ValueError('relationship decay interval must be a positive integer')
+        if any(
+            notice not in VALID_SOCIAL_CONTROL_NOTICES
+            for notice in self.social_control_notices
+        ):
+            raise ValueError('unknown social control normalization notice')
 
     def apply_legacy_globals(self) -> None:
         """Keep modules using legacy constants synchronized during migration."""
@@ -178,6 +256,34 @@ class SimulationConfig:
 
     def manifest_dict(self) -> dict:
         result = asdict(self)
+        result.pop('social_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
+        result['social_control_notices'] = list(self.social_control_notices)
+        result['social_controls_status'] = self.social_controls_status
         return result
+
+    @property
+    def social_controls_status(self) -> str:
+        """Return bounded provenance status for the uncontracted social controls."""
+        if self.social_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.social_memory_enabled
+            or self.social_partner_bias_enabled
+            or self.maximum_social_ties != DEFAULT_MAXIMUM_SOCIAL_TIES
+            or self.relationship_decay_interval
+            != DEFAULT_RELATIONSHIP_DECAY_INTERVAL
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def social_memory_config(self) -> SocialMemoryConfig:
+        """Return the immutable effective controls used by social subsystems."""
+        return SocialMemoryConfig(
+            social_memory_enabled=self.social_memory_enabled,
+            social_partner_bias_enabled=self.social_partner_bias_enabled,
+            maximum_social_ties=self.maximum_social_ties,
+            relationship_decay_interval=self.relationship_decay_interval,
+        )

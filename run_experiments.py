@@ -47,10 +47,36 @@ _REQUIRED_CELL_KEYS = frozenset({
 })
 _OPTIONAL_CELL_KEYS = frozenset({'announcement'})
 _RESERVED_ROOT_NAMES = frozenset({'experiment_manifest.json', 'run_index.csv'})
+_UNCONTRACTED_SOCIAL_FLAGS = frozenset({
+    '--enable-social-memory',
+    '--disable-social-memory',
+    '--enable-social-partner-bias',
+    '--disable-social-partner-bias',
+    '--maximum-social-ties',
+    '--relationship-decay-interval',
+})
 
 
 class UnsafeResumeError(ValueError):
     """Raised when resume would overwrite or reuse untrusted evidence."""
+
+
+def _reject_uncontracted_social_args(extra_args: tuple[str, ...]) -> None:
+    """Keep engineering-only social controls out of research execution."""
+    for argument in extra_args:
+        option_name = argument.split('=', 1)[0]
+        if any(
+            option_name == flag
+            or (
+                option_name.startswith('--')
+                and len(option_name) > 2
+                and flag.startswith(option_name)
+            )
+            for flag in _UNCONTRACTED_SOCIAL_FLAGS
+        ):
+            raise ValueError(
+                f'uncontracted social control is not permitted in the '
+                f'experiment runner: {argument}')
 
 
 @dataclass(frozen=True)
@@ -103,6 +129,7 @@ def _freeze_cell(cell: object) -> _FrozenCell:
     frozen_extra_args = tuple(extra_args)
     if not all(type(item) is str for item in frozen_extra_args):
         raise ValueError('extra_args must be an exact list of strings')
+    _reject_uncontracted_social_args(frozen_extra_args)
     if timeout_seconds is not None and (
         type(timeout_seconds) is not int or timeout_seconds < 1
     ):
@@ -166,6 +193,11 @@ def load_plan(plan_path: Path) -> tuple[dict, str]:
         extra = condition.get('extra_args', [])
         if not isinstance(extra, (str, list)):
             raise ValueError(f"condition {name}: extra_args must be a list or string")
+        parsed_extra = shlex.split(extra) if isinstance(extra, str) else extra
+        if not all(type(item) is str for item in parsed_extra):
+            raise ValueError(
+                f"condition {name}: extra_args must contain only exact strings")
+        _reject_uncontracted_social_args(tuple(parsed_extra))
     return plan, hashlib.sha256(raw).hexdigest()
 
 
@@ -999,7 +1031,7 @@ def verify_outputs(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--plan', type=Path)
     source.add_argument('--seeds', type=str)

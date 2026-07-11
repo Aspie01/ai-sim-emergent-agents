@@ -4,7 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from thalren_vale.config import SimulationConfig
+from thalren_vale.config import (
+    SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY,
+    SimulationConfig,
+)
 
 
 def cli_args(**overrides):
@@ -21,6 +24,12 @@ def cli_args(**overrides):
         "disable_antistag": False,
         "enable_belief_tracking": False,
         "log_mode": "full",
+        "enable_social_memory": False,
+        "disable_social_memory": False,
+        "enable_social_partner_bias": False,
+        "disable_social_partner_bias": False,
+        "maximum_social_ties": None,
+        "relationship_decay_interval": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -54,6 +63,55 @@ def test_disabling_combat_alone_keeps_raids_enabled():
     assert result.manifest_dict()["raids_enabled"] is True
 
 
+def test_social_controls_default_to_exact_research_safe_values():
+    result = SimulationConfig.from_cli(cli_args())
+    manifest = result.manifest_dict()
+
+    assert manifest["social_memory_enabled"] is False
+    assert manifest["social_partner_bias_enabled"] is False
+    assert manifest["maximum_social_ties"] == 32
+    assert manifest["relationship_decay_interval"] == 25
+    assert manifest["social_controls_status"] == "disabled"
+    assert manifest["social_control_notices"] == []
+
+
+def test_bias_without_memory_normalizes_false_with_preserved_provenance():
+    result = SimulationConfig.from_cli(
+        cli_args(
+            disable_social_memory=True,
+            enable_social_partner_bias=True,
+        )
+    )
+    manifest = result.manifest_dict()
+
+    assert result.social_memory_enabled is False
+    assert result.social_partner_bias_enabled is False
+    assert manifest["social_control_notices"] == [
+        SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY
+    ]
+    assert manifest["social_controls_status"] == "normalized_uncontracted"
+
+
+def test_enabled_or_nondefault_social_controls_are_engineering_only():
+    enabled = SimulationConfig.from_cli(
+        cli_args(
+            enable_social_memory=True,
+            enable_social_partner_bias=True,
+        )
+    )
+    nondefault = SimulationConfig.from_cli(
+        cli_args(maximum_social_ties=16, relationship_decay_interval=10)
+    )
+
+    assert enabled.social_partner_bias_enabled is True
+    assert enabled.manifest_dict()["social_controls_status"] == (
+        "engineering_only_uncontracted"
+    )
+    assert nondefault.manifest_dict()["social_controls_status"] == (
+        "engineering_only_uncontracted"
+    )
+
+
 @pytest.mark.parametrize(
     ("override", "message"),
     [
@@ -66,6 +124,8 @@ def test_disabling_combat_alone_keeps_raids_enabled():
         ({"belief_sharing_prob": 1.01}, "probability"),
         ({"disable_layer": "combat,unknown"}, "unknown disabled layer"),
         ({"log_mode": "loud"}, "log mode"),
+        ({"maximum_social_ties": 0}, "maximum social ties"),
+        ({"relationship_decay_interval": 0}, "decay interval"),
     ],
 )
 def test_invalid_configuration_is_rejected(override, message):

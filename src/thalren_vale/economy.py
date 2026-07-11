@@ -13,12 +13,23 @@ import sys, random
 sys.stdout.reconfigure(encoding='utf-8')
 
 from collections  import defaultdict
+from dataclasses import dataclass
 from itertools    import combinations
 from .world        import world, GRID
 from .beliefs      import inh_cores, add_belief
 from .factions     import RIVALRIES
 from . import combat
 from .events import emit_event
+from .config import (
+    DEFAULT_MAXIMUM_SOCIAL_TIES,
+    DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
+    SocialMemoryConfig,
+)
+from .social import (
+    InteractionKind,
+    record_interaction,
+    relationship_preference_score,
+)
 
 # ── Module-level state ─────────────────────────────────────────────────────
 faction_currencies: dict  = {}           # faction_name → {'name': str}
@@ -31,6 +42,26 @@ scarcity_events:    list  = []           # [(t, resource)]
 BASE_PRICES = {'food': 2, 'wood': 3, 'ore': 5, 'stone': 4}
 RES_TRADE   = ['food', 'wood', 'ore', 'stone']   # exclude water from economy
 _last_shock_res: str = ''                         # never repeat same resource twice
+
+_DISABLED_SOCIAL_CONFIG = SocialMemoryConfig(
+    social_memory_enabled=False,
+    social_partner_bias_enabled=False,
+    maximum_social_ties=DEFAULT_MAXIMUM_SOCIAL_TIES,
+    relationship_decay_interval=DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
+)
+
+
+@dataclass(frozen=True)
+class _FrozenSocialEconomyInputs:
+    """One economy pass's deterministic, bounded social selection inputs."""
+
+    active_ids: frozenset[int]
+    inhabitant_by_id: dict[int, object]
+    shuffled_groups: tuple[tuple[object, ...], ...]
+    shuffled_rank: dict[int, int]
+    zero_resource_ids: dict[tuple[int, int, str], frozenset[int]]
+    surplus_resources: dict[int, tuple[str, ...]]
+    positive_preferences: dict[int, tuple[tuple[int, float], ...]]
 
 _CURRENCY_NAMES = [
     'shells', 'iron bits', 'marked stones', 'bone chips', 'carved tokens',
@@ -118,7 +149,18 @@ def _update_prices(faction, t, event_log):
 # Trade helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _do_trade(giver, receiver, res, amount, t, event_log, key):
+def _do_trade(
+    giver,
+    receiver,
+    res,
+    amount,
+    t,
+    event_log,
+    key,
+    *,
+    social_config=_DISABLED_SOCIAL_CONFIG,
+    active_ids=frozenset(),
+):
     donors = [m for m in giver.members if m.inventory.get(res, 0) >= amount]
     if not donors or not receiver.members:
         return False
@@ -173,6 +215,16 @@ def _do_trade(giver, receiver, res, amount, t, event_log, key):
         ally_bonus = max(1, round(amount * 0.20))
         taker.inventory[res] += ally_bonus
 
+    if social_config.social_memory_enabled:
+        record_interaction(
+            donor,
+            taker,
+            InteractionKind.TRADE,
+            tick=t,
+            active_ids=active_ids,
+            config=social_config,
+        )
+
     tension = RIVALRIES.get(key, 0)
     msg = (f"Tick {t:03d}: 🤝 Trade: {giver.name} → {receiver.name}  "
            f"{amount} {res}  (tension now {tension})")
@@ -180,7 +232,14 @@ def _do_trade(giver, receiver, res, amount, t, event_log, key):
     return True
 
 
-def _faction_trade(active, t, event_log):
+def _faction_trade(
+    active,
+    t,
+    event_log,
+    *,
+    social_config=_DISABLED_SOCIAL_CONFIG,
+    active_ids=frozenset(),
+):
     for fa, fb in combinations(active, 2):
         key     = tuple(sorted([fa.name, fb.name]))
         tension = RIVALRIES.get(key, 0)
@@ -208,10 +267,14 @@ def _faction_trade(active, t, event_log):
             if trade_routes.get(frozenset([fa.name, fb.name]), {}).get('active'):
                 amount = 4   # route bonus handled inside _do_trade
             if sup_a[res] >= 5 and sup_a[res] >= sup_b[res] * 2:
-                _do_trade(fa, fb, res, amount, t, event_log, key)
+                _do_trade(
+                    fa, fb, res, amount, t, event_log, key,
+                    social_config=social_config, active_ids=active_ids)
                 break
             elif sup_b[res] >= 5 and sup_b[res] >= sup_a[res] * 2:
-                _do_trade(fb, fa, res, amount, t, event_log, key)
+                _do_trade(
+                    fb, fa, res, amount, t, event_log, key,
+                    social_config=social_config, active_ids=active_ids)
                 break
         else:
             # No natural trade trigger — random small negotiation failure
@@ -278,7 +341,85 @@ def _faction_raids(active, t, event_log):
                               [f for f in active if f.members])
 
 
-def _individual_barter(people, t, event_log):
+def _assigned_active_ids(people) -> tuple[frozenset[int], dict[int, object]]:
+    active_ids: set[int] = set()
+    inhabitant_by_id: dict[int, object] = {}
+    for inhabitant in people:
+        inhabitant_id = getattr(inhabitant, 'inhabitant_id', None)
+        if type(inhabitant_id) is not int or inhabitant_id < 0:
+            raise ValueError('enabled social economy requires assigned inhabitant IDs')
+        if inhabitant_id in active_ids:
+            raise ValueError(f'duplicate active inhabitant ID: {inhabitant_id}')
+        active_ids.add(inhabitant_id)
+        inhabitant_by_id[inhabitant_id] = inhabitant
+    return frozenset(active_ids), inhabitant_by_id
+
+
+def _commit_individual_transfer(
+    giver,
+    recipient,
+    res: str,
+    *,
+    t: int,
+    social_config: SocialMemoryConfig,
+    active_ids: frozenset[int],
+) -> None:
+    """Commit one existing individual transfer, then record its social outcome."""
+    giver.inventory[res] -= 1
+    recipient.inventory[res] += 1
+    giver.trust[recipient.name] = giver.trust.get(recipient.name, 0) + 1
+    recipient.trust[giver.name] = recipient.trust.get(giver.name, 0) + 1
+    giver.trade_count = getattr(giver, 'trade_count', 0) + 1
+    recipient.trade_count = getattr(recipient, 'trade_count', 0) + 1
+
+    pay = min(getattr(recipient, 'currency', 0), BASE_PRICES.get(res, 1))
+    if pay > 0:
+        recipient.currency = getattr(recipient, 'currency', 0) - pay
+        giver.currency = getattr(giver, 'currency', 0) + pay
+
+    if social_config.social_memory_enabled:
+        kind = InteractionKind.TRADE if pay > 0 else InteractionKind.AID
+        record_interaction(
+            giver,
+            recipient,
+            kind,
+            tick=t,
+            active_ids=active_ids,
+            config=social_config,
+        )
+
+
+def _attempt_individual_transfer(
+    giver,
+    recipient,
+    *,
+    t: int,
+    social_config: SocialMemoryConfig,
+    active_ids: frozenset[int],
+) -> bool:
+    for res in RES_TRADE:
+        if giver.inventory.get(res, 0) >= 3 and recipient.inventory.get(res, 0) == 0:
+            _commit_individual_transfer(
+                giver,
+                recipient,
+                res,
+                t=t,
+                social_config=social_config,
+                active_ids=active_ids,
+            )
+            return True
+    return False
+
+
+def _historical_barter(
+    people,
+    t,
+    *,
+    social_config: SocialMemoryConfig,
+    active_ids: frozenset[int],
+    rng,
+) -> None:
+    """Execute the historical shuffled adjacent-pair algorithm exactly."""
     chunk_map = defaultdict(list)
     for p in people:
         chunk_map[(p.r, p.c)].append(p)
@@ -286,23 +427,205 @@ def _individual_barter(people, t, event_log):
     for group in chunk_map.values():
         if len(group) < 2:
             continue
-        random.shuffle(group)
+        rng.shuffle(group)
         for i in range(0, len(group) - 1, 2):
             a, b = group[i], group[i + 1]
-            for res in RES_TRADE:
-                if a.inventory.get(res, 0) >= 3 and b.inventory.get(res, 0) == 0:
-                    a.inventory[res] -= 1
-                    b.inventory[res] += 1
-                    a.trust[b.name]  = a.trust.get(b.name, 0) + 1
-                    b.trust[a.name]  = b.trust.get(a.name, 0) + 1
-                    a.trade_count    = getattr(a, 'trade_count', 0) + 1
-                    b.trade_count    = getattr(b, 'trade_count', 0) + 1
-                    # Pay with currency if available
-                    pay = min(getattr(b, 'currency', 0), BASE_PRICES.get(res, 1))
-                    if pay > 0:
-                        b.currency            = getattr(b, 'currency', 0) - pay
-                        a.currency            = getattr(a, 'currency', 0) + pay
-                    break
+            _attempt_individual_transfer(
+                a,
+                b,
+                t=t,
+                social_config=social_config,
+                active_ids=active_ids,
+            )
+
+
+def _freeze_social_economy_inputs(people, rng) -> _FrozenSocialEconomyInputs:
+    active_ids, inhabitant_by_id = _assigned_active_ids(people)
+    chunk_map = defaultdict(list)
+    for inhabitant in people:
+        chunk_map[(inhabitant.r, inhabitant.c)].append(inhabitant)
+
+    shuffled_groups: list[tuple[object, ...]] = []
+    shuffled_rank: dict[int, int] = {}
+    zero_resource_ids: dict[tuple[int, int, str], frozenset[int]] = {}
+    surplus_resources: dict[int, tuple[str, ...]] = {}
+    positive_preferences: dict[int, tuple[tuple[int, float], ...]] = {}
+
+    for group in chunk_map.values():
+        if len(group) < 2:
+            continue
+        rng.shuffle(group)
+        frozen_group = tuple(group)
+        shuffled_groups.append(frozen_group)
+        for rank, inhabitant in enumerate(frozen_group):
+            shuffled_rank[inhabitant.inhabitant_id] = rank
+
+        tile = (frozen_group[0].r, frozen_group[0].c)
+        for res in RES_TRADE:
+            zero_resource_ids[(tile[0], tile[1], res)] = frozenset(
+                inhabitant.inhabitant_id
+                for inhabitant in frozen_group
+                if inhabitant.inventory.get(res, 0) == 0
+            )
+
+    for inhabitant in people:
+        inhabitant_id = inhabitant.inhabitant_id
+        surplus_resources[inhabitant_id] = tuple(
+            res for res in RES_TRADE if inhabitant.inventory.get(res, 0) >= 3
+        )
+        preferences = []
+        for target_id, relationship in inhabitant.relationships.items():
+            score = relationship_preference_score(relationship)
+            if score > 0.0:
+                preferences.append((target_id, score))
+        positive_preferences[inhabitant_id] = tuple(preferences)
+
+    return _FrozenSocialEconomyInputs(
+        active_ids=active_ids,
+        inhabitant_by_id=inhabitant_by_id,
+        shuffled_groups=tuple(shuffled_groups),
+        shuffled_rank=shuffled_rank,
+        zero_resource_ids=zero_resource_ids,
+        surplus_resources=surplus_resources,
+        positive_preferences=positive_preferences,
+    )
+
+
+def _known_eligible_partner(
+    giver,
+    baseline_target,
+    available_ids: set[int],
+    frozen: _FrozenSocialEconomyInputs,
+):
+    candidates = []
+    for target_id, score in frozen.positive_preferences.get(
+        giver.inhabitant_id, ()
+    ):
+        if target_id not in available_ids or target_id == giver.inhabitant_id:
+            continue
+        target = frozen.inhabitant_by_id.get(target_id)
+        if target is None or (target.r, target.c) != (giver.r, giver.c):
+            continue
+        if not any(
+            target_id in frozen.zero_resource_ids.get((giver.r, giver.c, res), ())
+            for res in frozen.surplus_resources.get(giver.inhabitant_id, ())
+        ):
+            continue
+        candidates.append((target, score))
+
+    if not candidates:
+        return baseline_target
+    return min(
+        candidates,
+        key=lambda item: (
+            -item[1],
+            frozen.shuffled_rank.get(item[0].inhabitant_id, sys.maxsize),
+            item[0].inhabitant_id,
+        ),
+    )[0]
+
+
+def _relationship_biased_barter(
+    people,
+    t,
+    *,
+    social_config: SocialMemoryConfig,
+    rng,
+) -> frozenset[int]:
+    frozen = _freeze_social_economy_inputs(people, rng)
+
+    for group in frozen.shuffled_groups:
+        available_ids = {inhabitant.inhabitant_id for inhabitant in group}
+        for index in range(0, len(group) - 1, 2):
+            giver = group[index]
+            baseline_target = group[index + 1]
+            giver_id = giver.inhabitant_id
+            baseline_id = baseline_target.inhabitant_id
+
+            if giver_id not in available_ids or baseline_id not in available_ids:
+                available_ids.discard(giver_id)
+                available_ids.discard(baseline_id)
+                continue
+
+            selected = baseline_target
+            exploration = (t + giver_id) % 4 == 0
+            baseline_opportunity = any(
+                baseline_id in frozen.zero_resource_ids.get(
+                    (giver.r, giver.c, res), ()
+                )
+                for res in frozen.surplus_resources.get(giver_id, ())
+            )
+            if baseline_opportunity and not exploration:
+                selected = _known_eligible_partner(
+                    giver,
+                    baseline_target,
+                    available_ids,
+                    frozen,
+                )
+
+            selected_id = selected.inhabitant_id
+            if selected_id != baseline_id:
+                redirected = _attempt_individual_transfer(
+                    giver,
+                    selected,
+                    t=t,
+                    social_config=social_config,
+                    active_ids=frozen.active_ids,
+                )
+                if redirected:
+                    available_ids.discard(giver_id)
+                    available_ids.discard(selected_id)
+                    available_ids.discard(baseline_id)
+                    continue
+
+            _attempt_individual_transfer(
+                giver,
+                baseline_target,
+                t=t,
+                social_config=social_config,
+                active_ids=frozen.active_ids,
+            )
+            available_ids.discard(giver_id)
+            available_ids.discard(baseline_id)
+    return frozen.active_ids
+
+
+def _individual_barter(
+    people,
+    t,
+    event_log,
+    *,
+    social_config=_DISABLED_SOCIAL_CONFIG,
+    rng=random,
+) -> frozenset[int]:
+    del event_log  # Individual transfers intentionally remain internal state changes.
+    if not social_config.social_memory_enabled:
+        _historical_barter(
+            people,
+            t,
+            social_config=social_config,
+            active_ids=frozenset(),
+            rng=rng,
+        )
+        return frozenset()
+
+    if not social_config.social_partner_bias_enabled:
+        active_ids, _inhabitant_by_id = _assigned_active_ids(people)
+        _historical_barter(
+            people,
+            t,
+            social_config=social_config,
+            active_ids=active_ids,
+            rng=rng,
+        )
+        return active_ids
+
+    return _relationship_biased_barter(
+        people,
+        t,
+        social_config=social_config,
+        rng=rng,
+    )
 
 
 def _scarcity_shock(people, t, event_log):
@@ -363,7 +686,16 @@ def wealth_summary_line(factions, people) -> str:
 # Public tick function
 # ══════════════════════════════════════════════════════════════════════════════
 
-def economy_tick(people, factions, t, event_log, *, raids_enabled=True):
+def economy_tick(
+    people,
+    factions,
+    t,
+    event_log,
+    *,
+    raids_enabled=True,
+    social_config=_DISABLED_SOCIAL_CONFIG,
+    rng=random,
+):
     """Run one economy tick, optionally suppressing hostile faction raids."""
     active = [f for f in factions if f.members]
 
@@ -386,11 +718,29 @@ def economy_tick(people, factions, t, event_log, *, raids_enabled=True):
         _scarcity_shock(people, t, event_log)
 
     # 4. Individual barter
-    _individual_barter(people, t, event_log)
+    if not social_config.social_memory_enabled:
+        active_ids = _individual_barter(people, t, event_log)
+    else:
+        active_ids = _individual_barter(
+            people,
+            t,
+            event_log,
+            social_config=social_config,
+            rng=rng,
+        )
 
     # 5. Inter-faction trade (every 3 ticks to avoid log spam)
     if t % 3 == 0 and len(active) >= 2:
-        _faction_trade(active, t, event_log)
+        if not social_config.social_memory_enabled:
+            _faction_trade(active, t, event_log)
+        else:
+            _faction_trade(
+                active,
+                t,
+                event_log,
+                social_config=social_config,
+                active_ids=active_ids,
+            )
 
     # 6. Raiding (tension > 35; see _faction_raids)
     if raids_enabled and len(active) >= 2:

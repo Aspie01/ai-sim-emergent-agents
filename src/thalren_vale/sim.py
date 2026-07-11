@@ -41,7 +41,8 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 # ── Layer imports ──────────────────────────────────────────────────────────
 from .world       import (world, tick as _world_tick, GRID, BIOME_MAX,
-                          grid_add, grid_remove, update_map_bounds,
+                          grid_admit, rollback_grid_admission,
+                          grid_remove, update_map_bounds,
                           grid_occupants, get_settlement_at, reseed_world)
 from .inhabitants import (Inhabitant, do_tick, do_tick_preamble, do_tick_body,
                           is_winter, regen_rate,
@@ -58,6 +59,7 @@ from . import mythology
 from . import display
 from . import dashboard_bridge
 from . import religion
+from .social import maintain_relationships
 
 TICKS = config.TICKS
 
@@ -105,6 +107,7 @@ _LAYER1_THREADS = 4   # one per logical core (N95)
 _world_lock  = threading.Lock()
 _log_lock    = threading.Lock()
 _trade_lock  = threading.Lock()
+_admission_lock = threading.Lock()
 
 
 def reset_runtime_state() -> None:
@@ -116,6 +119,10 @@ def reset_runtime_state() -> None:
             plugin.on_unload()
         except Exception:
             pass
+    for inhabitant in (*people, *all_dead):
+        relationships = getattr(inhabitant, 'relationships', None)
+        if isinstance(relationships, dict):
+            relationships.clear()
     state.reset()
     _last_dynamic_t = 0
 
@@ -139,14 +146,35 @@ def reset_runtime_state() -> None:
     display._FACT_ABBREV.clear()
 
 
-def _spawn(inh) -> None:
-    """Append *inh* to the global people list and register it in grid_occupants.
+def _spawn(inh, *, memberships: tuple[list, ...] = ()) -> None:
+    """Atomically admit one new inhabitant and consume one run-scoped ID."""
+    with _admission_lock:
+        if getattr(inh, 'inhabitant_id', None) is not None:
+            raise ValueError('cannot admit an inhabitant with an assigned ID')
+        if any(existing is inh for existing in people):
+            raise ValueError('inhabitant is already admitted')
+        if len(people) >= POP_CAP:
+            raise ValueError('cannot admit inhabitant beyond the population cap')
 
-    Using this helper (instead of bare people.append) guarantees the spatial
-    partition stays in sync with the authoritative list at every spawn site.
-    """
-    people.append(inh)
-    grid_add(inh)
+        candidate = state.next_inhabitant_id
+        if any(
+            getattr(existing, 'inhabitant_id', None) == candidate
+            for existing in (*people, *all_dead)
+        ):
+            raise ValueError(f'next inhabitant ID {candidate} is already in use')
+        try:
+            grid_admit(
+                inh,
+                people,
+                additional_collections=memberships,
+                on_validated=lambda: state.stage_inhabitant_id(
+                    inh, candidate),
+                on_inserted=lambda: state.commit_inhabitant_id(inh, candidate),
+            )
+        except BaseException:
+            rollback_grid_admission(inh, people)
+            state.rollback_inhabitant_id(inh, candidate)
+            raise
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -441,15 +469,38 @@ def factions_layer(t: int, dead_names: set) -> None:
         f.remove_dead(dead_names)
 
 
-def economy_layer(t: int) -> None:
+def economy_layer(
+    t: int,
+    social_config: config.SocialMemoryConfig | None = None,
+) -> None:
     """Layer 4: currency, pricing, trade, raids, scarcity, wealth."""
-    economy.economy_tick(
-        people,
-        factions,
-        t,
-        event_log,
-        raids_enabled='raids' not in _disabled_layers,
-    )
+    if social_config is None:
+        social_config = config.SocialMemoryConfig(
+            social_memory_enabled=False,
+            social_partner_bias_enabled=False,
+            maximum_social_ties=config.DEFAULT_MAXIMUM_SOCIAL_TIES,
+            relationship_decay_interval=(
+                config.DEFAULT_RELATIONSHIP_DECAY_INTERVAL
+            ),
+        )
+    if not social_config.social_memory_enabled:
+        economy.economy_tick(
+            people,
+            factions,
+            t,
+            event_log,
+            raids_enabled='raids' not in _disabled_layers,
+        )
+    else:
+        economy.economy_tick(
+            people,
+            factions,
+            t,
+            event_log,
+            raids_enabled='raids' not in _disabled_layers,
+            social_config=social_config,
+            rng=random,
+        )
 
 
 def combat_layer(t: int) -> None:
@@ -757,7 +808,7 @@ def procreation_layer(t: int) -> None:
 
       • POP_CAP is checked *inside* the lock — never breached by a race.
       • is_procreating is set and cleared atomically — no pair is double-used.
-      • Food deduction, name resolution, and people.append() are one atomic op.
+      • Food deduction, name resolution, and authoritative admission are atomic.
 
     A try/finally guarantees is_procreating is always cleared, even on exceptions.
     """
@@ -818,26 +869,31 @@ def procreation_layer(t: int) -> None:
                 # Food deduction, unique naming, and child construction — all atomic
                 child = make_child(pa, pb, nm, people)
                 child.faction = None
+                inherited_faction = None
 
                 # Inherit faction: shared faction takes priority, else parent_a's faction
                 if pa.faction and pa.faction == pb.faction:
                     child.faction = pa.faction
                     for f in factions:
                         if f.name == child.faction:
-                            f.members.append(child)
+                            inherited_faction = f
                             break
                 elif pa.faction:
                     child.faction = pa.faction
                     for f in factions:
                         if f.name == child.faction:
-                            f.members.append(child)
+                            inherited_faction = f
                             break
 
-                # Append while still under lock — POP_CAP respected even with 4 threads
-                # grid_add inside the lock so the child is visible in grid_occupants
-                # to other threads the moment people.append() completes.
-                grid_add(child)
-                people.append(child)
+                # Atomic admission assigns the stable ID and exposes the child
+                # in every existing authoritative collection as one closed
+                # transaction.
+                memberships = (
+                    (inherited_faction.members,)
+                    if inherited_faction is not None
+                    else ()
+                )
+                _spawn(child, memberships=memberships)
 
                 # Religion inheritance: 95 % chance when the birth tile is
                 # within temple range of the parent faction's temple.
@@ -1632,7 +1688,9 @@ def run() -> None:
 
     # ── CLI argument parsing ────────────────────────────────────────────────
     _parser = argparse.ArgumentParser(
-        description='Thalren Vale civilisation simulation')
+        description='Thalren Vale civilisation simulation',
+        allow_abbrev=False,
+    )
     _parser.add_argument('--seed', type=int, default=None,
                          help='Random seed for reproducibility')
     _parser.add_argument('--condition', type=str, default='baseline',
@@ -1663,6 +1721,26 @@ def run() -> None:
     _parser.add_argument('--log-mode', choices=sorted(config.VALID_LOG_MODES),
                          default='full',
                          help='Output policy: full, summary, metrics_only, or off')
+    _social_memory = _parser.add_mutually_exclusive_group()
+    _social_memory.add_argument(
+        '--enable-social-memory', action='store_true',
+        help='Enable engineering-only persistent social memory')
+    _social_memory.add_argument(
+        '--disable-social-memory', action='store_true',
+        help='Explicitly retain the historical no-social-memory baseline')
+    _social_bias = _parser.add_mutually_exclusive_group()
+    _social_bias.add_argument(
+        '--enable-social-partner-bias', action='store_true',
+        help='Enable engineering-only relationship-biased resource sharing')
+    _social_bias.add_argument(
+        '--disable-social-partner-bias', action='store_true',
+        help='Record enabled social memory without partner-choice feedback')
+    _parser.add_argument(
+        '--maximum-social-ties', type=int, default=None,
+        help='Maximum directed social ties per inhabitant (engineering only)')
+    _parser.add_argument(
+        '--relationship-decay-interval', type=int, default=None,
+        help='Ticks between deterministic relationship decay passes')
     _args = _parser.parse_args()
 
     # ── Validate and apply effective configuration ──────────────────────────
@@ -1670,6 +1748,12 @@ def run() -> None:
         _run_config = config.SimulationConfig.from_cli(_args)
     except ValueError as exc:
         _parser.error(str(exc))
+    for _notice in _run_config.social_control_notices:
+        if _notice == config.SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY:
+            sys.stderr.write(
+                'warning: social partner bias was requested without social '
+                'memory; effective partner bias normalized to false and the '
+                'run is not V2-ready\n')
     _run_config.apply_legacy_globals()
     TICKS = _run_config.ticks
     POP_CAP = _run_config.population_cap
@@ -1764,6 +1848,7 @@ def run() -> None:
         for t in range(1, TICKS + 1):
             _current_tick = t
             _t0               = time.time()
+            _dead_count_at_tick_start = len(all_dead)
             event_log.begin_observation_tick(t)
             winter            = is_winter(t)
             prev_winter       = is_winter(t - 1) if t > 1 else False
@@ -1802,7 +1887,7 @@ def run() -> None:
             # ── Layer 4: Economy ────────────────────────────────────────────
             _t_eco_start = time.perf_counter()
             if 'economy' not in _disabled_layers:
-                economy_layer(t)
+                economy_layer(t, _run_config.social_memory_config)
             _t_eco = (time.perf_counter() - _t_eco_start) * 1000
 
             # ── Layer 5: Combat ─────────────────────────────────────────────
@@ -2048,6 +2133,21 @@ def run() -> None:
                     _peace_applied  = set()
             _t_antistag = (time.perf_counter() - _t_antistag_start) * 1000
 
+            # ── Bounded social-memory maintenance ──────────────────────────
+            # Skip the subsystem entirely for the historical baseline.
+            _t_social = 0.0
+            if _run_config.social_memory_enabled:
+                _t_social_start = time.perf_counter()
+                maintain_relationships(
+                    people,
+                    all_dead[_dead_count_at_tick_start:],
+                    tick=t,
+                    config=_run_config.social_memory_config,
+                )
+                _t_social = (
+                    time.perf_counter() - _t_social_start
+                ) * 1000
+
             # ── Authoritative end-of-tick structured observations ───────────
             # Observation moves here so final metrics describe state after all
             # enabled layers and anti-stagnation work. It must not consume RNG
@@ -2071,7 +2171,8 @@ def run() -> None:
                 _t_total = (_t_world + _t_inh + _t_bel + _t_fac + _t_proc + 
                            _t_eco + _t_comb + _t_tech + _t_dip + _t_rel + 
                            _t_map + _t_dyn + _t_met + _t_solo + _t_we + 
-                           _t_plug + _t_era + _t_house + _t_antistag)
+                           _t_plug + _t_era + _t_house + _t_antistag
+                           + _t_social)
                 _pop = len([i for i in people if i.health > 0])
                 _real.write(f"\n=== Tick {t} timing (ms) | Pop: {_pop} ===\n")
                 _real.write(f"  World:         {_t_world:>8.1f}\n")
@@ -2093,6 +2194,8 @@ def run() -> None:
                 _real.write(f"  Era:           {_t_era:>8.1f}\n")
                 _real.write(f"  Housekeeping:  {_t_house:>8.1f}\n")
                 _real.write(f"  AntiStag:      {_t_antistag:>8.1f}\n")
+                if _run_config.social_memory_enabled:
+                    _real.write(f"  SocialMemory:  {_t_social:>8.1f}\n")
                 _real.write(f"  ────────────────────────\n")
                 _real.write(f"  SUM (layers):  {_t_total:>8.1f}\n")
                 _real.flush()

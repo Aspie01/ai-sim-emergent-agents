@@ -26,11 +26,12 @@ from .artifact_contract import (
     require_safe_manifest_target,
 )
 from .events import EVENT_SCHEMA_VERSION
+from .social import relationship_records
 
 
-def _person_record(person) -> dict:
+def _person_record(person, *, include_social: bool = False) -> dict:
     religion = getattr(person, "religion", None)
-    return {
+    record = {
         "name": person.name,
         "position": [person.r, person.c],
         "health": person.health,
@@ -44,6 +45,14 @@ def _person_record(person) -> dict:
         "religion": getattr(religion, "name", None),
         "is_priest": person.is_priest,
     }
+    if include_social:
+        inhabitant_id = getattr(person, "inhabitant_id", None)
+        if type(inhabitant_id) is not int or inhabitant_id < 0:
+            raise ValueError(
+                "enabled social state requires assigned inhabitant IDs")
+        record["inhabitant_id"] = inhabitant_id
+        record["relationships"] = relationship_records(person)
+    return record
 
 
 def _faction_record(faction) -> dict:
@@ -128,20 +137,68 @@ def _json_safe(value):
     raise TypeError(f"unsupported canonical state value: {type(value).__name__}")
 
 
+def _require_empty_disabled_relationships(state) -> None:
+    """Reject social state that the historical disabled hash would omit."""
+    for cohort, inhabitants in (
+        ("living", state.people),
+        ("dead", state.all_dead),
+    ):
+        for index, inhabitant in enumerate(inhabitants):
+            relationships = getattr(inhabitant, "relationships", {})
+            if not relationships:
+                continue
+            name = getattr(inhabitant, "name", None)
+            inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+            raise ValueError(
+                "disabled social memory requires empty relationships: "
+                f"{cohort}[{index}] name={name!r} "
+                f"inhabitant_id={inhabitant_id!r} has "
+                f"{len(relationships)} relationship(s)"
+            )
+
+
 def canonical_state_hash(state, world: list, configuration: dict) -> str:
     """Return a SHA-256 fingerprint of behaviorally relevant final state."""
-    non_behavioral_keys = {"condition", "log_mode"}
+    social_memory_enabled = configuration.get("social_memory_enabled") is True
+    non_behavioral_keys = {
+        "condition",
+        "log_mode",
+        "social_controls_status",
+        "social_control_notices",
+    }
+    if not social_memory_enabled:
+        _require_empty_disabled_relationships(state)
+        # The disabled feature is a direct historical baseline. Run IDs,
+        # allocator state, and all social controls/state are intentionally
+        # absent from the behavioral payload so frozen hashes stay unchanged.
+        non_behavioral_keys.update({
+            "social_memory_enabled",
+            "social_partner_bias_enabled",
+            "maximum_social_ties",
+            "relationship_decay_interval",
+        })
     behavior_configuration = {
         key: value
         for key, value in configuration.items()
         if key not in non_behavioral_keys
     }
+    people_records = [
+        _person_record(person, include_social=social_memory_enabled)
+        for person in state.people
+    ]
+    dead_records = [
+        _person_record(person, include_social=social_memory_enabled)
+        for person in state.all_dead
+    ]
+    person_sort_key = (
+        (lambda record: record["inhabitant_id"])
+        if social_memory_enabled
+        else (lambda record: record["name"])
+    )
     payload = {
         "configuration": behavior_configuration,
-        "people": sorted((_person_record(p) for p in state.people),
-                         key=lambda record: record["name"]),
-        "dead": sorted((_person_record(p) for p in state.all_dead),
-                       key=lambda record: record["name"]),
+        "people": sorted(people_records, key=person_sort_key),
+        "dead": sorted(dead_records, key=person_sort_key),
         "factions": sorted((_faction_record(f) for f in state.factions),
                            key=lambda record: record["name"]),
         "active_wars": sorted((_war_record(w) for w in state.active_wars),
@@ -168,6 +225,12 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             for row in world
         ],
     }
+    if social_memory_enabled:
+        next_inhabitant_id = getattr(state, "next_inhabitant_id", None)
+        if type(next_inhabitant_id) is not int or next_inhabitant_id < 0:
+            raise ValueError(
+                "enabled social state requires a nonnegative ID allocator")
+        payload["next_inhabitant_id"] = next_inhabitant_id
     encoded = json.dumps(
         _json_safe(payload),
         ensure_ascii=False,

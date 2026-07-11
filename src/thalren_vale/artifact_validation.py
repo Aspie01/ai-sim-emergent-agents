@@ -44,7 +44,14 @@ from .artifact_contract import (
     require_real_directory,
     validate_inventory_relative_path,
 )
-from .config import VALID_DISABLE_LAYERS, VALID_LOG_MODES
+from .config import (
+    DEFAULT_MAXIMUM_SOCIAL_TIES,
+    DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
+    VALID_DISABLE_LAYERS,
+    VALID_LOG_MODES,
+    VALID_SOCIAL_CONTROL_NOTICES,
+    VALID_SOCIAL_CONTROL_STATUSES,
+)
 from .events import EVENT_SCHEMA_VERSION, EVENT_TYPES_BY_SCHEMA
 
 
@@ -410,6 +417,141 @@ def _add(
     row: int | None = None,
 ) -> None:
     issues.add(code, message, artifact, row)
+
+
+def _validate_social_configuration(
+    config: dict,
+    issues: _IssueCollector,
+) -> None:
+    """Validate present engineering social controls without requiring them.
+
+    Missing controls remain valid for historical schema-2 artifacts, but the
+    separate readiness veto rejects their use as V2 evidence.
+    """
+    validators = {
+        "social_memory_enabled": _is_bool,
+        "social_partner_bias_enabled": _is_bool,
+        "maximum_social_ties": (
+            lambda value: _is_int(value) and 1 <= value <= 128
+        ),
+        "relationship_decay_interval": (
+            lambda value: _is_int(value) and value >= 1
+        ),
+        "social_controls_status": (
+            lambda value: _is_str(value)
+            and value in VALID_SOCIAL_CONTROL_STATUSES
+        ),
+        "social_control_notices": (
+            lambda value: _is_list(value)
+            and all(
+                _is_str(item) and item in VALID_SOCIAL_CONTROL_NOTICES
+                for item in value
+            )
+            and len(value) == len(set(value))
+            and value == sorted(value)
+        ),
+    }
+    valid_present: set[str] = set()
+    for name, validator in validators.items():
+        if name not in config:
+            continue
+        if not validator(config[name]):
+            _add(
+                issues,
+                "invalid_social_configuration",
+                f"{name} is malformed",
+                "manifest",
+            )
+        else:
+            valid_present.add(name)
+
+    combination_errors: list[str] = []
+
+    def add_combination_error(message: str) -> None:
+        if message not in combination_errors:
+            combination_errors.append(message)
+
+    memory_present = "social_memory_enabled" in valid_present
+    bias_present = "social_partner_bias_enabled" in valid_present
+    maximum_present = "maximum_social_ties" in valid_present
+    decay_present = "relationship_decay_interval" in valid_present
+    status_present = "social_controls_status" in valid_present
+    notices_present = "social_control_notices" in valid_present
+
+    memory_enabled = config.get("social_memory_enabled") if memory_present else None
+    bias_enabled = config.get("social_partner_bias_enabled") if bias_present else None
+    status = config.get("social_controls_status") if status_present else None
+    notices = config.get("social_control_notices") if notices_present else None
+
+    if memory_present and bias_present and bias_enabled and not memory_enabled:
+        add_combination_error(
+            "effective partner bias cannot be enabled without social memory")
+
+    if notices_present:
+        assert type(notices) is list
+        if notices:
+            if (memory_present and memory_enabled) or (
+                bias_present and bias_enabled
+            ):
+                add_combination_error(
+                    "normalization notice conflicts with effective social controls")
+            if status_present and status != "normalized_uncontracted":
+                add_combination_error(
+                    "social_controls_status conflicts with normalization notice")
+        elif status_present and status == "normalized_uncontracted":
+            add_combination_error(
+                "normalized social_controls_status requires a normalization notice")
+
+    if status_present:
+        if status == "disabled":
+            disabled_conflict = (
+                (memory_present and memory_enabled)
+                or (bias_present and bias_enabled)
+                or (
+                    maximum_present
+                    and config["maximum_social_ties"]
+                    != DEFAULT_MAXIMUM_SOCIAL_TIES
+                )
+                or (
+                    decay_present
+                    and config["relationship_decay_interval"]
+                    != DEFAULT_RELATIONSHIP_DECAY_INTERVAL
+                )
+            )
+            if disabled_conflict:
+                add_combination_error(
+                    "disabled social_controls_status conflicts with present controls")
+        elif status == "normalized_uncontracted":
+            if (memory_present and memory_enabled) or (
+                bias_present and bias_enabled
+            ):
+                add_combination_error(
+                    "normalized social_controls_status conflicts with present controls")
+        elif status == "engineering_only_uncontracted":
+            controls_complete = {
+                "social_memory_enabled",
+                "social_partner_bias_enabled",
+                "maximum_social_ties",
+                "relationship_decay_interval",
+            } <= valid_present
+            if controls_complete and (
+                not memory_enabled
+                and not bias_enabled
+                and config["maximum_social_ties"]
+                == DEFAULT_MAXIMUM_SOCIAL_TIES
+                and config["relationship_decay_interval"]
+                == DEFAULT_RELATIONSHIP_DECAY_INTERVAL
+            ):
+                add_combination_error(
+                    "engineering social_controls_status requires a nondefault control")
+
+    for message in combination_errors:
+        _add(
+            issues,
+            "invalid_social_configuration",
+            message,
+            "manifest",
+        )
 
 
 def _parse_int(
@@ -1414,6 +1556,26 @@ def _readiness_issues(
     contract: ExpectedRunContract | None,
 ) -> list[ValidationIssue]:
     issues = _IssueCollector()
+    config_value = manifest.get("configuration")
+    config = config_value if _is_dict(config_value) else {}
+    safe_social_controls = {
+        "social_memory_enabled": False,
+        "social_partner_bias_enabled": False,
+        "maximum_social_ties": DEFAULT_MAXIMUM_SOCIAL_TIES,
+        "relationship_decay_interval": DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
+        "social_controls_status": "disabled",
+        "social_control_notices": [],
+    }
+    for name, expected in safe_social_controls.items():
+        actual = config.get(name)
+        if not _exact_equal(actual, expected):
+            _add(
+                issues,
+                "social_controls_not_v2_ready",
+                f"configuration.{name}: expected {expected!r}, "
+                f"found {actual!r}",
+                "manifest",
+            )
     if contract is None:
         _add(issues, "missing_expected_run_contract", "no complete external expected-run contract was supplied", "manifest")
         return issues.materialize()
@@ -1422,10 +1584,8 @@ def _readiness_issues(
         _add(issues, "incomplete_expected_run_contract", ", ".join(incomplete), "manifest")
         return issues.materialize()
     assert contract.disabled_layers is not None
-    config_value = manifest.get("configuration")
     policy_value = manifest.get("artifact_policy")
     code_value = manifest.get("code")
-    config = config_value if _is_dict(config_value) else {}
     policy = policy_value if _is_dict(policy_value) else {}
     code = code_value if _is_dict(code_value) else {}
     if not _is_dict(config_value):
@@ -1584,6 +1744,7 @@ def _validate_strict(
             "raids" not in canonical_disabled
         ):
             _add(issues, "invalid_configuration", "raid policy conflicts with disabled layers", "manifest")
+        _validate_social_configuration(config, issues)
     execution_mode = manifest.get("execution_mode")
     if not _is_str(execution_mode) or execution_mode not in {"serial", "threaded"}:
         _add(issues, "invalid_execution_mode", repr(manifest.get("execution_mode")), "manifest")

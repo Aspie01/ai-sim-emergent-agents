@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass, field
 
+from .coalitions import CoalitionRuntimeState
+
 
 @dataclass
 class SimulationState:
@@ -35,6 +37,8 @@ class SimulationState:
     religions: list = field(default_factory=list)
     holy_wars: set = field(default_factory=set)
     next_inhabitant_id: int = 0
+    coalitions: CoalitionRuntimeState = field(
+        default_factory=CoalitionRuntimeState)
 
     def stage_inhabitant_id(self, inhabitant, candidate: int) -> None:
         """Assign, but do not yet consume, the next authoritative run ID."""
@@ -86,3 +90,4 @@ class SimulationState:
         self.religions.clear()
         self.holy_wars.clear()
         self.next_inhabitant_id = 0
+        self.coalitions = CoalitionRuntimeState()

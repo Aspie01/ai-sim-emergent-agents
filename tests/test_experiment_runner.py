@@ -168,6 +168,39 @@ EQUALS_SOCIAL_ARGUMENTS = [
     ["--relationship-decay-interval=10"],
 ]
 
+ABBREVIATED_COALITION_ARGUMENTS = [
+    ["--enable-coalition-e"],
+    ["--disable-coalition-e"],
+    ["--coalition-minimum-s", "3"],
+    ["--coalition-trust-t", "0.24"],
+    ["--coalition-familiarity-t", "0.40"],
+    ["--coalition-maximum-g", "0.20"],
+    ["--coalition-persistence-t", "5"],
+    ["--maximum-active-c", "32"],
+]
+
+FULL_COALITION_ARGUMENTS = [
+    ["--enable-coalition-emergence"],
+    ["--disable-coalition-emergence"],
+    ["--coalition-minimum-size", "3"],
+    ["--coalition-trust-threshold", "0.24"],
+    ["--coalition-familiarity-threshold", "0.40"],
+    ["--coalition-maximum-grievance", "0.20"],
+    ["--coalition-persistence-ticks", "5"],
+    ["--maximum-active-coalitions", "32"],
+]
+
+EQUALS_COALITION_ARGUMENTS = [
+    ["--enable-coalition-emergence=true"],
+    ["--disable-coalition-emergence=true"],
+    ["--coalition-minimum-size=3"],
+    ["--coalition-trust-threshold=0.24"],
+    ["--coalition-familiarity-threshold=0.40"],
+    ["--coalition-maximum-grievance=0.20"],
+    ["--coalition-persistence-ticks=5"],
+    ["--maximum-active-coalitions=32"],
+]
+
 
 @pytest.mark.parametrize(
     "extra_args",
@@ -197,6 +230,59 @@ def test_runner_rejects_uncontracted_social_controls_before_creating_root(
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    "extra_args",
+    ABBREVIATED_COALITION_ARGUMENTS
+    + FULL_COALITION_ARGUMENTS
+    + EQUALS_COALITION_ARGUMENTS,
+)
+def test_runner_rejects_uncontracted_coalition_controls_before_creating_root(
+    tmp_path,
+    monkeypatch,
+    extra_args,
+):
+    output = tmp_path / "outputs"
+    cell = fresh_cell_spec()[0]
+    cell["extra_args"] = extra_args
+    child_calls = []
+    monkeypatch.setattr(
+        runner,
+        "_simulation_command",
+        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+    )
+
+    with pytest.raises(ValueError, match="uncontracted coalition control"):
+        runner._run_cells_in_fresh_root([cell], output)
+
+    assert child_calls == []
+    assert not output.exists()
+
+
+def test_rejected_coalition_control_preserves_existing_output_tree(
+    tmp_path,
+    monkeypatch,
+):
+    output = tmp_path / "outputs"
+    output.mkdir()
+    sentinel = output / "sentinel.bin"
+    sentinel.write_bytes(b"preserve coalition rejection\x00")
+    before = snapshot_tree(output)
+    cell = fresh_cell_spec()[0]
+    cell["extra_args"] = ["--coalition-minimum-size=3"]
+    child_calls = []
+    monkeypatch.setattr(
+        runner,
+        "_simulation_command",
+        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+    )
+
+    with pytest.raises(ValueError, match="uncontracted coalition control"):
+        runner._run_cells_in_fresh_root([cell], output)
+
+    assert child_calls == []
+    assert snapshot_tree(output) == before
+
+
 def test_runner_accepts_unrelated_valid_extra_arguments():
     cell = fresh_cell_spec()[0]
     cell["extra_args"] = ["--disable-raids"]
@@ -208,6 +294,39 @@ def test_runner_accepts_unrelated_valid_extra_arguments():
 
 @pytest.mark.parametrize("extra_args", ABBREVIATED_SOCIAL_ARGUMENTS)
 def test_simulator_rejects_abbreviated_social_options_before_execution(
+    tmp_path,
+    extra_args,
+):
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(runner.SOURCE_ROOT)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "thalren_vale",
+            *extra_args,
+            "--ticks",
+            "0",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "unrecognized arguments" in result.stderr
+    assert extra_args[0] in result.stderr
+    assert "ticks must be at least 1" not in result.stderr
+    assert not (tmp_path / "data").exists()
+
+
+@pytest.mark.parametrize("extra_args", ABBREVIATED_COALITION_ARGUMENTS)
+def test_simulator_rejects_abbreviated_coalition_options_before_execution(
     tmp_path,
     extra_args,
 ):
@@ -256,6 +375,26 @@ def test_plan_loading_rejects_engineering_social_controls(tmp_path):
     )
 
     with pytest.raises(ValueError, match="uncontracted social control"):
+        runner.load_plan(plan_path)
+
+
+def test_plan_loading_rejects_engineering_coalition_controls(tmp_path):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({
+            "schema_version": runner.PLAN_SCHEMA_VERSION,
+            "experiment_id": "coalitions-not-contracted",
+            "conditions": [{
+                "name": "baseline",
+                "seeds": "1",
+                "ticks": 1,
+                "extra_args": "--enable-coalition-emergence",
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="uncontracted coalition control"):
         runner.load_plan(plan_path)
 
 

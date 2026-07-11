@@ -6,6 +6,7 @@ import pytest
 
 from thalren_vale import combat, diplomacy, economy, factions, religion, sim
 from thalren_vale.events import JournalClaimError
+from thalren_vale.coalitions import CoalitionCandidate, InformalCoalition
 
 
 def test_domain_modules_share_state_owned_collections():
@@ -29,6 +30,15 @@ def test_reset_runtime_state_clears_core_and_domain_stores():
     economy.trade_routes[frozenset(("a", "b"))] = {}
     diplomacy._reputation["a"] = 5
     religion._HOLY_WARS.add(frozenset(("a", "b")))
+    sim.state.coalitions.candidates[(1, 2, 3)] = CoalitionCandidate(
+        (1, 2, 3), 1, 1, 1)
+    sim.state.coalitions.active_coalitions[0] = InformalCoalition(
+        0, 1, (4, 5, 6))
+    sim.state.coalitions.member_to_coalition.update({4: 0, 5: 0, 6: 0})
+    sim.state.coalitions.next_coalition_id = 1
+    sim.state.coalitions.candidate_formation_count = 1
+    sim.state.coalitions.last_observation_tick = 1
+    sim.state.coalitions.last_active_inhabitant_ids = (1, 2, 3, 4, 5, 6)
 
     sim.reset_runtime_state()
 
@@ -38,6 +48,11 @@ def test_reset_runtime_state_clears_core_and_domain_stores():
     assert economy.trade_routes == {}
     assert diplomacy._reputation == {}
     assert religion._HOLY_WARS == set()
+    assert sim.state.coalitions.candidates == {}
+    assert sim.state.coalitions.active_coalitions == {}
+    assert sim.state.coalitions.member_to_coalition == {}
+    assert sim.state.coalitions.next_coalition_id == 0
+    assert sim.state.coalitions.last_observation_tick is None
 
 
 def test_reset_runtime_state_invalidates_prior_journal_tokens():

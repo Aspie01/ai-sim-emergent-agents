@@ -139,6 +139,22 @@ def test_enabled_social_state_hash_is_stable_across_processes(tmp_path):
     )
 
 
+def test_enabled_coalition_state_hash_is_stable_across_processes(tmp_path):
+    extra_args = (
+        "--enable-social-memory",
+        "--enable-coalition-emergence",
+    )
+    first = run_and_read_manifest(tmp_path / "first", 456, extra_args)
+    second = run_and_read_manifest(tmp_path / "second", 456, extra_args)
+
+    assert first["state_hash"] == second["state_hash"]
+    assert first["configuration"] == second["configuration"]
+    assert first["configuration"]["coalition_emergence_enabled"] is True
+    assert first["configuration"]["coalition_controls_status"] == (
+        "engineering_only_uncontracted"
+    )
+
+
 def test_raid_disabled_runs_are_deterministic_and_record_policy(tmp_path):
     extra_args = ("--disable-raids",)
     first = run_and_read_manifest(tmp_path / "first", 456, extra_args)
@@ -179,6 +195,15 @@ def test_manifest_records_code_provenance(tmp_path):
     assert manifest["configuration"]["relationship_decay_interval"] == 25
     assert manifest["configuration"]["social_controls_status"] == "disabled"
     assert manifest["configuration"]["social_control_notices"] == []
+    assert manifest["configuration"]["coalition_emergence_enabled"] is False
+    assert manifest["configuration"]["coalition_minimum_size"] == 3
+    assert manifest["configuration"]["coalition_trust_threshold"] == 0.24
+    assert manifest["configuration"]["coalition_familiarity_threshold"] == 0.40
+    assert manifest["configuration"]["coalition_maximum_grievance"] == 0.20
+    assert manifest["configuration"]["coalition_persistence_ticks"] == 5
+    assert manifest["configuration"]["maximum_active_coalitions"] == 32
+    assert manifest["configuration"]["coalition_controls_status"] == "disabled"
+    assert manifest["configuration"]["coalition_control_notices"] == []
 
 
 def test_cli_normalization_warns_and_preserves_requested_bias_provenance(tmp_path):
@@ -224,6 +249,55 @@ def test_cli_normalization_warns_and_preserves_requested_bias_provenance(tmp_pat
     assert configuration["social_control_notices"] == [
         "partner_bias_requested_without_social_memory"
     ]
+
+
+def test_coalition_cli_normalization_warns_with_separate_provenance(tmp_path):
+    run_dir = tmp_path / "normalized-coalition"
+    run_dir.mkdir()
+    env = os.environ.copy()
+    env["PYTHONHASHSEED"] = "0"
+    env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "thalren_vale",
+            "--seed",
+            "123",
+            "--ticks",
+            "1",
+            "--condition",
+            "coalition-normalized",
+            "--disable-antistag",
+            "--log-mode",
+            "metrics_only",
+            "--enable-coalition-emergence",
+        ],
+        cwd=run_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "effective coalition emergence normalized to false" in result.stderr
+    manifest_path = (
+        run_dir
+        / "data"
+        / "run_manifest_coalition-normalized_seed_123.json"
+    )
+    configuration = json.loads(
+        manifest_path.read_text(encoding="utf-8"))["configuration"]
+    assert configuration["coalition_emergence_enabled"] is False
+    assert configuration["coalition_controls_status"] == "normalized_uncontracted"
+    assert configuration["coalition_control_notices"] == [
+        "coalition_emergence_requested_without_social_memory"
+    ]
+    assert configuration["social_controls_status"] == "disabled"
+    assert configuration["social_control_notices"] == []
 
 
 def _social_hash_fixture(*, owner_is_dead: bool = False):
@@ -333,3 +407,135 @@ def test_different_social_histories_change_enabled_state_hash():
     after = canonical_state_hash(state, world, configuration)
 
     assert before != after
+
+
+def _committed_social_hash_fixture():
+    from thalren_vale.inhabitants import Inhabitant
+    from thalren_vale.state import SimulationState
+
+    first = Inhabitant("A", 0, 0)
+    second = Inhabitant("B", 0, 0)
+    for inhabitant, inhabitant_id in ((first, 1), (second, 2)):
+        inhabitant.faction = None
+        inhabitant.inhabitant_id = inhabitant_id
+    state = SimulationState(people=[first, second], next_inhabitant_id=3)
+    world = [[{
+        "biome": "plains",
+        "habitable": True,
+        "resources": {"food": 1},
+    }]]
+    configuration = {
+        "ticks": 1,
+        "social_memory_enabled": True,
+        "social_partner_bias_enabled": False,
+        "maximum_social_ties": 32,
+        "relationship_decay_interval": 25,
+        "social_controls_status": "engineering_only_uncontracted",
+        "social_control_notices": [],
+    }
+    return first, second, state, world, configuration
+
+
+def _coalition_disabled_defaults():
+    return {
+        "coalition_emergence_enabled": False,
+        "coalition_minimum_size": 3,
+        "coalition_trust_threshold": 0.24,
+        "coalition_familiarity_threshold": 0.40,
+        "coalition_maximum_grievance": 0.20,
+        "coalition_persistence_ticks": 5,
+        "maximum_active_coalitions": 32,
+        "coalition_controls_status": "disabled",
+        "coalition_control_notices": [],
+    }
+
+
+def test_coalition_disabled_preserves_committed_social_memory_hashes():
+    from thalren_vale.config import SocialMemoryConfig
+    from thalren_vale.reproducibility import canonical_state_hash
+    from thalren_vale.social import InteractionKind, record_interaction
+
+    first, second, state, world, configuration = _committed_social_hash_fixture()
+    with_defaults = {**configuration, **_coalition_disabled_defaults()}
+
+    empty_before = canonical_state_hash(state, world, configuration)
+    empty_after = canonical_state_hash(state, world, with_defaults)
+    assert empty_before == empty_after == (
+        "1c9df3586cbec2c93cf83f00541fb9380acc2a320f8c8b917749a6b6a89b0b5a"
+    )
+
+    record_interaction(
+        first,
+        second,
+        InteractionKind.TRADE,
+        tick=1,
+        active_ids=frozenset({1, 2}),
+        config=SocialMemoryConfig(True, False, 32, 25),
+    )
+    trade_before = canonical_state_hash(state, world, configuration)
+    trade_after = canonical_state_hash(state, world, with_defaults)
+    assert trade_before == trade_after == (
+        "d467dad5a9efe93f2d69c06998747f01c0b74997039c2c77b95744f10bbdc70b"
+    )
+
+
+def test_disabled_hash_rejects_hidden_coalition_state():
+    from thalren_vale.coalitions import CoalitionCandidate
+    from thalren_vale.reproducibility import canonical_state_hash
+
+    _first, _second, state, world, configuration = (
+        _committed_social_hash_fixture())
+    configuration.update(_coalition_disabled_defaults())
+    state.coalitions.candidates[(1, 2, 3)] = CoalitionCandidate(
+        (1, 2, 3), 1, 1, 1)
+
+    with pytest.raises(ValueError, match="pristine coalition state"):
+        canonical_state_hash(state, world, configuration)
+
+
+def test_enabled_coalition_runtime_changes_canonical_hash():
+    from thalren_vale.coalitions import transition_informal_coalitions
+    from thalren_vale.config import CoalitionConfig
+    from thalren_vale.inhabitants import Inhabitant
+    from thalren_vale.reproducibility import canonical_state_hash
+    from thalren_vale.social import Relationship
+    from thalren_vale.state import SimulationState
+
+    people = [Inhabitant(name, 0, 0) for name in ("A", "B", "C")]
+    for inhabitant_id, inhabitant in enumerate(people, start=1):
+        inhabitant.inhabitant_id = inhabitant_id
+        inhabitant.faction = None
+    for first, second in ((0, 1), (1, 2), (0, 2)):
+        people[first].relationships[people[second].inhabitant_id] = Relationship(
+            trust=0.8, familiarity=0.8, interaction_count=1)
+        people[second].relationships[people[first].inhabitant_id] = Relationship(
+            trust=0.8, familiarity=0.8, interaction_count=1)
+    coalition_config = CoalitionConfig(True, 3, 0.24, 0.40, 0.20, 2, 32)
+    state = SimulationState(people=people, next_inhabitant_id=4)
+    world = [[{
+        "biome": "plains",
+        "habitable": True,
+        "resources": {"food": 1},
+    }]]
+    configuration = {
+        "ticks": 2,
+        "social_memory_enabled": True,
+        "social_partner_bias_enabled": False,
+        "maximum_social_ties": 32,
+        "relationship_decay_interval": 25,
+        "social_controls_status": "engineering_only_uncontracted",
+        "social_control_notices": [],
+        **_coalition_disabled_defaults(),
+        "coalition_emergence_enabled": True,
+        "coalition_persistence_ticks": 2,
+        "coalition_controls_status": "engineering_only_uncontracted",
+    }
+
+    state.coalitions = transition_informal_coalitions(
+        people, state.coalitions, tick=1, config=coalition_config)
+    candidate_hash = canonical_state_hash(state, world, configuration)
+    state.coalitions = transition_informal_coalitions(
+        people, state.coalitions, tick=2, config=coalition_config)
+    formed_hash = canonical_state_hash(state, world, configuration)
+
+    assert candidate_hash != formed_hash

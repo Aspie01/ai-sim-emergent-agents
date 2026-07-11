@@ -35,7 +35,10 @@ from thalren_vale.artifact_validation import (
     inspect_run_outputs,
 )
 from thalren_vale.events import EVENT_SCHEMA_VERSION
-from thalren_vale.config import SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY
+from thalren_vale.config import (
+    COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY,
+    SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY,
+)
 from thalren_vale.metrics import MetricsLogger
 from thalren_vale.reproducibility import (
     build_artifact_inventory,
@@ -246,6 +249,15 @@ def make_artifacts(
         "relationship_decay_interval": 25,
         "social_controls_status": "disabled",
         "social_control_notices": [],
+        "coalition_emergence_enabled": False,
+        "coalition_minimum_size": 3,
+        "coalition_trust_threshold": 0.24,
+        "coalition_familiarity_threshold": 0.40,
+        "coalition_maximum_grievance": 0.20,
+        "coalition_persistence_ticks": 5,
+        "maximum_active_coalitions": 32,
+        "coalition_controls_status": "disabled",
+        "coalition_control_notices": [],
     })
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return run_dir, manifest_path
@@ -746,6 +758,190 @@ def test_normalized_unsupported_social_request_is_preserved_and_blocks_ready(
     assert "social_controls_not_v2_ready" in readiness_codes(report)
     assert report.manifest["configuration"]["social_control_notices"] == [
         SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY
+    ]
+
+
+COALITION_CONFIGURATION_FIELDS = {
+    "coalition_emergence_enabled",
+    "coalition_minimum_size",
+    "coalition_trust_threshold",
+    "coalition_familiarity_threshold",
+    "coalition_maximum_grievance",
+    "coalition_persistence_ticks",
+    "maximum_active_coalitions",
+    "coalition_controls_status",
+    "coalition_control_notices",
+}
+
+
+def inspect_coalition_configuration(
+    tmp_path,
+    updates,
+    *,
+    replace_coalition_fields=False,
+):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    if replace_coalition_fields:
+        for field in COALITION_CONFIGURATION_FIELDS:
+            manifest["configuration"].pop(field, None)
+    manifest["configuration"].update(updates)
+    write_manifest(manifest_path, manifest)
+    return inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "coalition_emergence_enabled": True,
+            "coalition_controls_status": "engineering_only_uncontracted",
+            "social_memory_enabled": True,
+            "social_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "coalition_minimum_size": 4,
+            "coalition_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "coalition_trust_threshold": 0.30,
+            "coalition_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "coalition_familiarity_threshold": 0.50,
+            "coalition_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "coalition_maximum_grievance": 0.10,
+            "coalition_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "coalition_persistence_ticks": 6,
+            "coalition_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "maximum_active_coalitions": 16,
+            "coalition_controls_status": "engineering_only_uncontracted",
+        },
+    ],
+    ids=(
+        "enabled", "minimum-size", "trust", "familiarity", "grievance",
+        "persistence", "active-cap",
+    ),
+)
+def test_uncontracted_coalition_controls_block_v2_readiness(
+    tmp_path,
+    updates,
+):
+    report = inspect_coalition_configuration(tmp_path, updates)
+
+    assert report.valid and not report.v2_ready
+    assert "coalition_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize("missing", sorted(COALITION_CONFIGURATION_FIELDS))
+def test_missing_coalition_control_is_valid_but_not_v2_ready(
+    tmp_path,
+    missing,
+):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    del manifest["configuration"][missing]
+    write_manifest(manifest_path, manifest)
+
+    report = inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+    assert report.valid and not report.v2_ready
+    assert "coalition_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("coalition_emergence_enabled", 0),
+        ("coalition_minimum_size", True),
+        ("coalition_minimum_size", 2),
+        ("coalition_trust_threshold", 0),
+        ("coalition_familiarity_threshold", float("nan")),
+        ("coalition_maximum_grievance", 1.1),
+        ("coalition_persistence_ticks", 1),
+        ("maximum_active_coalitions", 0),
+        ("coalition_controls_status", "unknown"),
+        ("coalition_control_notices", "normalized"),
+    ],
+)
+def test_malformed_coalition_control_invalidates_artifact(
+    tmp_path,
+    field,
+    value,
+):
+    report = inspect_coalition_configuration(tmp_path, {field: value})
+
+    assert not report.valid and not report.v2_ready
+    assert "invalid_coalition_configuration" in issue_codes(report)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "coalition_emergence_enabled": True,
+            "coalition_controls_status": "disabled",
+        },
+        {
+            "coalition_controls_status": "normalized_uncontracted",
+            "coalition_control_notices": [],
+        },
+        {
+            "coalition_controls_status": "disabled",
+            "coalition_control_notices": [
+                COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY
+            ],
+        },
+        {
+            "coalition_controls_status": "engineering_only_uncontracted",
+            "coalition_control_notices": [
+                COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY
+            ],
+        },
+    ],
+)
+def test_inconsistent_coalition_status_invalidates_artifact(tmp_path, updates):
+    report = inspect_coalition_configuration(tmp_path, updates)
+
+    assert not report.valid and not report.v2_ready
+    assert "invalid_coalition_configuration" in issue_codes(report)
+
+
+def test_normalized_coalition_request_is_preserved_and_blocks_ready(tmp_path):
+    report = inspect_coalition_configuration(tmp_path, {
+        "coalition_emergence_enabled": False,
+        "coalition_controls_status": "normalized_uncontracted",
+        "coalition_control_notices": [
+            COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY
+        ],
+    })
+
+    assert report.valid and not report.v2_ready
+    assert "coalition_controls_not_v2_ready" in readiness_codes(report)
+    assert report.manifest["configuration"]["coalition_control_notices"] == [
+        COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY
     ]
 
 

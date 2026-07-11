@@ -27,6 +27,11 @@ from .artifact_contract import (
 )
 from .events import EVENT_SCHEMA_VERSION
 from .social import relationship_records
+from .coalitions import (
+    CoalitionRuntimeState,
+    canonical_candidate_snapshot,
+    canonical_coalition_snapshot,
+)
 
 
 def _person_record(person, *, include_social: bool = False) -> dict:
@@ -157,9 +162,65 @@ def _require_empty_disabled_relationships(state) -> None:
             )
 
 
+def _require_empty_disabled_coalition_state(state) -> None:
+    """Reject coalition state omitted from the coalition-disabled hash."""
+    runtime = getattr(state, "coalitions", None)
+    if runtime is None:
+        return
+    if not isinstance(runtime, CoalitionRuntimeState):
+        raise ValueError("disabled coalition state has an invalid runtime type")
+    unexpected = {
+        "candidates": bool(runtime.candidates),
+        "active_coalitions": bool(runtime.active_coalitions),
+        "member_to_coalition": bool(runtime.member_to_coalition),
+        "next_coalition_id": runtime.next_coalition_id != 0,
+        "candidate_formation_count": runtime.candidate_formation_count != 0,
+        "split_event_count": runtime.split_event_count != 0,
+        "split_child_count": runtime.split_child_count != 0,
+        "dissolution_count": runtime.dissolution_count != 0,
+        "last_observation_tick": runtime.last_observation_tick is not None,
+        "last_active_inhabitant_ids": bool(runtime.last_active_inhabitant_ids),
+        "last_qualifying_reciprocal_edge_count": (
+            runtime.last_qualifying_reciprocal_edge_count != 0
+        ),
+    }
+    populated = sorted(name for name, present in unexpected.items() if present)
+    if populated:
+        raise ValueError(
+            "disabled coalition emergence requires pristine coalition state: "
+            + ", ".join(populated)
+        )
+
+
+def _coalition_state_record(runtime: CoalitionRuntimeState) -> dict:
+    """Return the complete coalition runtime in canonical JSON-safe form."""
+    return {
+        "candidates": canonical_candidate_snapshot(runtime),
+        "active_coalitions": canonical_coalition_snapshot(runtime),
+        "member_to_coalition": [
+            {"inhabitant_id": inhabitant_id, "coalition_id": coalition_id}
+            for inhabitant_id, coalition_id in sorted(
+                runtime.member_to_coalition.items())
+        ],
+        "next_coalition_id": runtime.next_coalition_id,
+        "candidate_formation_count": runtime.candidate_formation_count,
+        "split_event_count": runtime.split_event_count,
+        "split_child_count": runtime.split_child_count,
+        "dissolution_count": runtime.dissolution_count,
+        "last_observation_tick": runtime.last_observation_tick,
+        "last_active_inhabitant_ids": list(runtime.last_active_inhabitant_ids),
+        "last_qualifying_reciprocal_edge_count": (
+            runtime.last_qualifying_reciprocal_edge_count
+        ),
+    }
+
+
 def canonical_state_hash(state, world: list, configuration: dict) -> str:
     """Return a SHA-256 fingerprint of behaviorally relevant final state."""
     social_memory_enabled = configuration.get("social_memory_enabled") is True
+    coalition_emergence_enabled = (
+        configuration.get("coalition_emergence_enabled") is True
+    )
     non_behavioral_keys = {
         "condition",
         "log_mode",
@@ -177,6 +238,22 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             "maximum_social_ties",
             "relationship_decay_interval",
         })
+    coalition_configuration_keys = {
+        "coalition_emergence_enabled",
+        "coalition_minimum_size",
+        "coalition_trust_threshold",
+        "coalition_familiarity_threshold",
+        "coalition_maximum_grievance",
+        "coalition_persistence_ticks",
+        "maximum_active_coalitions",
+        "coalition_controls_status",
+        "coalition_control_notices",
+    }
+    if not coalition_emergence_enabled:
+        _require_empty_disabled_coalition_state(state)
+        non_behavioral_keys.update(coalition_configuration_keys)
+    elif not social_memory_enabled:
+        raise ValueError("enabled coalition emergence requires social memory")
     behavior_configuration = {
         key: value
         for key, value in configuration.items()
@@ -231,6 +308,11 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             raise ValueError(
                 "enabled social state requires a nonnegative ID allocator")
         payload["next_inhabitant_id"] = next_inhabitant_id
+    if coalition_emergence_enabled:
+        runtime = getattr(state, "coalitions", None)
+        if not isinstance(runtime, CoalitionRuntimeState):
+            raise ValueError("enabled coalition state requires a valid runtime")
+        payload["coalition_state"] = _coalition_state_record(runtime)
     encoded = json.dumps(
         _json_safe(payload),
         ensure_ascii=False,

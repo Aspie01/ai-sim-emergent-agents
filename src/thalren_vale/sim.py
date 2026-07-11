@@ -60,6 +60,7 @@ from . import display
 from . import dashboard_bridge
 from . import religion
 from .social import maintain_relationships
+from .coalitions import transition_informal_coalitions
 
 TICKS = config.TICKS
 
@@ -1741,6 +1742,31 @@ def run() -> None:
     _parser.add_argument(
         '--relationship-decay-interval', type=int, default=None,
         help='Ticks between deterministic relationship decay passes')
+    _coalition_emergence = _parser.add_mutually_exclusive_group()
+    _coalition_emergence.add_argument(
+        '--enable-coalition-emergence', action='store_true',
+        help='Enable engineering-only informal coalition emergence')
+    _coalition_emergence.add_argument(
+        '--disable-coalition-emergence', action='store_true',
+        help='Explicitly retain the no-coalition baseline')
+    _parser.add_argument(
+        '--coalition-minimum-size', type=int, default=None,
+        help='Minimum informal coalition size (engineering only)')
+    _parser.add_argument(
+        '--coalition-trust-threshold', type=float, default=None,
+        help='Minimum reciprocal coalition trust (engineering only)')
+    _parser.add_argument(
+        '--coalition-familiarity-threshold', type=float, default=None,
+        help='Minimum reciprocal coalition familiarity (engineering only)')
+    _parser.add_argument(
+        '--coalition-maximum-grievance', type=float, default=None,
+        help='Maximum reciprocal coalition grievance (engineering only)')
+    _parser.add_argument(
+        '--coalition-persistence-ticks', type=int, default=None,
+        help='Consecutive coalition qualification observations')
+    _parser.add_argument(
+        '--maximum-active-coalitions', type=int, default=None,
+        help='Maximum active informal coalitions (engineering only)')
     _args = _parser.parse_args()
 
     # ── Validate and apply effective configuration ──────────────────────────
@@ -1754,6 +1780,15 @@ def run() -> None:
                 'warning: social partner bias was requested without social '
                 'memory; effective partner bias normalized to false and the '
                 'run is not V2-ready\n')
+    for _notice in _run_config.coalition_control_notices:
+        if (
+            _notice
+            == config.COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY
+        ):
+            sys.stderr.write(
+                'warning: coalition emergence was requested without effective '
+                'social memory; effective coalition emergence normalized to '
+                'false and the run is not V2-ready\n')
     _run_config.apply_legacy_globals()
     TICKS = _run_config.ticks
     POP_CAP = _run_config.population_cap
@@ -2144,6 +2179,13 @@ def run() -> None:
                     tick=t,
                     config=_run_config.social_memory_config,
                 )
+                if _run_config.coalition_emergence_enabled:
+                    state.coalitions = transition_informal_coalitions(
+                        people,
+                        state.coalitions,
+                        tick=t,
+                        config=_run_config.coalition_config,
+                    )
                 _t_social = (
                     time.perf_counter() - _t_social_start
                 ) * 1000

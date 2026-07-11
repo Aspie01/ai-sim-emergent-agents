@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from thalren_vale.config import (
+    COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY,
     SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY,
     SimulationConfig,
 )
@@ -30,6 +31,14 @@ def cli_args(**overrides):
         "disable_social_partner_bias": False,
         "maximum_social_ties": None,
         "relationship_decay_interval": None,
+        "enable_coalition_emergence": False,
+        "disable_coalition_emergence": False,
+        "coalition_minimum_size": None,
+        "coalition_trust_threshold": None,
+        "coalition_familiarity_threshold": None,
+        "coalition_maximum_grievance": None,
+        "coalition_persistence_ticks": None,
+        "maximum_active_coalitions": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -112,6 +121,64 @@ def test_enabled_or_nondefault_social_controls_are_engineering_only():
     )
 
 
+def test_coalition_controls_default_to_exact_research_safe_values():
+    result = SimulationConfig.from_cli(cli_args())
+    manifest = result.manifest_dict()
+
+    assert manifest["coalition_emergence_enabled"] is False
+    assert manifest["coalition_minimum_size"] == 3
+    assert type(manifest["coalition_trust_threshold"]) is float
+    assert manifest["coalition_trust_threshold"] == 0.24
+    assert manifest["coalition_familiarity_threshold"] == 0.40
+    assert manifest["coalition_maximum_grievance"] == 0.20
+    assert manifest["coalition_persistence_ticks"] == 5
+    assert manifest["maximum_active_coalitions"] == 32
+    assert manifest["coalition_controls_status"] == "disabled"
+    assert manifest["coalition_control_notices"] == []
+
+
+def test_disabled_coalition_defaults_do_not_reject_small_population_caps():
+    result = SimulationConfig.from_cli(cli_args(
+        pop_cap=2,
+        starting_pop=2,
+    ))
+
+    assert result.population_cap == 2
+    assert result.coalition_emergence_enabled is False
+    assert result.coalition_minimum_size == 3
+    assert result.maximum_active_coalitions == 32
+
+
+def test_coalition_without_memory_normalizes_with_separate_provenance():
+    result = SimulationConfig.from_cli(
+        cli_args(enable_coalition_emergence=True))
+    manifest = result.manifest_dict()
+
+    assert result.coalition_emergence_enabled is False
+    assert manifest["coalition_controls_status"] == "normalized_uncontracted"
+    assert manifest["coalition_control_notices"] == [
+        COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY
+    ]
+    assert manifest["social_controls_status"] == "disabled"
+    assert manifest["social_control_notices"] == []
+
+
+def test_enabled_or_nondefault_coalition_controls_are_engineering_only():
+    enabled = SimulationConfig.from_cli(cli_args(
+        enable_social_memory=True,
+        enable_coalition_emergence=True,
+    ))
+    nondefault = SimulationConfig.from_cli(cli_args(
+        coalition_minimum_size=4,
+        coalition_trust_threshold=0.30,
+    ))
+
+    assert enabled.coalition_emergence_enabled is True
+    assert enabled.coalition_controls_status == "engineering_only_uncontracted"
+    assert nondefault.coalition_controls_status == "engineering_only_uncontracted"
+    assert enabled.social_controls_status == "engineering_only_uncontracted"
+
+
 @pytest.mark.parametrize(
     ("override", "message"),
     [
@@ -126,6 +193,12 @@ def test_enabled_or_nondefault_social_controls_are_engineering_only():
         ({"log_mode": "loud"}, "log mode"),
         ({"maximum_social_ties": 0}, "maximum social ties"),
         ({"relationship_decay_interval": 0}, "decay interval"),
+        ({"coalition_minimum_size": 2}, "coalition minimum size"),
+        ({"coalition_trust_threshold": 1}, "finite float"),
+        ({"coalition_familiarity_threshold": float("nan")}, "finite float"),
+        ({"coalition_maximum_grievance": 1.1}, "finite float"),
+        ({"coalition_persistence_ticks": 1}, "persistence ticks"),
+        ({"maximum_active_coalitions": 0}, "maximum active coalitions"),
     ],
 )
 def test_invalid_configuration_is_rejected(override, message):

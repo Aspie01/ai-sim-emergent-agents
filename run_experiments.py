@@ -55,6 +55,16 @@ _UNCONTRACTED_SOCIAL_FLAGS = frozenset({
     '--maximum-social-ties',
     '--relationship-decay-interval',
 })
+_UNCONTRACTED_COALITION_FLAGS = frozenset({
+    '--enable-coalition-emergence',
+    '--disable-coalition-emergence',
+    '--coalition-minimum-size',
+    '--coalition-trust-threshold',
+    '--coalition-familiarity-threshold',
+    '--coalition-maximum-grievance',
+    '--coalition-persistence-ticks',
+    '--maximum-active-coalitions',
+})
 
 
 class UnsafeResumeError(ValueError):
@@ -76,6 +86,24 @@ def _reject_uncontracted_social_args(extra_args: tuple[str, ...]) -> None:
         ):
             raise ValueError(
                 f'uncontracted social control is not permitted in the '
+                f'experiment runner: {argument}')
+
+
+def _reject_uncontracted_coalition_args(extra_args: tuple[str, ...]) -> None:
+    """Reject every spelling of uncontracted coalition controls preflight."""
+    for argument in extra_args:
+        option_name = argument.split('=', 1)[0]
+        if any(
+            option_name == flag
+            or (
+                option_name.startswith('--')
+                and len(option_name) > 2
+                and flag.startswith(option_name)
+            )
+            for flag in _UNCONTRACTED_COALITION_FLAGS
+        ):
+            raise ValueError(
+                f'uncontracted coalition control is not permitted in the '
                 f'experiment runner: {argument}')
 
 
@@ -130,6 +158,7 @@ def _freeze_cell(cell: object) -> _FrozenCell:
     if not all(type(item) is str for item in frozen_extra_args):
         raise ValueError('extra_args must be an exact list of strings')
     _reject_uncontracted_social_args(frozen_extra_args)
+    _reject_uncontracted_coalition_args(frozen_extra_args)
     if timeout_seconds is not None and (
         type(timeout_seconds) is not int or timeout_seconds < 1
     ):
@@ -198,6 +227,7 @@ def load_plan(plan_path: Path) -> tuple[dict, str]:
             raise ValueError(
                 f"condition {name}: extra_args must contain only exact strings")
         _reject_uncontracted_social_args(tuple(parsed_extra))
+        _reject_uncontracted_coalition_args(tuple(parsed_extra))
     return plan, hashlib.sha256(raw).hexdigest()
 
 

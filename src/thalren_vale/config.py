@@ -3,6 +3,7 @@ config.py — Shared configuration constants for the civilization simulation.
 """
 
 from dataclasses import asdict, dataclass, field
+import math
 import re
 
 # ── Ollama / LLM settings ─────────────────────────────────────────────────
@@ -40,6 +41,13 @@ DEFAULT_SOCIAL_MEMORY_ENABLED = False
 DEFAULT_SOCIAL_PARTNER_BIAS_ENABLED = False
 DEFAULT_MAXIMUM_SOCIAL_TIES = 32
 DEFAULT_RELATIONSHIP_DECAY_INTERVAL = 25
+DEFAULT_COALITION_EMERGENCE_ENABLED = False
+DEFAULT_COALITION_MINIMUM_SIZE = 3
+DEFAULT_COALITION_TRUST_THRESHOLD = 0.24
+DEFAULT_COALITION_FAMILIARITY_THRESHOLD = 0.40
+DEFAULT_COALITION_MAXIMUM_GRIEVANCE = 0.20
+DEFAULT_COALITION_PERSISTENCE_TICKS = 5
+DEFAULT_MAXIMUM_ACTIVE_COALITIONS = 32
 FACTION_TRUST_THRESHOLD = DEFAULT_FACTION_TRUST_THRESHOLD
 WAR_TENSION_THRESHOLD = DEFAULT_WAR_TENSION_THRESHOLD
 BELIEF_SHARING_PROBABILITY = DEFAULT_BELIEF_SHARING_PROBABILITY
@@ -81,6 +89,18 @@ VALID_SOCIAL_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY = (
+    'coalition_emergence_requested_without_social_memory'
+)
+VALID_COALITION_CONTROL_NOTICES = frozenset({
+    COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY,
+})
+VALID_COALITION_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
 
 @dataclass(frozen=True)
 class SocialMemoryConfig:
@@ -90,6 +110,19 @@ class SocialMemoryConfig:
     social_partner_bias_enabled: bool
     maximum_social_ties: int
     relationship_decay_interval: int
+
+
+@dataclass(frozen=True)
+class CoalitionConfig:
+    """Effective engineering-only controls for informal coalition emergence."""
+
+    coalition_emergence_enabled: bool
+    coalition_minimum_size: int
+    coalition_trust_threshold: float
+    coalition_familiarity_threshold: float
+    coalition_maximum_grievance: float
+    coalition_persistence_ticks: int
+    maximum_active_coalitions: int
 
 
 @dataclass(frozen=True)
@@ -111,7 +144,18 @@ class SimulationConfig:
     social_partner_bias_enabled: bool = DEFAULT_SOCIAL_PARTNER_BIAS_ENABLED
     maximum_social_ties: int = DEFAULT_MAXIMUM_SOCIAL_TIES
     relationship_decay_interval: int = DEFAULT_RELATIONSHIP_DECAY_INTERVAL
+    coalition_emergence_enabled: bool = DEFAULT_COALITION_EMERGENCE_ENABLED
+    coalition_minimum_size: int = DEFAULT_COALITION_MINIMUM_SIZE
+    coalition_trust_threshold: float = DEFAULT_COALITION_TRUST_THRESHOLD
+    coalition_familiarity_threshold: float = (
+        DEFAULT_COALITION_FAMILIARITY_THRESHOLD
+    )
+    coalition_maximum_grievance: float = DEFAULT_COALITION_MAXIMUM_GRIEVANCE
+    coalition_persistence_ticks: int = DEFAULT_COALITION_PERSISTENCE_TICKS
+    maximum_active_coalitions: int = DEFAULT_MAXIMUM_ACTIVE_COALITIONS
     social_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    coalition_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -119,7 +163,22 @@ class SimulationConfig:
         if not self.social_memory_enabled and self.social_partner_bias_enabled:
             object.__setattr__(self, 'social_partner_bias_enabled', False)
             notices.append(SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY)
-        object.__setattr__(self, 'social_control_notices', tuple(notices))
+        object.__setattr__(
+            self, 'social_control_notices', tuple(sorted(notices)))
+
+        coalition_notices: list[str] = []
+        if (
+            self.social_memory_enabled is False
+            and self.coalition_emergence_enabled is True
+        ):
+            object.__setattr__(self, 'coalition_emergence_enabled', False)
+            coalition_notices.append(
+                COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY)
+        object.__setattr__(
+            self,
+            'coalition_control_notices',
+            tuple(sorted(coalition_notices)),
+        )
 
     @classmethod
     def from_cli(cls, args) -> 'SimulationConfig':
@@ -185,6 +244,40 @@ class SimulationConfig:
                 if getattr(args, 'relationship_decay_interval', None) is None
                 else args.relationship_decay_interval
             ),
+            coalition_emergence_enabled=(
+                bool(getattr(args, 'enable_coalition_emergence', False))
+                and not bool(getattr(args, 'disable_coalition_emergence', False))
+            ),
+            coalition_minimum_size=(
+                DEFAULT_COALITION_MINIMUM_SIZE
+                if getattr(args, 'coalition_minimum_size', None) is None
+                else args.coalition_minimum_size
+            ),
+            coalition_trust_threshold=(
+                DEFAULT_COALITION_TRUST_THRESHOLD
+                if getattr(args, 'coalition_trust_threshold', None) is None
+                else args.coalition_trust_threshold
+            ),
+            coalition_familiarity_threshold=(
+                DEFAULT_COALITION_FAMILIARITY_THRESHOLD
+                if getattr(args, 'coalition_familiarity_threshold', None) is None
+                else args.coalition_familiarity_threshold
+            ),
+            coalition_maximum_grievance=(
+                DEFAULT_COALITION_MAXIMUM_GRIEVANCE
+                if getattr(args, 'coalition_maximum_grievance', None) is None
+                else args.coalition_maximum_grievance
+            ),
+            coalition_persistence_ticks=(
+                DEFAULT_COALITION_PERSISTENCE_TICKS
+                if getattr(args, 'coalition_persistence_ticks', None) is None
+                else args.coalition_persistence_ticks
+            ),
+            maximum_active_coalitions=(
+                DEFAULT_MAXIMUM_ACTIVE_COALITIONS
+                if getattr(args, 'maximum_active_coalitions', None) is None
+                else args.maximum_active_coalitions
+            ),
         )
         instance.validate()
         return instance
@@ -234,6 +327,42 @@ class SimulationConfig:
             for notice in self.social_control_notices
         ):
             raise ValueError('unknown social control normalization notice')
+        if type(self.coalition_emergence_enabled) is not bool:
+            raise ValueError('coalition emergence setting must be boolean')
+        if (
+            type(self.coalition_minimum_size) is not int
+            or not 3 <= self.coalition_minimum_size <= 1024
+        ):
+            raise ValueError(
+                'coalition minimum size must be an integer from 3 to 1024')
+        for value, label in (
+            (self.coalition_trust_threshold, 'coalition trust threshold'),
+            (self.coalition_familiarity_threshold, 'coalition familiarity threshold'),
+            (self.coalition_maximum_grievance, 'coalition maximum grievance'),
+        ):
+            if (
+                type(value) is not float
+                or not math.isfinite(value)
+                or not 0.0 <= value <= 1.0
+            ):
+                raise ValueError(f'{label} must be a finite float from 0.0 to 1.0')
+        if (
+            type(self.coalition_persistence_ticks) is not int
+            or self.coalition_persistence_ticks < 2
+        ):
+            raise ValueError(
+                'coalition persistence ticks must be an integer of at least 2')
+        if (
+            type(self.maximum_active_coalitions) is not int
+            or not 1 <= self.maximum_active_coalitions <= 1024
+        ):
+            raise ValueError(
+                'maximum active coalitions must be an integer from 1 to 1024')
+        if any(
+            notice not in VALID_COALITION_CONTROL_NOTICES
+            for notice in self.coalition_control_notices
+        ):
+            raise ValueError('unknown coalition control normalization notice')
 
     def apply_legacy_globals(self) -> None:
         """Keep modules using legacy constants synchronized during migration."""
@@ -257,10 +386,14 @@ class SimulationConfig:
     def manifest_dict(self) -> dict:
         result = asdict(self)
         result.pop('social_control_notices', None)
+        result.pop('coalition_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
         result['social_controls_status'] = self.social_controls_status
+        result['coalition_control_notices'] = list(
+            self.coalition_control_notices)
+        result['coalition_controls_status'] = self.coalition_controls_status
         return result
 
     @property
@@ -286,4 +419,39 @@ class SimulationConfig:
             social_partner_bias_enabled=self.social_partner_bias_enabled,
             maximum_social_ties=self.maximum_social_ties,
             relationship_decay_interval=self.relationship_decay_interval,
+        )
+
+    @property
+    def coalition_controls_status(self) -> str:
+        """Return provenance status for uncontracted coalition controls."""
+        if self.coalition_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.coalition_emergence_enabled
+            or self.coalition_minimum_size != DEFAULT_COALITION_MINIMUM_SIZE
+            or self.coalition_trust_threshold
+            != DEFAULT_COALITION_TRUST_THRESHOLD
+            or self.coalition_familiarity_threshold
+            != DEFAULT_COALITION_FAMILIARITY_THRESHOLD
+            or self.coalition_maximum_grievance
+            != DEFAULT_COALITION_MAXIMUM_GRIEVANCE
+            or self.coalition_persistence_ticks
+            != DEFAULT_COALITION_PERSISTENCE_TICKS
+            or self.maximum_active_coalitions
+            != DEFAULT_MAXIMUM_ACTIVE_COALITIONS
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def coalition_config(self) -> CoalitionConfig:
+        """Return immutable effective controls for coalition processing."""
+        return CoalitionConfig(
+            coalition_emergence_enabled=self.coalition_emergence_enabled,
+            coalition_minimum_size=self.coalition_minimum_size,
+            coalition_trust_threshold=self.coalition_trust_threshold,
+            coalition_familiarity_threshold=self.coalition_familiarity_threshold,
+            coalition_maximum_grievance=self.coalition_maximum_grievance,
+            coalition_persistence_ticks=self.coalition_persistence_ticks,
+            maximum_active_coalitions=self.maximum_active_coalitions,
         )

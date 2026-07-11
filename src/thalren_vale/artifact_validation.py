@@ -45,8 +45,17 @@ from .artifact_contract import (
     validate_inventory_relative_path,
 )
 from .config import (
+    DEFAULT_COALITION_EMERGENCE_ENABLED,
+    DEFAULT_COALITION_FAMILIARITY_THRESHOLD,
+    DEFAULT_COALITION_MAXIMUM_GRIEVANCE,
+    DEFAULT_COALITION_MINIMUM_SIZE,
+    DEFAULT_COALITION_PERSISTENCE_TICKS,
+    DEFAULT_COALITION_TRUST_THRESHOLD,
+    DEFAULT_MAXIMUM_ACTIVE_COALITIONS,
     DEFAULT_MAXIMUM_SOCIAL_TIES,
     DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
+    VALID_COALITION_CONTROL_NOTICES,
+    VALID_COALITION_CONTROL_STATUSES,
     VALID_DISABLE_LAYERS,
     VALID_LOG_MODES,
     VALID_SOCIAL_CONTROL_NOTICES,
@@ -549,6 +558,144 @@ def _validate_social_configuration(
         _add(
             issues,
             "invalid_social_configuration",
+            message,
+            "manifest",
+        )
+
+
+def _validate_coalition_configuration(
+    config: dict,
+    issues: _IssueCollector,
+) -> None:
+    """Validate present uncontracted coalition controls independently."""
+
+    def finite_unit_float(value: object) -> bool:
+        return (
+            type(value) is float
+            and math.isfinite(value)
+            and 0.0 <= value <= 1.0
+        )
+
+    validators = {
+        "coalition_emergence_enabled": _is_bool,
+        "coalition_minimum_size": (
+            lambda value: _is_int(value) and 3 <= value <= 1024
+        ),
+        "coalition_trust_threshold": finite_unit_float,
+        "coalition_familiarity_threshold": finite_unit_float,
+        "coalition_maximum_grievance": finite_unit_float,
+        "coalition_persistence_ticks": (
+            lambda value: _is_int(value) and value >= 2
+        ),
+        "maximum_active_coalitions": (
+            lambda value: _is_int(value) and 1 <= value <= 1024
+        ),
+        "coalition_controls_status": (
+            lambda value: _is_str(value)
+            and value in VALID_COALITION_CONTROL_STATUSES
+        ),
+        "coalition_control_notices": (
+            lambda value: _is_list(value)
+            and all(
+                _is_str(item) and item in VALID_COALITION_CONTROL_NOTICES
+                for item in value
+            )
+            and len(value) == len(set(value))
+            and value == sorted(value)
+        ),
+    }
+    valid_present: set[str] = set()
+    for name, validator in validators.items():
+        if name not in config:
+            continue
+        if not validator(config[name]):
+            _add(
+                issues,
+                "invalid_coalition_configuration",
+                f"{name} is malformed",
+                "manifest",
+            )
+        else:
+            valid_present.add(name)
+
+    errors: list[str] = []
+
+    def add_error(message: str) -> None:
+        if message not in errors:
+            errors.append(message)
+
+    emergence_present = "coalition_emergence_enabled" in valid_present
+    status_present = "coalition_controls_status" in valid_present
+    notices_present = "coalition_control_notices" in valid_present
+    social_present = "social_memory_enabled" in config and _is_bool(
+        config.get("social_memory_enabled"))
+    emergence_enabled = (
+        config.get("coalition_emergence_enabled")
+        if emergence_present else None
+    )
+    social_enabled = config.get("social_memory_enabled") if social_present else None
+    status = config.get("coalition_controls_status") if status_present else None
+    notices = config.get("coalition_control_notices") if notices_present else None
+
+    if (
+        emergence_present
+        and social_present
+        and emergence_enabled
+        and not social_enabled
+    ):
+        add_error("effective coalition emergence requires social memory")
+
+    if notices_present:
+        assert type(notices) is list
+        if notices:
+            if emergence_present and emergence_enabled:
+                add_error(
+                    "coalition normalization notice conflicts with enabled emergence")
+            if social_present and social_enabled:
+                add_error(
+                    "coalition normalization notice conflicts with social memory")
+            if status_present and status != "normalized_uncontracted":
+                add_error(
+                    "coalition status conflicts with normalization notice")
+        elif status_present and status == "normalized_uncontracted":
+            add_error("normalized coalition status requires a notice")
+
+    defaults = {
+        "coalition_emergence_enabled": DEFAULT_COALITION_EMERGENCE_ENABLED,
+        "coalition_minimum_size": DEFAULT_COALITION_MINIMUM_SIZE,
+        "coalition_trust_threshold": DEFAULT_COALITION_TRUST_THRESHOLD,
+        "coalition_familiarity_threshold": (
+            DEFAULT_COALITION_FAMILIARITY_THRESHOLD
+        ),
+        "coalition_maximum_grievance": DEFAULT_COALITION_MAXIMUM_GRIEVANCE,
+        "coalition_persistence_ticks": DEFAULT_COALITION_PERSISTENCE_TICKS,
+        "maximum_active_coalitions": DEFAULT_MAXIMUM_ACTIVE_COALITIONS,
+    }
+    present_controls = set(defaults).intersection(valid_present)
+    any_nondefault = any(
+        not _exact_equal(config[name], defaults[name])
+        for name in present_controls
+    )
+    controls_complete = set(defaults) <= valid_present
+    if status_present:
+        if status == "disabled":
+            if any_nondefault or (notices_present and bool(notices)):
+                add_error("disabled coalition status conflicts with controls")
+        elif status == "normalized_uncontracted":
+            if notices_present and not notices:
+                add_error("normalized coalition status requires a notice")
+        elif status == "engineering_only_uncontracted":
+            if controls_complete and not any_nondefault:
+                add_error(
+                    "engineering coalition status requires a nondefault control")
+            if notices_present and notices:
+                add_error(
+                    "engineering coalition status conflicts with normalization notice")
+
+    for message in errors:
+        _add(
+            issues,
+            "invalid_coalition_configuration",
             message,
             "manifest",
         )
@@ -1576,6 +1723,29 @@ def _readiness_issues(
                 f"found {actual!r}",
                 "manifest",
             )
+    safe_coalition_controls = {
+        "coalition_emergence_enabled": False,
+        "coalition_minimum_size": DEFAULT_COALITION_MINIMUM_SIZE,
+        "coalition_trust_threshold": DEFAULT_COALITION_TRUST_THRESHOLD,
+        "coalition_familiarity_threshold": (
+            DEFAULT_COALITION_FAMILIARITY_THRESHOLD
+        ),
+        "coalition_maximum_grievance": DEFAULT_COALITION_MAXIMUM_GRIEVANCE,
+        "coalition_persistence_ticks": DEFAULT_COALITION_PERSISTENCE_TICKS,
+        "maximum_active_coalitions": DEFAULT_MAXIMUM_ACTIVE_COALITIONS,
+        "coalition_controls_status": "disabled",
+        "coalition_control_notices": [],
+    }
+    for name, expected in safe_coalition_controls.items():
+        actual = config.get(name)
+        if not _exact_equal(actual, expected):
+            _add(
+                issues,
+                "coalition_controls_not_v2_ready",
+                f"configuration.{name}: expected {expected!r}, "
+                f"found {actual!r}",
+                "manifest",
+            )
     if contract is None:
         _add(issues, "missing_expected_run_contract", "no complete external expected-run contract was supplied", "manifest")
         return issues.materialize()
@@ -1745,6 +1915,7 @@ def _validate_strict(
         ):
             _add(issues, "invalid_configuration", "raid policy conflicts with disabled layers", "manifest")
         _validate_social_configuration(config, issues)
+        _validate_coalition_configuration(config, issues)
     execution_mode = manifest.get("execution_mode")
     if not _is_str(execution_mode) or execution_mode not in {"serial", "threaded"}:
         _add(issues, "invalid_execution_mode", repr(manifest.get("execution_mode")), "manifest")

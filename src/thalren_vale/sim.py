@@ -36,6 +36,7 @@ from .plugin_api import (
 from .state import SimulationState
 from .reproducibility import canonical_state_hash, write_run_manifest
 from .events import StructuredEventLog, emit_event
+from .artifact_contract import BELIEF_SNAPSHOT_INTERVAL
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 # ── Layer imports ──────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ from .world       import (world, tick as _world_tick, GRID, BIOME_MAX,
 from .inhabitants import (Inhabitant, do_tick, do_tick_preamble, do_tick_body,
                           is_winter, regen_rate,
                           NAMES, WINTER_START, CYCLE_LEN, make_child,
-                          procreation_lock)
+                          procreation_lock, _DeathObservation)
 from .beliefs     import assign_beliefs, share_beliefs, add_belief
 from .factions    import check_faction_formation, faction_tick, Faction, _faction_name as _gen_faction_name
 from . import factions as factions_module
@@ -284,6 +285,14 @@ def _write_structured_outputs() -> bool:
     return True
 
 
+def _restore_stdout(real_stdout) -> None:
+    """Restore process output state before any authoritative publication."""
+    sys.stdout = real_stdout
+    mythology.init(None)
+    if sys.stdout is not real_stdout:
+        raise RuntimeError('stdout restoration did not retain the real stream')
+
+
 def _optional_output_policy(mode: str) -> dict:
     optional = {
         'full_text_log': mode == 'full',
@@ -310,7 +319,7 @@ def process_inhabitants_chunk(inhabitants_list: list, all_people: list,
 
     Called from a threading.Thread.  Shared state (world resources, event_log,
     cross-inhabitant inventory swaps) is protected by the module-level locks.
-    Collected deaths are appended to *dead_bucket* (caller-supplied list).
+    Collected death observations are appended to *dead_bucket*.
     """
     for inh in inhabitants_list:
         do_tick_body(
@@ -384,22 +393,31 @@ def inhabitants_layer(t: int) -> tuple[list, dict]:
             th.join()
 
     # ─ 5. Collect deaths and update people list ────────────────────────
-    deaths: list = [d for bucket in dead_buckets for d in bucket]
-    for d in deaths:
+    death_observations: list[_DeathObservation] = [
+        observation
+        for bucket in dead_buckets
+        for observation in bucket
+    ]
+    deaths = [observation.inhabitant for observation in death_observations]
+    if any(
+        observation.journal_token is None
+        for observation in death_observations
+    ):
+        raise RuntimeError(
+            'structured death observation is missing its journal token')
+    for observation in death_observations:
+        d = observation.inhabitant
         grid_remove(d)   # evict from spatial partition before removing from list
         people.remove(d)
-        death_message = next(
-            (entry for entry in reversed(event_log) if d.name in entry),
-            f"Tick {t:04d}: {d.name} died",
-        )
         emit_event(
             event_log,
             tick=t,
             event_type='death',
             actor=d.name,
-            detail=death_message,
-            message=death_message,
+            detail=observation.message,
+            message=observation.message,
             append_text=False,
+            journal_token=observation.journal_token,
         )
     all_dead.extend(deaths)
     return deaths, prev_positions
@@ -936,6 +954,17 @@ def _prune_event_log(t: int) -> None:
         era_summaries.append({'start_t': era_start, 'end_t': era_end,
                                'name': era_lbl, 'text': text})
         event_log.append(f'Tick {era_end:04d}: [ERA SUMMARY] {text}')
+
+    # Era-summary messages are observations too, but their creation must not
+    # let retained narrative history exceed the advertised bound. Slice
+    # assignment intentionally bypasses StructuredEventLog.append journaling.
+    if len(event_log) > 200:
+        overflow = event_log[:-200]
+        event_log[:] = event_log[-200:]
+        if _event_log_fh is not None:
+            for entry in overflow:
+                _event_log_fh.write(entry + '\n')
+            _event_log_fh.flush()
 
 
 def _archive_dead_factions() -> None:
@@ -1579,6 +1608,25 @@ def _classify_and_record_events(logger, t, new_entries):
             pass
 
 
+def _record_observation_journal(logger, t: int, entries: list[dict]) -> None:
+    """Record one ordered tick journal without typed/legacy duplication."""
+    for entry in entries:
+        event = entry["event"]
+        message = entry["message"]
+        if event is not None:
+            logger.record_event(
+                event.tick,
+                event.event_type,
+                actor=event.actor,
+                target=event.target,
+                detail=event.detail,
+            )
+            if message:
+                _key_events_archive.append(message)
+        elif message:
+            _classify_and_record_events(logger, t, [message])
+
+
 def run() -> None:
     global _event_log_fh, TICKS, POP_CAP, _serial_mode, _disabled_layers, _run_seed, _run_condition, _log_mode
 
@@ -1693,21 +1741,30 @@ def run() -> None:
                 f"plus final summary.\n\n"
             )
 
-    habitable = init_world()
-    init_inhabitants(habitable)
-    load_plugins()
-
     # ── Per-run tracking ────────────────────────────────────────────────────
     _tick_times:        list = []
     _print_every:       int  = 10 if TICKS > 500 else 1
     _last_dynamic_t:    int  = 0   # last tick a war / schism / faction-formation occurred
     _low_faction_since: int  = 0   # tick when active factions first dropped below 3 (0=OK)
     _peace_applied:     set  = set()  # peace milestone thresholds fired since last war
+    _last_completed_tick = 0
+    _termination_reason = 'exception'
+    _result_status = 'failed'
+    _completed_normally = False
+    _required_output_error = None
+    _terminal_exception = None
+    _terminal_traceback = None
+    _current_tick = 0
 
     try:
+        habitable = init_world()
+        init_inhabitants(habitable)
+        load_plugins()
+
         for t in range(1, TICKS + 1):
+            _current_tick = t
             _t0               = time.time()
-            _log_len_before   = len(event_log)
+            event_log.begin_observation_tick(t)
             winter            = is_winter(t)
             prev_winter       = is_winter(t - 1) if t > 1 else False
             winter_just_ended = prev_winter and not winter
@@ -1798,7 +1855,7 @@ def run() -> None:
 
             # ── Track dynamic activity for stagnation detection ─────────────
             _t_dyn_start = time.perf_counter()
-            _new_entries = event_log[_log_len_before:]
+            _new_entries = event_log.observation_messages()
             if any(kw in e for e in _new_entries
                    for kw in ('WAR DECLARED', 'SCHISM', 'FACTION FORMED',
                               'GREAT MIGRATION', 'CIVIL WAR',
@@ -1810,34 +1867,6 @@ def run() -> None:
                 _peace_applied    = set()
                 _low_faction_since = 0
             _t_dyn = (time.perf_counter() - _t_dyn_start) * 1000
-
-            # ── Metrics: classify events and record per-tick data ───────────
-            _t_met_start = time.perf_counter()
-            try:
-                _new_typed_events = list(event_log.events)
-                _logger.record_simulation_events(_new_typed_events)
-                _key_events_archive.extend(
-                    event.message
-                    for event in _new_typed_events
-                    if event.message
-                )
-                _typed_messages = {event.message for event in _new_typed_events}
-                _legacy_entries = [
-                    entry for entry in _new_entries
-                    if entry not in _typed_messages
-                ]
-                _classify_and_record_events(_logger, t, _legacy_entries)
-                event_log.events.clear()
-                _logger.record_tick(
-                    tick=t, world=world, inhabitants=people,
-                    factions=factions, wars=combat.active_wars,
-                    treaties=diplomacy._treaties,
-                    peace_ticks=t - _last_dynamic_t)
-                if t % 100 == 0:
-                    _logger.record_beliefs(t, people, factions)
-            except Exception:
-                pass
-            _t_met = (time.perf_counter() - _t_met_start) * 1000
 
             # ── Reverse Assimilation tracking ────────────────────────────────
             if _ra_tracker is not None:
@@ -2019,6 +2048,24 @@ def run() -> None:
                     _peace_applied  = set()
             _t_antistag = (time.perf_counter() - _t_antistag_start) * 1000
 
+            # ── Authoritative end-of-tick structured observations ───────────
+            # Observation moves here so final metrics describe state after all
+            # enabled layers and anti-stagnation work. It must not consume RNG
+            # or alter simulation-layer ordering.
+            _t_met_start = time.perf_counter()
+            _record_observation_journal(
+                _logger, t, event_log.drain_observation_journal())
+            event_log.events.clear()
+            _logger.record_tick(
+                tick=t, world=world, inhabitants=people,
+                factions=factions, wars=combat.active_wars,
+                treaties=diplomacy._treaties,
+                peace_ticks=t - _last_dynamic_t)
+            if t % BELIEF_SNAPSHOT_INTERVAL == 0:
+                _logger.record_beliefs(t, people, factions)
+            _t_met = (time.perf_counter() - _t_met_start) * 1000
+            _last_completed_tick = t
+
             # ── Per-layer timing summary (every 50 ticks) ────────────────────
             if _write_full_text() and t % 50 == 0:
                 _t_total = (_t_world + _t_inh + _t_bel + _t_fac + _t_proc + 
@@ -2095,100 +2142,258 @@ def run() -> None:
 
             if not people:
                 print('All inhabitants have perished.')
+                _termination_reason = (
+                    'extinction' if t < TICKS else 'requested_ticks_reached')
+                _result_status = 'completed'
+                _completed_normally = True
                 break
+        else:
+            _termination_reason = 'requested_ticks_reached'
+            _result_status = 'completed'
+            _completed_normally = True
 
-    except KeyboardInterrupt:
-        print("\n\n[Simulation interrupted by user]\n")
+    except KeyboardInterrupt as exc:
+        _termination_reason = 'user_cancelled'
+        _result_status = 'cancelled'
+        _completed_normally = False
+        _terminal_exception = exc
+        _terminal_traceback = exc.__traceback__
+
+    except BaseException as exc:
+        _termination_reason = 'exception'
+        _result_status = 'failed'
+        _completed_normally = False
+        _terminal_exception = exc
+        _terminal_traceback = exc.__traceback__
 
     finally:
-        # Events emitted after the regular metrics phase on the final tick
-        # still need to reach the structured event CSV.
-        try:
-            if event_log.events:
-                _logger.record_simulation_events(list(event_log.events))
-                _key_events_archive.extend(
-                    event.message for event in event_log.events if event.message)
-                event_log.events.clear()
-        except Exception:
-            pass
+        _finalization_diagnostics: list[str] = []
 
-        # ── Reproducibility fingerprint and provenance manifest ────────────
+        def _capture_terminal(exc: BaseException) -> None:
+            nonlocal _terminal_exception, _terminal_traceback
+            nonlocal _termination_reason, _result_status, _completed_normally
+            if _terminal_exception is None:
+                _terminal_exception = exc
+                _terminal_traceback = exc.__traceback__
+                if isinstance(exc, KeyboardInterrupt):
+                    _termination_reason = 'user_cancelled'
+                    _result_status = 'cancelled'
+                else:
+                    _termination_reason = 'exception'
+                    _result_status = 'failed'
+                _completed_normally = False
+
+        def _mark_required_failure(exc: BaseException) -> None:
+            nonlocal _required_output_error
+            nonlocal _termination_reason, _result_status, _completed_normally
+            if _required_output_error is None:
+                _required_output_error = exc
+            if _terminal_exception is None:
+                _termination_reason = 'exception'
+                _result_status = 'failed'
+                _completed_normally = False
+
+        def _diagnose(label: str, exc: BaseException) -> None:
+            _finalization_diagnostics.append(
+                f'{label}: {type(exc).__name__}: {exc}')
+
+        def _run_optional(label: str, callback) -> None:
+            try:
+                callback()
+            except Exception as exc:
+                _diagnose(label, exc)
+            except BaseException as exc:
+                _diagnose(label, exc)
+                _capture_terminal(exc)
+
+        def _record_required_failure(label: str, exc: BaseException) -> None:
+            try:
+                _logger.record_finalization_failure(label, exc)
+            except Exception as record_exc:
+                _diagnose('writer_failure_recording_failed', record_exc)
+                _mark_required_failure(record_exc)
+            except BaseException as record_exc:
+                _diagnose('writer_failure_recording_failed', record_exc)
+                _capture_terminal(record_exc)
+            _mark_required_failure(exc)
+
+        # Preserve journaled events from a failed partial tick as audit data.
+        # Strict validation rejects their ticks beyond _last_completed_tick.
         try:
-            _state_hash = canonical_state_hash(state, world, _repro_config)
-            _manifest_path = write_run_manifest(
-                'data',
-                seed=_seed_value,
-                condition=_args.condition,
-                configuration=_repro_config,
-                state_hash=_state_hash,
-                execution_mode='serial' if _serial_mode else 'threaded',
-                log_mode=_log_mode,
-                required_outputs=[
-                    'metrics',
-                    'events',
-                    'beliefs',
-                    'run_summary',
-                    'run_manifest',
-                ],
-                optional_outputs=_optional_output_policy(_log_mode),
+            _record_observation_journal(
+                _logger,
+                _current_tick,
+                event_log.drain_observation_journal(),
             )
-            if _write_summary_text():
-                _real.write(f'State hash: {_state_hash}\n')
-                _real.write(f'Run manifest: {_manifest_path}\n')
-                _real.flush()
+            event_log.events.clear()
         except Exception as exc:
-            if _log_mode != 'off':
-                _real.write(
-                    f'Warning: could not write reproducibility manifest: {exc}\n')
-                _real.flush()
-            _manifest_error_path = pathlib.Path('data') / (
-                f'run_manifest_{_args.condition}_seed_{_seed_value}.error.txt')
-            _manifest_error_path.write_text(
-                traceback.format_exc(), encoding='utf-8')
+            _record_required_failure('pending_event_finalization_failed', exc)
+        except BaseException as exc:
+            _capture_terminal(exc)
+            _record_required_failure('pending_event_finalization_failed', exc)
 
-        # ── Metrics finalisation ────────────────────────────────────────────
+        # ── Required structured-output finalisation ────────────────────────
         try:
             _logger.finalize(world, people, factions)
+        except Exception as exc:
+            _record_required_failure('logger_finalize_failed', exc)
+        except BaseException as exc:
+            _capture_terminal(exc)
+            _record_required_failure('logger_finalize_failed', exc)
+        try:
             _logger.close()
-        except Exception:
-            pass
-        # ── RA tracker finalisation ─────────────────────────────────────────
-        if _ra_tracker is not None:
-            try:
-                _ra_tracker.close()
-            except Exception:
-                pass
+        except Exception as exc:
+            _record_required_failure('logger_close_failed', exc)
+        except BaseException as exc:
+            _capture_terminal(exc)
+            _record_required_failure('logger_close_failed', exc)
+        try:
+            _writer_health = _logger.writer_health()
+        except Exception as exc:
+            _mark_required_failure(exc)
+            _writer_health = {}
+        except BaseException as exc:
+            _capture_terminal(exc)
+            _mark_required_failure(exc)
+            _writer_health = {}
+        _nonrecoverable_health = any(
+            _writer_health.get(name, 0)
+            for name in (
+                'metrics_write_failures', 'metrics_flush_failures',
+                'event_write_failures', 'belief_write_failures',
+                'belief_flush_failures', 'summary_write_failures',
+                'close_failures', 'finalization_failures',
+                'event_flush_failures_unrecovered', 'pending_event_rows',
+            )
+        )
+        if not _writer_health or (
+            _writer_health.get('unresolved_failures', ['writer health unavailable'])
+            or _nonrecoverable_health
+            or not _writer_health.get('finalized', False)
+            or not _writer_health.get('closed', False)
+        ):
+            _health_error = RuntimeError(
+                'required structured-output finalization failed: '
+                + '; '.join(_writer_health.get(
+                    'unresolved_failures', ['writer health unavailable'])))
+            _mark_required_failure(_health_error)
 
-        if _write_summary_text():
-            # Final report: passthrough so everything shows on terminal and,
-            # in full mode, in the raw text log.
+        # Compute the required state fingerprint before optional finalisation.
+        _state_hash = None
+        try:
+            _state_hash = canonical_state_hash(state, world, _repro_config)
+        except Exception as exc:
+            _mark_required_failure(exc)
+        except BaseException as exc:
+            _capture_terminal(exc)
+            _mark_required_failure(exc)
+
+        # Optional finalisation is diagnostic-only and cannot alter success.
+        if _ra_tracker is not None:
+            _run_optional('ra_tracker_close_failed', _ra_tracker.close)
+
+        def _final_report() -> None:
+            if not _write_summary_text():
+                return
             _real.write('\n')
             _stdout_proxy.passthrough = True
-            display.final_report(people, all_dead, factions, event_log, TICKS,
-                                 key_archive=_key_events_archive)
-        if _write_full_text():
-            if 'mythology' in _disabled_layers:
-                pass
-            elif config.MYTHOLOGY_ENABLED:
+            display.final_report(
+                people, all_dead, factions, event_log, TICKS,
+                key_archive=_key_events_archive)
+
+        _run_optional('final_report_failed', _final_report)
+
+        def _final_narrative() -> None:
+            if not _write_full_text() or 'mythology' in _disabled_layers:
+                return
+            if config.MYTHOLOGY_ENABLED:
                 mythology.mythology_final_summary(
                     factions, all_dead, TICKS, event_log, era_summaries)
-                time.sleep(2)   # flush iGPU shared memory after final narrative LLM job
-                gc.collect()    # reclaim memory after final LLM job
-            else:
-                # Write final chronicle entry and ensure the file is flushed
-                # and closed.
-                export_to_mythology_file(TICKS)
-                _final_chronicle = (
-                    f"manual_chronicle_{_run_condition}_seed_{_run_seed}.txt")
-                with open(_final_chronicle, "a", encoding="utf-8") as _mcf:
-                    _mcf.write(
-                        f"\n{'=' * 60}\n  END OF SIMULATION — {TICKS} ticks total\n"
-                        f"{'=' * 60}\n")
-                    _mcf.flush()
-        sys.stdout = _real
-        if _log_fh is not None:
-            _log_fh.close()
-            print(f"\nFull log saved → {_log_path}")
+                time.sleep(2)
+                gc.collect()
+                return
+            export_to_mythology_file(TICKS)
+            final_chronicle = (
+                f"manual_chronicle_{_run_condition}_seed_{_run_seed}.txt")
+            with open(final_chronicle, "a", encoding="utf-8") as handle:
+                handle.write(
+                    f"\n{'=' * 60}\n  END OF SIMULATION — {TICKS} ticks total\n"
+                    f"{'=' * 60}\n")
+                handle.flush()
+
+        _run_optional('final_narrative_failed', _final_narrative)
+
+        # Restoration is required for process correctness. If the helper
+        # fails, force the direct assignment before continuing to seal a
+        # noncompleted attempt.
+        try:
+            _restore_stdout(_real)
+        except Exception as exc:
+            _diagnose('stdout_restore_failed', exc)
+            _mark_required_failure(exc)
+            sys.stdout = _real
+            mythology.init(None)
+        except BaseException as exc:
+            _diagnose('stdout_restore_failed', exc)
+            _capture_terminal(exc)
+            sys.stdout = _real
+            mythology.init(None)
+
+        def _close_optional_log() -> None:
+            if _log_fh is not None:
+                _log_fh.close()
+
+        _run_optional('narrative_log_close_failed', _close_optional_log)
+        _event_log_fh = None
+
+        # ── Final authoritative manifest publication ───────────────────────
+        if _state_hash is not None:
+            try:
+                write_run_manifest(
+                    'data',
+                    seed=_seed_value,
+                    condition=_args.condition,
+                    configuration=_repro_config,
+                    state_hash=_state_hash,
+                    execution_mode='serial' if _serial_mode else 'threaded',
+                    requested_ticks=TICKS,
+                    final_tick=_last_completed_tick,
+                    termination_reason=_termination_reason,
+                    result_status=_result_status,
+                    completed_normally=_completed_normally,
+                    writer_health=_writer_health,
+                    finalization_diagnostics=_finalization_diagnostics,
+                    log_mode=_log_mode,
+                    required_outputs=[
+                        'metrics',
+                        'events',
+                        'beliefs',
+                        'run_summary',
+                        'run_manifest',
+                    ],
+                    optional_outputs=_optional_output_policy(_log_mode),
+                )
+            except Exception as exc:
+                _mark_required_failure(exc)
+                try:
+                    manifest_error_path = pathlib.Path('data') / (
+                        f'run_manifest_{_args.condition}_seed_{_seed_value}.error.txt')
+                    manifest_error_path.write_text(
+                        traceback.format_exc(), encoding='utf-8')
+                except Exception as diagnostic_exc:
+                    _diagnose('manifest_error_diagnostic_failed', diagnostic_exc)
+                except BaseException as diagnostic_exc:
+                    _capture_terminal(diagnostic_exc)
+            except BaseException as exc:
+                _capture_terminal(exc)
+                _mark_required_failure(exc)
+
+    if _terminal_exception is not None:
+        raise _terminal_exception.with_traceback(_terminal_traceback)
+    if _required_output_error is not None:
+        raise RuntimeError(
+            "simulation state completed but required evidence sealing failed"
+        ) from _required_output_error
 
 
 # ══════════════════════════════════════════════════════════════════════════

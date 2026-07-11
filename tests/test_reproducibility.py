@@ -128,8 +128,16 @@ def test_different_seeds_have_different_hashes(tmp_path):
 def test_manifest_records_code_provenance(tmp_path):
     manifest = run_and_read_manifest(tmp_path / "run", 456)
 
-    assert manifest["schema_version"] == 1
+    assert manifest["schema_version"] == 2
     assert manifest["event_schema_version"] == 1
+    assert manifest["metrics_timing_contract"] == "end_of_tick_v2"
+    assert manifest["requested_ticks"] == manifest["final_tick"] == 5
+    assert manifest["termination_reason"] == "requested_ticks_reached"
+    assert manifest["result_status"] == "completed"
+    assert manifest["completed_normally"] is True
     assert manifest["state_hash_algorithm"] == "sha256"
     assert len(manifest["state_hash"]) == 64
     assert set(manifest["code"]) == {"commit", "dirty"}
+    assert set(manifest["artifact_inventory"]) == {
+        "metrics", "events", "beliefs", "summary",
+    }

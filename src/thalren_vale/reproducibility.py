@@ -2,12 +2,29 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
+import os
 import subprocess
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
+from .artifact_contract import (
+    ALLOW_ZERO_EVENTS,
+    BELIEFS_SCHEMA_VERSION,
+    BELIEF_SNAPSHOT_CARDINALITY,
+    BELIEF_SNAPSHOT_INTERVAL,
+    EvidencePathError,
+    METRICS_SCHEMA_VERSION,
+    METRICS_TIMING_CONTRACT,
+    RUN_MANIFEST_SCHEMA_VERSION,
+    RUN_SUMMARY_SCHEMA_VERSION,
+    lexical_absolute,
+    require_contained_regular_file,
+    require_real_directory,
+    require_safe_manifest_target,
+)
 from .events import EVENT_SCHEMA_VERSION
 
 
@@ -184,6 +201,73 @@ def _code_revision() -> dict:
         return {"commit": None, "dirty": None}
 
 
+def _artifact_inventory_entry(
+    path: Path,
+    schema_version: int,
+    *,
+    data_root: Path,
+) -> dict:
+    """Return a streaming checksum and CSV row count for one sealed artifact."""
+    path = require_contained_regular_file(path, data_root)
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        reader = csv.reader(handle, strict=True)
+        next(reader)
+        data_rows = sum(1 for _row in reader)
+
+    return {
+        "path": path.name,
+        "size_bytes": path.stat().st_size,
+        "sha256": digest.hexdigest(),
+        "data_rows": data_rows,
+        "schema_version": schema_version,
+    }
+
+
+def build_artifact_inventory(
+    output_dir: str,
+    *,
+    seed: int,
+    condition: str,
+) -> tuple[dict[str, dict], list[str]]:
+    """Inventory only required structured artifacts, preserving any errors."""
+    root = lexical_absolute(Path(output_dir))
+    try:
+        root = require_real_directory(root)
+    except EvidencePathError as exc:
+        return {}, [f"data_root: EvidencePathError: {exc}"]
+    artifacts = {
+        "metrics": (
+            root / f"metrics_{condition}_seed_{seed}.csv",
+            METRICS_SCHEMA_VERSION,
+        ),
+        "events": (
+            root / f"faction_events_{condition}_seed_{seed}.csv",
+            EVENT_SCHEMA_VERSION,
+        ),
+        "beliefs": (
+            root / f"beliefs_{condition}_seed_{seed}.csv",
+            BELIEFS_SCHEMA_VERSION,
+        ),
+        "summary": (root / "run_summaries.csv", RUN_SUMMARY_SCHEMA_VERSION),
+    }
+    inventory: dict[str, dict] = {}
+    errors: list[str] = []
+    for label, (path, schema_version) in artifacts.items():
+        try:
+            inventory[label] = _artifact_inventory_entry(
+                path, schema_version, data_root=root)
+        except (
+            OSError, UnicodeError, csv.Error, StopIteration, EvidencePathError,
+        ) as exc:
+            errors.append(f"{label}: {type(exc).__name__}: {exc}")
+    return inventory, errors
+
+
 def write_run_manifest(
     output_dir: str,
     *,
@@ -192,18 +276,50 @@ def write_run_manifest(
     configuration: dict,
     state_hash: str,
     execution_mode: str,
+    requested_ticks: int,
+    final_tick: int,
+    termination_reason: str,
+    result_status: str,
+    completed_normally: bool,
+    writer_health: dict,
+    artifact_policy: dict | None = None,
+    finalization_diagnostics: list[str] | None = None,
     log_mode: str = "full",
     required_outputs: list[str] | None = None,
     optional_outputs: dict | None = None,
 ) -> Path:
     """Write machine-readable provenance for one simulation run."""
-    path = Path(output_dir) / f"run_manifest_{condition}_seed_{seed}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    root = lexical_absolute(Path(output_dir))
+    if root.exists() or root.is_symlink():
+        root = require_real_directory(root)
+    else:
+        require_real_directory(root.parent)
+        root.mkdir()
+        root = require_real_directory(root)
+    path = require_safe_manifest_target(
+        root / f"run_manifest_{condition}_seed_{seed}.json",
+        root,
+    )
+    inventory, inventory_errors = build_artifact_inventory(
+        output_dir, seed=seed, condition=condition)
     manifest = {
-        "schema_version": 1,
+        "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
         "event_schema_version": EVENT_SCHEMA_VERSION,
+        "artifact_schema_versions": {
+            "metrics": METRICS_SCHEMA_VERSION,
+            "events": EVENT_SCHEMA_VERSION,
+            "beliefs": BELIEFS_SCHEMA_VERSION,
+            "summary": RUN_SUMMARY_SCHEMA_VERSION,
+        },
+        "metrics_timing_contract": METRICS_TIMING_CONTRACT,
         "seed": seed,
         "condition": condition,
+        "requested_ticks": requested_ticks,
+        "final_tick": final_tick,
+        "completed_ticks": final_tick,
+        "termination_reason": termination_reason,
+        "result_status": result_status,
+        "completed_normally": completed_normally,
         "configuration": configuration,
         "execution_mode": execution_mode,
         "log_mode": log_mode,
@@ -217,10 +333,22 @@ def write_run_manifest(
         "optional_outputs": optional_outputs or {},
         "state_hash_algorithm": "sha256",
         "state_hash": state_hash,
+        "writer_health": writer_health,
+        "artifact_policy": artifact_policy or {
+            "allow_zero_events": ALLOW_ZERO_EVENTS,
+            "belief_snapshot_interval": BELIEF_SNAPSHOT_INTERVAL,
+            "belief_snapshot_cardinality": BELIEF_SNAPSHOT_CARDINALITY,
+        },
+        "finalization_diagnostics": list(finalization_diagnostics or []),
+        "artifact_inventory": inventory,
+        "artifact_inventory_errors": inventory_errors,
         "code": _code_revision(),
     }
-    path.write_text(
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    require_safe_manifest_target(temporary, root)
+    temporary.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    os.replace(temporary, path)
     return path

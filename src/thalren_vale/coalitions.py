@@ -7,8 +7,10 @@ randomness and does not import or mutate formal faction behavior.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 import math
-from typing import Protocol
+from types import MappingProxyType
+from typing import Mapping, Protocol
 
 from .social import Relationship
 
@@ -39,6 +41,88 @@ class CoalitionInvariantError(ValueError):
         self.code = code
         self.detail = detail
         super().__init__(f"{code}: {detail}")
+
+
+class CoalitionCommunicationContext(str, Enum):
+    """Closed coalition contexts for one authentic language occurrence."""
+
+    SAME_ACTIVE_COALITION = "same_active_coalition"
+    DIFFERENT_ACTIVE_COALITIONS = "different_active_coalitions"
+    ASSIGNED_UNASSIGNED = "assigned_unassigned"
+    BOTH_UNASSIGNED = "both_unassigned"
+
+
+_COALITION_SNAPSHOT_FACTORY_TOKEN = object()
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class CoalitionMembershipSnapshot:
+    """Validated immutable coalition membership for one economy tick.
+
+    Instances can be created only by ``build_coalition_membership_snapshot``.
+    The mapping proxy owns a private copied dictionary; no caller-owned
+    coalition collection or member tuple is retained.
+    """
+
+    snapshot_tick: int
+    source_observation_tick: int | None
+    active_coalition_ids: tuple[int, ...]
+    active_inhabitant_ids: tuple[int, ...]
+    lineage: tuple[int, int, int]
+    _active_inhabitant_id_set: frozenset[int]
+    _member_to_coalition: Mapping[int, int]
+    _factory_token: object
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        _raise(
+            "forged_coalition_membership_snapshot",
+            "snapshot construction is restricted to the validated factory",
+        )
+
+
+def _create_coalition_membership_snapshot(
+    *,
+    snapshot_tick: int,
+    source_observation_tick: int | None,
+    active_coalition_ids: tuple[int, ...],
+    active_inhabitant_ids: tuple[int, ...],
+    lineage: tuple[int, int, int],
+    member_to_coalition: dict[int, int],
+) -> CoalitionMembershipSnapshot:
+    """Create one capability after the public builder validates all inputs."""
+    result = object.__new__(CoalitionMembershipSnapshot)
+    private_membership = dict(member_to_coalition)
+    object.__setattr__(result, "snapshot_tick", snapshot_tick)
+    object.__setattr__(
+        result, "source_observation_tick", source_observation_tick)
+    object.__setattr__(
+        result, "active_coalition_ids", tuple(active_coalition_ids))
+    object.__setattr__(
+        result, "active_inhabitant_ids", tuple(active_inhabitant_ids))
+    object.__setattr__(result, "lineage", tuple(lineage))
+    object.__setattr__(
+        result,
+        "_active_inhabitant_id_set",
+        frozenset(active_inhabitant_ids),
+    )
+    object.__setattr__(
+        result,
+        "_member_to_coalition",
+        MappingProxyType(private_membership),
+    )
+    object.__setattr__(
+        result, "_factory_token", _COALITION_SNAPSHOT_FACTORY_TOKEN)
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class CoalitionCommunicationClassification:
+    """Constant-size result of classifying one sender and receiver."""
+
+    context: CoalitionCommunicationContext
+    sender_coalition_id: int | None
+    receiver_coalition_id: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -703,6 +787,207 @@ def _validate_runtime_structure(
                 "invalid_candidate_persistence",
                 "candidate persistence is out of bounds",
             )
+
+
+def coalition_runtime_is_pristine(runtime: object) -> bool:
+    """Return whether runtime has the exact pre-observation state."""
+    return type(runtime) is CoalitionRuntimeState and (
+        runtime.candidates == {}
+        and runtime.active_coalitions == {}
+        and runtime.member_to_coalition == {}
+        and runtime.next_coalition_id == 0
+        and type(runtime.next_coalition_id) is int
+        and runtime.candidate_formation_count == 0
+        and type(runtime.candidate_formation_count) is int
+        and runtime.split_event_count == 0
+        and type(runtime.split_event_count) is int
+        and runtime.split_child_count == 0
+        and type(runtime.split_child_count) is int
+        and runtime.dissolution_count == 0
+        and type(runtime.dissolution_count) is int
+        and runtime.last_observation_tick is None
+        and runtime.last_active_inhabitant_ids == ()
+        and runtime.last_qualifying_reciprocal_edge_count == 0
+        and type(runtime.last_qualifying_reciprocal_edge_count) is int
+    )
+
+
+def build_coalition_membership_snapshot(
+    runtime: CoalitionRuntimeState,
+    *,
+    snapshot_tick: int,
+    active_inhabitant_ids: tuple[int, ...],
+    config: CoalitionConfig,
+) -> CoalitionMembershipSnapshot:
+    """Fully validate and privately copy membership once for an economy tick."""
+    _validate_config(config)
+    if not config.coalition_emergence_enabled:
+        _raise(
+            "coalition_processing_disabled",
+            "dialect snapshots require effective coalition emergence",
+        )
+    if type(snapshot_tick) is not int or snapshot_tick < 1:
+        _raise(
+            "invalid_coalition_snapshot_tick",
+            "snapshot tick must be a positive exact integer",
+        )
+    if type(active_inhabitant_ids) is not tuple:
+        _raise(
+            "invalid_coalition_snapshot_active_ids",
+            "current active IDs must be supplied as an exact tuple",
+        )
+    if any(
+        not _is_exact_nonnegative_int(member)
+        for member in active_inhabitant_ids
+    ):
+        _raise(
+            "invalid_coalition_snapshot_active_ids",
+            "current active IDs must be nonnegative exact integers",
+        )
+    if len(active_inhabitant_ids) != len(set(active_inhabitant_ids)):
+        _raise(
+            "invalid_coalition_snapshot_active_ids",
+            "current active IDs must be unique",
+        )
+    current_active_ids = tuple(sorted(
+        member for member in active_inhabitant_ids
+    ))
+    if type(runtime) is not CoalitionRuntimeState:
+        _raise("invalid_coalition_runtime", "runtime has an invalid exact type")
+    previous_active_ids = _canonical_member_tuple(
+        runtime.last_active_inhabitant_ids,
+        code="invalid_active_id_snapshot",
+    )
+    _validate_runtime_structure(
+        runtime,
+        allowed_ids=frozenset(previous_active_ids),
+        config=config,
+        expected_last_tick=runtime.last_observation_tick,
+    )
+
+    if snapshot_tick == 1:
+        if not coalition_runtime_is_pristine(runtime):
+            _raise(
+                "nonpristine_initial_coalition_snapshot",
+                "the first dialect tick requires pristine coalition state",
+            )
+    elif runtime.last_observation_tick != snapshot_tick - 1:
+        _raise(
+            "stale_coalition_membership_snapshot",
+            "coalition observation must be the immediately preceding tick",
+        )
+
+    return _create_coalition_membership_snapshot(
+        snapshot_tick=snapshot_tick,
+        source_observation_tick=runtime.last_observation_tick,
+        active_coalition_ids=tuple(sorted(runtime.active_coalitions)),
+        active_inhabitant_ids=current_active_ids,
+        lineage=(
+            runtime.next_coalition_id,
+            runtime.candidate_formation_count,
+            runtime.split_child_count,
+        ),
+        member_to_coalition=runtime.member_to_coalition,
+    )
+
+
+def validate_coalition_membership_snapshot(
+    snapshot: object,
+    *,
+    tick: int,
+) -> CoalitionMembershipSnapshot:
+    """Perform only constant-time capability and freshness validation."""
+    if type(snapshot) is not CoalitionMembershipSnapshot:
+        _raise(
+            "invalid_coalition_membership_snapshot",
+            "snapshot must have the exact validated snapshot type",
+        )
+    if snapshot._factory_token is not _COALITION_SNAPSHOT_FACTORY_TOKEN:
+        _raise(
+            "forged_coalition_membership_snapshot",
+            "snapshot lacks validated factory provenance",
+        )
+    if (
+        type(snapshot.snapshot_tick) is not int
+        or type(tick) is not int
+        or tick < 1
+        or snapshot.snapshot_tick != tick
+    ):
+        _raise(
+            "stale_coalition_membership_snapshot",
+            "snapshot tick does not match the communication tick",
+        )
+    if (
+        (
+            snapshot.source_observation_tick is not None
+            and type(snapshot.source_observation_tick) is not int
+        )
+        or (tick == 1 and snapshot.source_observation_tick is not None)
+        or (
+            tick > 1
+            and snapshot.source_observation_tick != tick - 1
+        )
+    ):
+        _raise(
+            "stale_coalition_membership_snapshot",
+            "snapshot source observation is not immediately preceding",
+        )
+    if (
+        type(snapshot.active_coalition_ids) is not tuple
+        or type(snapshot.active_inhabitant_ids) is not tuple
+        or type(snapshot.lineage) is not tuple
+        or len(snapshot.lineage) != 3
+        or type(snapshot._active_inhabitant_id_set) is not frozenset
+        or type(snapshot._member_to_coalition) is not MappingProxyType
+        or len(snapshot._active_inhabitant_id_set)
+        != len(snapshot.active_inhabitant_ids)
+    ):
+        _raise(
+            "forged_coalition_membership_snapshot",
+            "snapshot immutable storage provenance is invalid",
+        )
+    return snapshot
+
+
+def classify_coalition_communication(
+    snapshot: CoalitionMembershipSnapshot,
+    *,
+    tick: int,
+    sender_id: int,
+    receiver_id: int,
+) -> CoalitionCommunicationClassification:
+    """Classify one pair with constant-time snapshot checks and lookups."""
+    validated = validate_coalition_membership_snapshot(snapshot, tick=tick)
+    if not _is_exact_nonnegative_int(sender_id):
+        _raise("invalid_coalition_communicator", "sender ID is invalid")
+    if not _is_exact_nonnegative_int(receiver_id):
+        _raise("invalid_coalition_communicator", "receiver ID is invalid")
+    if sender_id == receiver_id:
+        _raise("invalid_coalition_communicator", "communicators must be distinct")
+    if (
+        sender_id not in validated._active_inhabitant_id_set
+        or receiver_id not in validated._active_inhabitant_id_set
+    ):
+        _raise(
+            "inactive_coalition_communicator",
+            "both communicators must exist in the frozen active-ID snapshot",
+        )
+
+    sender_coalition_id = validated._member_to_coalition.get(sender_id)
+    receiver_coalition_id = validated._member_to_coalition.get(receiver_id)
+    if sender_coalition_id is None and receiver_coalition_id is None:
+        context = CoalitionCommunicationContext.BOTH_UNASSIGNED
+    elif sender_coalition_id is None or receiver_coalition_id is None:
+        context = CoalitionCommunicationContext.ASSIGNED_UNASSIGNED
+    elif sender_coalition_id == receiver_coalition_id:
+        context = CoalitionCommunicationContext.SAME_ACTIVE_COALITION
+    else:
+        context = CoalitionCommunicationContext.DIFFERENT_ACTIVE_COALITIONS
+    return CoalitionCommunicationClassification(
+        context=context,
+        sender_coalition_id=sender_coalition_id,
+        receiver_coalition_id=receiver_coalition_id,
+    )
 
 
 def validate_proposed_coalition_state(

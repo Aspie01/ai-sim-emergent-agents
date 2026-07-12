@@ -12,12 +12,14 @@ from thalren_vale.inhabitants import Inhabitant
 from thalren_vale.language import (
     AgentLanguageState,
     AssociationOrigin,
+    CoalitionDialectRuntimeState,
     LanguageInvariantError,
     LanguageRuntimeState,
     LexicalAssociation,
     Meaning,
     Signal,
     initialize_language_runtime,
+    dialect_runtime_is_pristine,
     language_runtime_is_pristine,
 )
 
@@ -49,6 +51,7 @@ def seed_failed_reset_state(
             sim.state.coalitions.candidate_formation_count
         ),
         "language_runtime": copy.deepcopy(sim.state.language),
+        "dialect_runtime": copy.deepcopy(sim.state.dialect),
     }
 
 
@@ -61,6 +64,7 @@ def assert_failed_reset_state_unchanged(before: dict[str, object]) -> None:
         before["coalition_formation_count"]
     )
     assert sim.state.language == before["language_runtime"]
+    assert sim.state.dialect == before["dialect_runtime"]
 
 
 def test_domain_modules_share_state_owned_collections():
@@ -141,6 +145,45 @@ def test_reset_runtime_state_clears_core_and_domain_stores():
     assert deceased.language.comprehension == {}
     assert deceased.language.next_invention_index == 0
     assert language_runtime_is_pristine(sim.state.language)
+    assert dialect_runtime_is_pristine(sim.state.dialect)
+
+
+def test_reset_accepts_valid_enabled_dialect_runtime_and_restores_pristine():
+    sim.reset_runtime_state()
+    initialize_language_runtime(
+        sim.state.language,
+        33,
+        coalition_dialect_influence_enabled=True,
+    )
+    sim.state.language.communication_attempt_count = 1
+    sim.state.language.unknown_signal_count = 1
+    sim.state.language.last_communication_tick = 1
+    sim.state.dialect.same_coalition_communication_count = 1
+    sim.state.dialect.same_coalition_rate_application_count = 1
+    sim.state.dialect.last_classification_tick = 1
+
+    sim.reset_runtime_state()
+
+    assert language_runtime_is_pristine(sim.state.language)
+    assert dialect_runtime_is_pristine(sim.state.dialect)
+
+
+def test_reset_rejects_hidden_disabled_dialect_state_before_mutation():
+    resident = reset_inhabitant("Resident", 0)
+    before = seed_failed_reset_state([resident])
+    sim.state.dialect.same_coalition_communication_count = 1
+    sim.state.dialect.last_classification_tick = 1
+    before["dialect_runtime"] = copy.deepcopy(sim.state.dialect)
+
+    try:
+        with pytest.raises(LanguageInvariantError) as exc_info:
+            sim.reset_runtime_state()
+
+        assert exc_info.value.code == "nonpristine_dialect_runtime"
+        assert_failed_reset_state_unchanged(before)
+    finally:
+        sim.state.dialect = CoalitionDialectRuntimeState()
+        sim.reset_runtime_state()
 
 
 def test_reset_missing_language_attribute_fails_before_any_mutation():

@@ -46,6 +46,7 @@ from .artifact_contract import (
 )
 from .config import (
     DEFAULT_COALITION_EMERGENCE_ENABLED,
+    DEFAULT_COALITION_DIALECT_INFLUENCE_ENABLED,
     DEFAULT_COALITION_FAMILIARITY_THRESHOLD,
     DEFAULT_COALITION_MAXIMUM_GRIEVANCE,
     DEFAULT_COALITION_MINIMUM_SIZE,
@@ -61,9 +62,15 @@ from .config import (
     DEFAULT_MAXIMUM_SIGNAL_LENGTH,
     DEFAULT_MAXIMUM_SOCIAL_TIES,
     DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
+    DEFAULT_SAME_COALITION_LEARNING_MULTIPLIER,
+    DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER,
+    DIALECT_NOTICE_WITHOUT_COALITIONS,
+    DIALECT_NOTICE_WITHOUT_LANGUAGE,
     VALID_COALITION_CONTROL_NOTICES,
     VALID_COALITION_CONTROL_STATUSES,
     VALID_DISABLE_LAYERS,
+    VALID_DIALECT_CONTROL_NOTICES,
+    VALID_DIALECT_CONTROL_STATUSES,
     VALID_LANGUAGE_CONTROL_NOTICES,
     VALID_LANGUAGE_CONTROL_STATUSES,
     VALID_LOG_MODES,
@@ -806,6 +813,164 @@ def _validate_coalition_configuration(
         _add(
             issues,
             "invalid_coalition_configuration",
+            message,
+            "manifest",
+        )
+
+
+def _validate_dialect_configuration(
+    config: dict,
+    issues: _IssueCollector,
+) -> None:
+    """Validate present requested/effective coalition-dialect provenance."""
+
+    def finite_multiplier(value: object) -> bool:
+        return (
+            type(value) is float
+            and math.isfinite(value)
+            and 1.0 <= value <= 2.0
+        )
+
+    validators = {
+        "coalition_dialect_influence_enabled": _is_bool,
+        "same_coalition_learning_multiplier": finite_multiplier,
+        "same_coalition_reinforcement_multiplier": finite_multiplier,
+        "dialect_controls_status": (
+            lambda value: _is_str(value)
+            and value in VALID_DIALECT_CONTROL_STATUSES
+        ),
+        "dialect_control_notices": (
+            lambda value: _is_list(value)
+            and all(
+                _is_str(item) and item in VALID_DIALECT_CONTROL_NOTICES
+                for item in value
+            )
+            and len(value) == len(set(value))
+            and value == sorted(value)
+        ),
+    }
+    valid_present: set[str] = set()
+    for name, validator in validators.items():
+        if name not in config:
+            continue
+        if not validator(config[name]):
+            _add(
+                issues,
+                "invalid_dialect_configuration",
+                f"{name} is malformed",
+                "manifest",
+            )
+        else:
+            valid_present.add(name)
+
+    influence_present = (
+        "coalition_dialect_influence_enabled" in valid_present
+    )
+    learning_present = "same_coalition_learning_multiplier" in valid_present
+    reinforcement_present = (
+        "same_coalition_reinforcement_multiplier" in valid_present
+    )
+    status_present = "dialect_controls_status" in valid_present
+    notices_present = "dialect_control_notices" in valid_present
+    language_present = (
+        "language_evolution_enabled" in config
+        and _is_bool(config.get("language_evolution_enabled"))
+    )
+    coalitions_present = (
+        "coalition_emergence_enabled" in config
+        and _is_bool(config.get("coalition_emergence_enabled"))
+    )
+
+    influence = (
+        config["coalition_dialect_influence_enabled"]
+        if influence_present else None
+    )
+    status = config["dialect_controls_status"] if status_present else None
+    notices = config["dialect_control_notices"] if notices_present else None
+    errors: list[str] = []
+
+    def add_error(message: str) -> None:
+        if message not in errors:
+            errors.append(message)
+
+    if influence is True:
+        if language_present and not config["language_evolution_enabled"]:
+            add_error("enabled dialect influence requires language evolution")
+        if coalitions_present and not config["coalition_emergence_enabled"]:
+            add_error("enabled dialect influence requires coalition emergence")
+        if notices_present and notices:
+            add_error("enabled dialect influence conflicts with normalization notices")
+
+    if notices_present:
+        assert type(notices) is list
+        language_notice = DIALECT_NOTICE_WITHOUT_LANGUAGE in notices
+        coalition_notice = DIALECT_NOTICE_WITHOUT_COALITIONS in notices
+        if influence is True and notices:
+            add_error("normalization notices require disabled dialect influence")
+        if language_present:
+            if config["language_evolution_enabled"] and language_notice:
+                add_error("language dependency notice conflicts with effective language")
+            if (
+                notices
+                and not config["language_evolution_enabled"]
+                and not language_notice
+            ):
+                add_error("normalized dialect state lacks the language dependency notice")
+        if coalitions_present:
+            if config["coalition_emergence_enabled"] and coalition_notice:
+                add_error("coalition dependency notice conflicts with effective coalitions")
+            if (
+                notices
+                and not config["coalition_emergence_enabled"]
+                and not coalition_notice
+            ):
+                add_error("normalized dialect state lacks the coalition dependency notice")
+
+    controls_complete = (
+        influence_present and learning_present and reinforcement_present
+    )
+    any_nondefault = (
+        (influence is True)
+        or (
+            learning_present
+            and not _exact_equal(
+                config["same_coalition_learning_multiplier"],
+                DEFAULT_SAME_COALITION_LEARNING_MULTIPLIER,
+            )
+        )
+        or (
+            reinforcement_present
+            and not _exact_equal(
+                config["same_coalition_reinforcement_multiplier"],
+                DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER,
+            )
+        )
+    )
+    if status == "disabled":
+        if influence is True or any_nondefault:
+            add_error("disabled dialect status conflicts with present controls")
+        if notices_present and notices:
+            add_error("disabled dialect status requires exact empty notices")
+    elif status == "normalized_uncontracted":
+        if influence is True:
+            add_error("normalized dialect status requires disabled influence")
+        if not notices_present or not notices:
+            add_error("normalized dialect status requires a dependency notice")
+    elif status == "engineering_only_uncontracted":
+        if notices_present and notices:
+            add_error("engineering dialect status conflicts with normalization notices")
+        if controls_complete and not any_nondefault:
+            add_error("engineering dialect status requires a nondefault control")
+
+    if notices_present and notices and status_present and (
+        status != "normalized_uncontracted"
+    ):
+        add_error("dialect status conflicts with normalization notices")
+
+    for message in errors:
+        _add(
+            issues,
+            "invalid_dialect_configuration",
             message,
             "manifest",
         )
@@ -1877,6 +2042,29 @@ def _readiness_issues(
                 f"found {actual!r}",
                 "manifest",
             )
+    safe_dialect_controls = {
+        "coalition_dialect_influence_enabled": (
+            DEFAULT_COALITION_DIALECT_INFLUENCE_ENABLED
+        ),
+        "same_coalition_learning_multiplier": (
+            DEFAULT_SAME_COALITION_LEARNING_MULTIPLIER
+        ),
+        "same_coalition_reinforcement_multiplier": (
+            DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER
+        ),
+        "dialect_controls_status": "disabled",
+        "dialect_control_notices": [],
+    }
+    for name, expected in safe_dialect_controls.items():
+        actual = config.get(name)
+        if not _exact_equal(actual, expected):
+            _add(
+                issues,
+                "dialect_controls_not_v2_ready",
+                f"configuration.{name}: expected {expected!r}, "
+                f"found {actual!r}",
+                "manifest",
+            )
     if contract is None:
         _add(issues, "missing_expected_run_contract", "no complete external expected-run contract was supplied", "manifest")
         return issues.materialize()
@@ -2048,6 +2236,7 @@ def _validate_strict(
         _validate_social_configuration(config, issues)
         _validate_language_configuration(config, issues)
         _validate_coalition_configuration(config, issues)
+        _validate_dialect_configuration(config, issues)
     execution_mode = manifest.get("execution_mode")
     if not _is_str(execution_mode) or execution_mode not in {"serial", "threaded"}:
         _add(issues, "invalid_execution_mode", repr(manifest.get("execution_mode")), "manifest")

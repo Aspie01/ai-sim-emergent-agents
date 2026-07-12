@@ -6,6 +6,8 @@ import pytest
 
 from thalren_vale.config import (
     COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY,
+    DIALECT_NOTICE_WITHOUT_COALITIONS,
+    DIALECT_NOTICE_WITHOUT_LANGUAGE,
     SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY,
     SimulationConfig,
 )
@@ -48,6 +50,10 @@ def cli_args(**overrides):
         "coalition_maximum_grievance": None,
         "coalition_persistence_ticks": None,
         "maximum_active_coalitions": None,
+        "enable_coalition_dialect_influence": False,
+        "disable_coalition_dialect_influence": False,
+        "same_coalition_learning_multiplier": None,
+        "same_coalition_reinforcement_multiplier": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -220,6 +226,53 @@ def test_enabled_or_nondefault_coalition_controls_are_engineering_only():
     assert enabled.social_controls_status == "engineering_only_uncontracted"
 
 
+def test_dialect_controls_default_to_exact_research_safe_values():
+    manifest = SimulationConfig.from_cli(cli_args()).manifest_dict()
+
+    assert manifest["coalition_dialect_influence_enabled"] is False
+    assert manifest["same_coalition_learning_multiplier"] == 1.50
+    assert manifest["same_coalition_reinforcement_multiplier"] == 1.25
+    assert manifest["dialect_controls_status"] == "disabled"
+    assert manifest["dialect_control_notices"] == []
+
+
+def test_dialect_request_normalizes_against_each_effective_dependency():
+    neither = SimulationConfig.from_cli(cli_args(
+        enable_coalition_dialect_influence=True))
+    no_coalitions = SimulationConfig.from_cli(cli_args(
+        enable_language_evolution=True,
+        enable_coalition_dialect_influence=True,
+    ))
+
+    assert neither.coalition_dialect_influence_enabled is False
+    assert neither.dialect_controls_status == "normalized_uncontracted"
+    assert neither.dialect_control_notices == tuple(sorted((
+        DIALECT_NOTICE_WITHOUT_LANGUAGE,
+        DIALECT_NOTICE_WITHOUT_COALITIONS,
+    )))
+    assert no_coalitions.dialect_control_notices == (
+        DIALECT_NOTICE_WITHOUT_COALITIONS,
+    )
+
+
+def test_enabled_or_nondefault_dialect_controls_are_engineering_only():
+    enabled = SimulationConfig.from_cli(cli_args(
+        enable_social_memory=True,
+        enable_language_evolution=True,
+        enable_coalition_emergence=True,
+        enable_coalition_dialect_influence=True,
+    ))
+    nondefault = SimulationConfig.from_cli(cli_args(
+        same_coalition_learning_multiplier=1.75,
+    ))
+
+    assert enabled.coalition_dialect_influence_enabled is True
+    assert enabled.dialect_control_notices == ()
+    assert enabled.dialect_controls_status == "engineering_only_uncontracted"
+    assert nondefault.coalition_dialect_influence_enabled is False
+    assert nondefault.dialect_controls_status == "engineering_only_uncontracted"
+
+
 @pytest.mark.parametrize(
     ("override", "message"),
     [
@@ -245,6 +298,9 @@ def test_enabled_or_nondefault_coalition_controls_are_engineering_only():
         ({"coalition_maximum_grievance": 1.1}, "finite float"),
         ({"coalition_persistence_ticks": 1}, "persistence ticks"),
         ({"maximum_active_coalitions": 0}, "maximum active coalitions"),
+        ({"same_coalition_learning_multiplier": 1}, "finite float"),
+        ({"same_coalition_learning_multiplier": 2.1}, "finite float"),
+        ({"same_coalition_reinforcement_multiplier": float("nan")}, "finite float"),
     ],
 )
 def test_invalid_configuration_is_rejected(override, message):

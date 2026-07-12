@@ -237,6 +237,29 @@ EQUALS_LANGUAGE_ARGUMENTS = [
     ["--disable-language-invention=true"],
 ]
 
+ABBREVIATED_DIALECT_ARGUMENTS = [
+    ["--same-coalition"],
+    ["--same-coalition-learning", "1.5"],
+    ["--same-coalition-reinforcement", "1.25"],
+    ["--enable-coalition-dialect"],
+    ["--disable-coalition-dialect"],
+]
+
+FULL_DIALECT_ARGUMENTS = [
+    ["--enable-coalition-dialect-influence"],
+    ["--disable-coalition-dialect-influence"],
+    ["--same-coalition-learning-multiplier", "1.5"],
+    ["--same-coalition-reinforcement-multiplier", "1.25"],
+]
+
+EQUALS_DIALECT_ARGUMENTS = [
+    ["--enable-coalition-dialect-influence=true"],
+    ["--disable-coalition-dialect-influence=true"],
+    ["--same-coalition-learning-multiplier=1.5"],
+    ["--same-coalition-reinforcement-multiplier=1.25"],
+    ["--same-coalition=1.5"],
+]
+
 
 @pytest.mark.parametrize(
     "extra_args",
@@ -316,6 +339,34 @@ def test_runner_rejects_uncontracted_language_controls_before_creating_root(
     )
 
     with pytest.raises(ValueError, match="uncontracted language control"):
+        runner._run_cells_in_fresh_root([cell], output)
+
+    assert child_calls == []
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    ABBREVIATED_DIALECT_ARGUMENTS
+    + FULL_DIALECT_ARGUMENTS
+    + EQUALS_DIALECT_ARGUMENTS,
+)
+def test_runner_rejects_every_dialect_prefix_before_filesystem_or_child_activity(
+    tmp_path,
+    monkeypatch,
+    extra_args,
+):
+    output = tmp_path / "outputs"
+    cell = fresh_cell_spec()[0]
+    cell["extra_args"] = extra_args
+    child_calls = []
+    monkeypatch.setattr(
+        runner,
+        "_simulation_command",
+        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+    )
+
+    with pytest.raises(ValueError, match="uncontracted dialect control"):
         runner._run_cells_in_fresh_root([cell], output)
 
     assert child_calls == []
@@ -455,6 +506,39 @@ def test_simulator_rejects_abbreviated_language_options_before_execution(
     assert not (tmp_path / "data").exists()
 
 
+@pytest.mark.parametrize("extra_args", ABBREVIATED_DIALECT_ARGUMENTS)
+def test_simulator_rejects_abbreviated_dialect_options_before_execution(
+    tmp_path,
+    extra_args,
+):
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(runner.SOURCE_ROOT)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "thalren_vale",
+            *extra_args,
+            "--ticks",
+            "0",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "unrecognized arguments" in result.stderr
+    assert extra_args[0] in result.stderr
+    assert "ticks must be at least 1" not in result.stderr
+    assert not (tmp_path / "data").exists()
+
+
 def test_plan_loading_rejects_engineering_social_controls(tmp_path):
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(
@@ -512,6 +596,34 @@ def test_plan_loading_rejects_engineering_language_controls(tmp_path):
     )
 
     with pytest.raises(ValueError, match="uncontracted language control"):
+        runner.load_plan(plan_path)
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    ("--same-coalition", "--enable-coalition-dialect",
+     "--same-coalition-reinforcement-multiplier=1.25"),
+)
+def test_plan_loading_rejects_exact_ambiguous_and_equals_dialect_flags(
+    tmp_path,
+    extra_args,
+):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({
+            "schema_version": runner.PLAN_SCHEMA_VERSION,
+            "experiment_id": "dialects-not-contracted",
+            "conditions": [{
+                "name": "baseline",
+                "seeds": "1",
+                "ticks": 1,
+                "extra_args": extra_args,
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="uncontracted dialect control"):
         runner.load_plan(plan_path)
 
 

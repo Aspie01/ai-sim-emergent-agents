@@ -21,6 +21,7 @@ from .factions     import RIVALRIES
 from . import combat
 from .events import emit_event
 from .config import (
+    CoalitionDialectConfig,
     DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
     DEFAULT_LANGUAGE_INVENTION_ENABLED,
     DEFAULT_LANGUAGE_LEARNING_RATE,
@@ -32,12 +33,14 @@ from .config import (
     LanguageEvolutionConfig,
     SocialMemoryConfig,
 )
+from .coalitions import CoalitionMembershipSnapshot
 from .social import (
     InteractionKind,
     record_interaction,
     relationship_preference_score,
 )
 from .language import (
+    CoalitionDialectRuntimeState,
     CommunicationContext,
     LanguageRuntimeState,
     communicate,
@@ -183,6 +186,9 @@ def _do_trade(
     social_config=_DISABLED_SOCIAL_CONFIG,
     language_config=_DISABLED_LANGUAGE_CONFIG,
     language_runtime: LanguageRuntimeState | None = None,
+    dialect_config: CoalitionDialectConfig | None = None,
+    dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids=frozenset(),
 ):
     donors = [m for m in giver.members if m.inventory.get(res, 0) >= amount]
@@ -266,6 +272,20 @@ def _do_trade(
             active_ids=active_ids,
             config=language_config,
             runtime=language_runtime,
+            **(
+                {
+                    'dialect_config': dialect_config,
+                    'dialect_runtime': dialect_runtime,
+                    'coalition_membership_snapshot': (
+                        coalition_membership_snapshot
+                    ),
+                }
+                if (
+                    dialect_config is not None
+                    and dialect_config.coalition_dialect_influence_enabled
+                )
+                else {}
+            ),
         )
     return True
 
@@ -278,6 +298,9 @@ def _faction_trade(
     social_config=_DISABLED_SOCIAL_CONFIG,
     language_config=_DISABLED_LANGUAGE_CONFIG,
     language_runtime: LanguageRuntimeState | None = None,
+    dialect_config: CoalitionDialectConfig | None = None,
+    dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids=frozenset(),
 ):
     for fa, fb in combinations(active, 2):
@@ -312,6 +335,11 @@ def _faction_trade(
                     social_config=social_config,
                     language_config=language_config,
                     language_runtime=language_runtime,
+                    dialect_config=dialect_config,
+                    dialect_runtime=dialect_runtime,
+                    coalition_membership_snapshot=(
+                        coalition_membership_snapshot
+                    ),
                     active_ids=active_ids)
                 break
             elif sup_b[res] >= 5 and sup_b[res] >= sup_a[res] * 2:
@@ -320,6 +348,11 @@ def _faction_trade(
                     social_config=social_config,
                     language_config=language_config,
                     language_runtime=language_runtime,
+                    dialect_config=dialect_config,
+                    dialect_runtime=dialect_runtime,
+                    coalition_membership_snapshot=(
+                        coalition_membership_snapshot
+                    ),
                     active_ids=active_ids)
                 break
         else:
@@ -411,6 +444,9 @@ def _commit_individual_transfer(
     social_config: SocialMemoryConfig,
     language_config: LanguageEvolutionConfig = _DISABLED_LANGUAGE_CONFIG,
     language_runtime: LanguageRuntimeState | None = None,
+    dialect_config: CoalitionDialectConfig | None = None,
+    dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
 ) -> None:
     """Commit one existing individual transfer, then record its social outcome."""
@@ -452,6 +488,20 @@ def _commit_individual_transfer(
             active_ids=active_ids,
             config=language_config,
             runtime=language_runtime,
+            **(
+                {
+                    'dialect_config': dialect_config,
+                    'dialect_runtime': dialect_runtime,
+                    'coalition_membership_snapshot': (
+                        coalition_membership_snapshot
+                    ),
+                }
+                if (
+                    dialect_config is not None
+                    and dialect_config.coalition_dialect_influence_enabled
+                )
+                else {}
+            ),
         )
 
 
@@ -463,6 +513,9 @@ def _attempt_individual_transfer(
     social_config: SocialMemoryConfig,
     language_config: LanguageEvolutionConfig = _DISABLED_LANGUAGE_CONFIG,
     language_runtime: LanguageRuntimeState | None = None,
+    dialect_config: CoalitionDialectConfig | None = None,
+    dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
 ) -> bool:
     for res in RES_TRADE:
@@ -475,6 +528,9 @@ def _attempt_individual_transfer(
                 social_config=social_config,
                 language_config=language_config,
                 language_runtime=language_runtime,
+                dialect_config=dialect_config,
+                dialect_runtime=dialect_runtime,
+                coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )
             return True
@@ -488,6 +544,9 @@ def _historical_barter(
     social_config: SocialMemoryConfig,
     language_config: LanguageEvolutionConfig = _DISABLED_LANGUAGE_CONFIG,
     language_runtime: LanguageRuntimeState | None = None,
+    dialect_config: CoalitionDialectConfig | None = None,
+    dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
     rng,
 ) -> None:
@@ -509,6 +568,9 @@ def _historical_barter(
                 social_config=social_config,
                 language_config=language_config,
                 language_runtime=language_runtime,
+                dialect_config=dialect_config,
+                dialect_runtime=dialect_runtime,
+                coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )
 
@@ -606,6 +668,9 @@ def _relationship_biased_barter(
     social_config: SocialMemoryConfig,
     language_config: LanguageEvolutionConfig = _DISABLED_LANGUAGE_CONFIG,
     language_runtime: LanguageRuntimeState | None = None,
+    dialect_config: CoalitionDialectConfig | None = None,
+    dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng,
 ) -> frozenset[int]:
     frozen = _freeze_social_economy_inputs(people, rng)
@@ -648,6 +713,11 @@ def _relationship_biased_barter(
                     social_config=social_config,
                     language_config=language_config,
                     language_runtime=language_runtime,
+                    dialect_config=dialect_config,
+                    dialect_runtime=dialect_runtime,
+                    coalition_membership_snapshot=(
+                        coalition_membership_snapshot
+                    ),
                     active_ids=frozen.active_ids,
                 )
                 if redirected:
@@ -663,6 +733,9 @@ def _relationship_biased_barter(
                 social_config=social_config,
                 language_config=language_config,
                 language_runtime=language_runtime,
+                dialect_config=dialect_config,
+                dialect_runtime=dialect_runtime,
+                coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=frozen.active_ids,
             )
             available_ids.discard(giver_id)
@@ -678,6 +751,9 @@ def _individual_barter(
     social_config=_DISABLED_SOCIAL_CONFIG,
     language_config=_DISABLED_LANGUAGE_CONFIG,
     language_runtime: LanguageRuntimeState | None = None,
+    dialect_config: CoalitionDialectConfig | None = None,
+    dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng=random,
 ) -> frozenset[int]:
     del event_log  # Individual transfers intentionally remain internal state changes.
@@ -702,6 +778,9 @@ def _individual_barter(
             social_config=social_config,
             language_config=language_config,
             language_runtime=language_runtime,
+            dialect_config=dialect_config,
+            dialect_runtime=dialect_runtime,
+            coalition_membership_snapshot=coalition_membership_snapshot,
             active_ids=active_ids,
             rng=rng,
         )
@@ -713,6 +792,9 @@ def _individual_barter(
         social_config=social_config,
         language_config=language_config,
         language_runtime=language_runtime,
+        dialect_config=dialect_config,
+        dialect_runtime=dialect_runtime,
+        coalition_membership_snapshot=coalition_membership_snapshot,
         rng=rng,
     )
 
@@ -785,6 +867,9 @@ def economy_tick(
     social_config=_DISABLED_SOCIAL_CONFIG,
     language_config=_DISABLED_LANGUAGE_CONFIG,
     language_runtime: LanguageRuntimeState | None = None,
+    dialect_config: CoalitionDialectConfig | None = None,
+    dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng=random,
 ):
     """Run one economy tick, optionally suppressing hostile faction raids."""
@@ -823,6 +908,9 @@ def economy_tick(
             social_config=social_config,
             language_config=language_config,
             language_runtime=language_runtime,
+            dialect_config=dialect_config,
+            dialect_runtime=dialect_runtime,
+            coalition_membership_snapshot=coalition_membership_snapshot,
             rng=rng,
         )
 
@@ -838,6 +926,9 @@ def economy_tick(
                 social_config=social_config,
                 language_config=language_config,
                 language_runtime=language_runtime,
+                dialect_config=dialect_config,
+                dialect_runtime=dialect_runtime,
+                coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )
 

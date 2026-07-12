@@ -26,7 +26,7 @@ from .artifact_contract import (
     require_safe_manifest_target,
 )
 from .events import EVENT_SCHEMA_VERSION
-from .config import LanguageEvolutionConfig
+from .config import CoalitionDialectConfig, LanguageEvolutionConfig
 from .social import relationship_records
 from .coalitions import (
     CoalitionRuntimeState,
@@ -35,11 +35,15 @@ from .coalitions import (
 )
 from .language import (
     AgentLanguageState,
+    CoalitionDialectRuntimeState,
     LanguageInvariantError,
     LanguageRuntimeState,
     agent_language_record,
+    coalition_dialect_runtime_record,
+    dialect_runtime_is_pristine,
     language_runtime_is_pristine,
     language_runtime_record,
+    validate_coalition_dialect_config,
     validate_language_config,
 )
 
@@ -257,6 +261,21 @@ def _require_pristine_disabled_language_state(state) -> None:
         )
 
 
+def _require_pristine_disabled_dialect_state(state) -> None:
+    """Reject dialect state omitted from the dialect-disabled payload."""
+    runtime = getattr(state, "dialect", None)
+    if type(runtime) is not CoalitionDialectRuntimeState:
+        raise LanguageInvariantError(
+            "missing_disabled_dialect_runtime",
+            "disabled dialect influence requires an explicit runtime",
+        )
+    if not dialect_runtime_is_pristine(runtime):
+        raise LanguageInvariantError(
+            "nonpristine_disabled_dialect_runtime",
+            "disabled dialect influence requires pristine runtime state",
+        )
+
+
 def _coalition_state_record(runtime: CoalitionRuntimeState) -> dict:
     """Return the complete coalition runtime in canonical JSON-safe form."""
     return {
@@ -325,6 +344,44 @@ def _language_hash_config(configuration: dict) -> LanguageEvolutionConfig:
     return result
 
 
+def _dialect_hash_config(configuration: dict) -> CoalitionDialectConfig:
+    """Build exact enabled dialect controls for behavioral hashing."""
+    required = (
+        "coalition_dialect_influence_enabled",
+        "same_coalition_learning_multiplier",
+        "same_coalition_reinforcement_multiplier",
+        "dialect_controls_status",
+        "dialect_control_notices",
+    )
+    missing = [name for name in required if name not in configuration]
+    if missing:
+        raise ValueError(
+            "enabled dialect hashing lacks controls: " + ", ".join(missing))
+    if configuration["dialect_controls_status"] != (
+        "engineering_only_uncontracted"
+    ):
+        raise ValueError(
+            "enabled dialect hashing requires engineering-only status")
+    if (
+        type(configuration["dialect_control_notices"]) is not list
+        or configuration["dialect_control_notices"]
+    ):
+        raise ValueError(
+            "enabled dialect hashing requires exact empty notices")
+    result = CoalitionDialectConfig(
+        coalition_dialect_influence_enabled=configuration[
+            "coalition_dialect_influence_enabled"],
+        same_coalition_learning_multiplier=configuration[
+            "same_coalition_learning_multiplier"],
+        same_coalition_reinforcement_multiplier=configuration[
+            "same_coalition_reinforcement_multiplier"],
+    )
+    validate_coalition_dialect_config(result)
+    if not result.coalition_dialect_influence_enabled:
+        raise ValueError("enabled dialect hashing requires effective influence")
+    return result
+
+
 def canonical_state_hash(state, world: list, configuration: dict) -> str:
     """Return a SHA-256 fingerprint of behaviorally relevant final state."""
     social_memory_enabled = configuration.get("social_memory_enabled") is True
@@ -338,6 +395,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         raise ValueError("language evolution configuration must be boolean")
     language_evolution_enabled = configuration.get(
         "language_evolution_enabled", False)
+    if (
+        "coalition_dialect_influence_enabled" in configuration
+        and type(configuration["coalition_dialect_influence_enabled"]) is not bool
+    ):
+        raise ValueError("coalition dialect influence must be boolean")
+    dialect_influence_enabled = configuration.get(
+        "coalition_dialect_influence_enabled", False)
     non_behavioral_keys = {
         "condition",
         "log_mode",
@@ -380,6 +444,19 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         "coalition_controls_status",
         "coalition_control_notices",
     }
+    dialect_configuration_keys = {
+        "coalition_dialect_influence_enabled",
+        "same_coalition_learning_multiplier",
+        "same_coalition_reinforcement_multiplier",
+        "dialect_controls_status",
+        "dialect_control_notices",
+    }
+    if not dialect_influence_enabled:
+        _require_pristine_disabled_dialect_state(state)
+        non_behavioral_keys.update(dialect_configuration_keys)
+    elif not language_evolution_enabled or not coalition_emergence_enabled:
+        raise ValueError(
+            "enabled coalition dialect influence requires language and coalitions")
     if not coalition_emergence_enabled:
         _require_empty_disabled_coalition_state(state)
         non_behavioral_keys.update(coalition_configuration_keys)
@@ -394,6 +471,8 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         _language_hash_config(configuration)
         if language_evolution_enabled else None
     )
+    if dialect_influence_enabled:
+        _dialect_hash_config(configuration)
     people_records = [
         _person_record(
             person,
@@ -468,12 +547,27 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         runtime = getattr(state, "language", None)
         if type(runtime) is not LanguageRuntimeState:
             raise ValueError("enabled language state requires a valid runtime")
+        if runtime.coalition_dialect_influence_enabled is not (
+            dialect_influence_enabled
+        ):
+            raise LanguageInvariantError(
+                "dialect_runtime_gate_mismatch",
+                "language runtime dialect gate disagrees with effective controls",
+            )
         payload["language_state"] = language_runtime_record(runtime)
     if coalition_emergence_enabled:
         runtime = getattr(state, "coalitions", None)
         if not isinstance(runtime, CoalitionRuntimeState):
             raise ValueError("enabled coalition state requires a valid runtime")
         payload["coalition_state"] = _coalition_state_record(runtime)
+    if dialect_influence_enabled:
+        dialect_runtime = getattr(state, "dialect", None)
+        if type(dialect_runtime) is not CoalitionDialectRuntimeState:
+            raise ValueError("enabled dialect state requires a valid runtime")
+        payload["coalition_dialect_state"] = coalition_dialect_runtime_record(
+            dialect_runtime,
+            language_runtime=state.language,
+        )
     encoded = json.dumps(
         _json_safe(payload),
         ensure_ascii=False,

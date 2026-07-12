@@ -13,6 +13,14 @@ import hashlib
 import math
 from typing import Iterable, Protocol
 
+from .coalitions import (
+    CoalitionCommunicationContext,
+    CoalitionMembershipSnapshot,
+    classify_coalition_communication,
+    validate_coalition_membership_snapshot,
+)
+from .config import CoalitionDialectConfig
+
 
 LANGUAGE_DOMAIN = "thalren-vale:endogenous-language-v1"
 PHONEME_COUNT = 8
@@ -164,6 +172,19 @@ class LanguageRuntimeState:
     lost_association_count: int = 0
     last_communication_tick: int | None = None
     last_forgetting_tick: int | None = None
+    coalition_dialect_influence_enabled: bool = False
+
+
+@dataclass(slots=True)
+class CoalitionDialectRuntimeState:
+    """Constant-size attempt partition and adjusted-rate observability."""
+
+    same_coalition_communication_count: int = 0
+    different_coalition_communication_count: int = 0
+    assigned_unassigned_communication_count: int = 0
+    both_unassigned_communication_count: int = 0
+    same_coalition_rate_application_count: int = 0
+    last_classification_tick: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +199,9 @@ class CommunicationOutcome:
     produced_signal: Signal | None
     interpreted_meaning: Meaning | None
     result: CommunicationResult
+    coalition_context: CoalitionCommunicationContext | None = None
+    sender_coalition_id: int | None = None
+    receiver_coalition_id: int | None = None
 
 
 class LanguageConfig(Protocol):
@@ -220,12 +244,136 @@ def _increment(value: int, *, field_name: str) -> int:
     return value + 1
 
 
+def _saturating_add(value: int, amount: int, *, field_name: str) -> int:
+    if not _exact_nonnegative_int(value):
+        _raise("invalid_language_counter", f"{field_name} is invalid")
+    if type(amount) is not int or amount < 0:
+        _raise("invalid_language_counter", f"{field_name} delta is invalid")
+    return min(MAX_LANGUAGE_COUNTER, value + amount)
+
+
 def _quantize(value: float) -> float:
     return round(value, 6)
 
 
 def _confidence(value: float) -> float:
     return _quantize(max(0.0, min(1.0, value)))
+
+
+_DIALECT_CONTEXT_COUNTER_FIELDS = {
+    CoalitionCommunicationContext.SAME_ACTIVE_COALITION: (
+        "same_coalition_communication_count"
+    ),
+    CoalitionCommunicationContext.DIFFERENT_ACTIVE_COALITIONS: (
+        "different_coalition_communication_count"
+    ),
+    CoalitionCommunicationContext.ASSIGNED_UNASSIGNED: (
+        "assigned_unassigned_communication_count"
+    ),
+    CoalitionCommunicationContext.BOTH_UNASSIGNED: (
+        "both_unassigned_communication_count"
+    ),
+}
+
+
+def validate_coalition_dialect_config(config: object) -> CoalitionDialectConfig:
+    """Validate exact effective controls used by dialect communication."""
+    if type(config) is not CoalitionDialectConfig:
+        _raise("invalid_dialect_config", "dialect config has an invalid exact type")
+    if type(config.coalition_dialect_influence_enabled) is not bool:
+        _raise("invalid_dialect_config", "dialect influence must be boolean")
+    for value, label in (
+        (
+            config.same_coalition_learning_multiplier,
+            "same-coalition learning multiplier",
+        ),
+        (
+            config.same_coalition_reinforcement_multiplier,
+            "same-coalition reinforcement multiplier",
+        ),
+    ):
+        if (
+            type(value) is not float
+            or not math.isfinite(value)
+            or not 1.0 <= value <= 2.0
+        ):
+            _raise(
+                "invalid_dialect_config",
+                f"{label} must be a finite float from 1.0 to 2.0",
+            )
+    return config
+
+
+def dialect_runtime_is_pristine(runtime: object) -> bool:
+    """Return whether dialect runtime is exactly disabled and untouched."""
+    return type(runtime) is CoalitionDialectRuntimeState and (
+        runtime.same_coalition_communication_count == 0
+        and type(runtime.same_coalition_communication_count) is int
+        and runtime.different_coalition_communication_count == 0
+        and type(runtime.different_coalition_communication_count) is int
+        and runtime.assigned_unassigned_communication_count == 0
+        and type(runtime.assigned_unassigned_communication_count) is int
+        and runtime.both_unassigned_communication_count == 0
+        and type(runtime.both_unassigned_communication_count) is int
+        and runtime.same_coalition_rate_application_count == 0
+        and type(runtime.same_coalition_rate_application_count) is int
+        and runtime.last_classification_tick is None
+    )
+
+
+def validate_coalition_dialect_runtime(
+    runtime: object,
+    *,
+    language_runtime: LanguageRuntimeState | None = None,
+) -> CoalitionDialectRuntimeState:
+    """Fail closed unless dialect counters partition language attempts."""
+    if type(runtime) is not CoalitionDialectRuntimeState:
+        _raise("invalid_dialect_runtime", "dialect runtime type is invalid")
+    context_fields = tuple(_DIALECT_CONTEXT_COUNTER_FIELDS.values())
+    for name in (
+        *context_fields,
+        "same_coalition_rate_application_count",
+    ):
+        if not _exact_nonnegative_int(getattr(runtime, name)):
+            _raise("invalid_dialect_runtime", f"{name} is invalid")
+    total = sum(getattr(runtime, name) for name in context_fields)
+    if total > MAX_LANGUAGE_COUNTER:
+        _raise("invalid_dialect_runtime", "context counter total exceeds the cap")
+    if total == 0:
+        if runtime.last_classification_tick is not None:
+            _raise(
+                "invalid_dialect_runtime",
+                "empty dialect history has a last classification tick",
+            )
+    elif (
+        type(runtime.last_classification_tick) is not int
+        or runtime.last_classification_tick < 0
+    ):
+        _raise(
+            "invalid_dialect_runtime",
+            "dialect history lacks a valid last classification tick",
+        )
+    if language_runtime is not None:
+        validated_language = validate_language_runtime(
+            language_runtime, initialized=True)
+        if total != validated_language.communication_attempt_count:
+            _raise(
+                "dialect_attempt_partition_mismatch",
+                "dialect context counters do not partition language attempts",
+            )
+        if runtime.last_classification_tick != (
+            validated_language.last_communication_tick
+        ):
+            _raise(
+                "dialect_tick_mismatch",
+                "dialect and language last communication ticks disagree",
+            )
+    return runtime
+
+
+def _effective_dialect_rate(base_rate: float, multiplier: float) -> float:
+    """Return one clamped six-decimal coalition-adjusted rate."""
+    return _confidence(base_rate * multiplier)
 
 
 def _validate_tick(tick: object) -> int:
@@ -454,6 +602,7 @@ def language_runtime_is_pristine(runtime: object) -> bool:
         and type(runtime.lost_association_count) is int
         and runtime.last_communication_tick is None
         and runtime.last_forgetting_tick is None
+        and runtime.coalition_dialect_influence_enabled is False
     )
 
 
@@ -477,6 +626,11 @@ def validate_language_runtime(
     ):
         if not _exact_nonnegative_int(getattr(runtime, name)):
             _raise("invalid_language_runtime", f"{name} is invalid")
+    if type(runtime.coalition_dialect_influence_enabled) is not bool:
+        _raise(
+            "invalid_language_runtime",
+            "coalition dialect runtime gate must be boolean",
+        )
     if runtime.communication_attempt_count != (
         runtime.successful_interpretation_count
         + runtime.misunderstanding_count
@@ -526,16 +680,26 @@ def validate_language_runtime(
 def initialize_language_runtime(
     runtime: LanguageRuntimeState,
     run_seed: int,
+    *,
+    coalition_dialect_influence_enabled: bool = False,
 ) -> None:
     """Initialize only the canonical seed domain; no entropy is constructed."""
     validate_language_runtime(runtime, initialized=False)
     if type(run_seed) is not int:
         _raise("invalid_language_seed", "run seed must be an exact integer")
+    if type(coalition_dialect_influence_enabled) is not bool:
+        _raise(
+            "invalid_dialect_config",
+            "language runtime dialect gate must be boolean",
+        )
     seed_domain = f"{LANGUAGE_DOMAIN}|seed={run_seed}"
     runtime.seed_domain = seed_domain
     runtime.seed_domain_fingerprint = hashlib.sha256(
         seed_domain.encode("ascii")
     ).hexdigest()
+    runtime.coalition_dialect_influence_enabled = (
+        coalition_dialect_influence_enabled
+    )
     validate_language_runtime(runtime, initialized=True)
 
 
@@ -787,6 +951,14 @@ def _commit_runtime(
         setattr(target, item.name, getattr(proposed, item.name))
 
 
+def _commit_dialect_runtime(
+    target: CoalitionDialectRuntimeState,
+    proposed: CoalitionDialectRuntimeState,
+) -> None:
+    for item in fields(CoalitionDialectRuntimeState):
+        setattr(target, item.name, getattr(proposed, item.name))
+
+
 def communicate(
     sender: LanguageInhabitant,
     receiver: LanguageInhabitant,
@@ -797,6 +969,9 @@ def communicate(
     active_ids: set[int] | frozenset[int],
     config: LanguageConfig,
     runtime: LanguageRuntimeState,
+    dialect_config: CoalitionDialectConfig | None = None,
+    dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
 ) -> CommunicationOutcome:
     """Apply one complete communication transaction or leave all state unchanged."""
     _validate_config(config, require_enabled=True)
@@ -805,7 +980,13 @@ def communicate(
         _raise("invalid_language_meaning", "intended meaning must be a Meaning")
     if type(context) is not CommunicationContext:
         _raise("invalid_communication_context", "context must be canonical")
-    if type(active_ids) not in (set, frozenset) or any(
+    dialect_required = (
+        type(runtime) is LanguageRuntimeState
+        and runtime.coalition_dialect_influence_enabled is True
+    )
+    if type(active_ids) not in (set, frozenset):
+        _raise("invalid_active_language_ids", "active IDs must be canonical integers")
+    if not dialect_required and any(
         not _exact_nonnegative_int(inhabitant_id) for inhabitant_id in active_ids
     ):
         _raise("invalid_active_language_ids", "active IDs must be canonical integers")
@@ -834,6 +1015,43 @@ def communicate(
         )
     ):
         _raise("nonmonotonic_language_tick", "communication tick moved backward")
+
+    dialect_inputs = (
+        dialect_config,
+        dialect_runtime,
+        coalition_membership_snapshot,
+    )
+    classification = None
+    proposed_dialect = None
+    if dialect_required:
+        if any(value is None for value in dialect_inputs):
+            _raise(
+                "missing_dialect_transaction_inputs",
+                "enabled dialect communication requires config, runtime, and snapshot",
+            )
+        validated_dialect_config = validate_coalition_dialect_config(
+            dialect_config)
+        if not validated_dialect_config.coalition_dialect_influence_enabled:
+            _raise(
+                "invalid_dialect_config",
+                "language runtime requires effective dialect influence",
+            )
+        validated_dialect_runtime = validate_coalition_dialect_runtime(
+            dialect_runtime,
+            language_runtime=runtime,
+        )
+        classification = classify_coalition_communication(
+            coalition_membership_snapshot,
+            tick=validated_tick,
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+        )
+        proposed_dialect = replace(validated_dialect_runtime)
+    elif any(value is not None for value in dialect_inputs):
+        _raise(
+            "unexpected_dialect_transaction_inputs",
+            "disabled language runtime cannot enter dialect processing",
+        )
 
     proposed_sender = _copy_agent_state(sender_state)
     proposed_receiver = _copy_agent_state(receiver_state)
@@ -867,20 +1085,67 @@ def communicate(
         )
         _increment_runtime(proposed_runtime, "invention_count")
 
-    _increment_runtime(proposed_runtime, "communication_attempt_count")
+    if dialect_required:
+        attempt_incremented = (
+            proposed_runtime.communication_attempt_count < MAX_LANGUAGE_COUNTER
+        )
+    else:
+        _increment_runtime(proposed_runtime, "communication_attempt_count")
+        attempt_incremented = True
+    if dialect_required and attempt_incremented:
+        _increment_runtime(proposed_runtime, "communication_attempt_count")
+        if classification is None or proposed_dialect is None:
+            _raise(
+                "invalid_dialect_transaction",
+                "dialect proposal lacks its validated classification",
+            )
+        context_counter = _DIALECT_CONTEXT_COUNTER_FIELDS[
+            classification.context]
+        setattr(
+            proposed_dialect,
+            context_counter,
+            _increment(
+                getattr(proposed_dialect, context_counter),
+                field_name=context_counter,
+            ),
+        )
     proposed_runtime.last_communication_tick = validated_tick
+    if proposed_dialect is not None:
+        proposed_dialect.last_classification_tick = validated_tick
 
     if selected_production is None:
-        _increment_runtime(proposed_runtime, "no_signal_count")
+        if attempt_incremented:
+            _increment_runtime(proposed_runtime, "no_signal_count")
         validate_agent_language_state(proposed_sender, config=config)
         validate_agent_language_state(proposed_receiver, config=config)
         validate_language_runtime(proposed_runtime, initialized=True)
+        if proposed_dialect is not None:
+            validate_coalition_dialect_runtime(
+                proposed_dialect,
+                language_runtime=proposed_runtime,
+            )
         original_runtime = replace(runtime)
-        try:
-            _commit_runtime(runtime, proposed_runtime)
-        except BaseException:
-            _commit_runtime(runtime, original_runtime)
-            raise
+        if proposed_dialect is None:
+            try:
+                _commit_runtime(runtime, proposed_runtime)
+            except BaseException:
+                _commit_runtime(runtime, original_runtime)
+                raise
+        else:
+            original_sender = sender.language
+            original_receiver = receiver.language
+            original_dialect = replace(dialect_runtime)
+            try:
+                sender.language = proposed_sender
+                receiver.language = proposed_receiver
+                _commit_runtime(runtime, proposed_runtime)
+                _commit_dialect_runtime(dialect_runtime, proposed_dialect)
+            except BaseException:
+                sender.language = original_sender
+                receiver.language = original_receiver
+                _commit_runtime(runtime, original_runtime)
+                _commit_dialect_runtime(dialect_runtime, original_dialect)
+                raise
         return CommunicationOutcome(
             tick=validated_tick,
             sender_id=sender_id,
@@ -890,6 +1155,17 @@ def communicate(
             produced_signal=None,
             interpreted_meaning=None,
             result=CommunicationResult.NO_SIGNAL,
+            coalition_context=(
+                classification.context if classification is not None else None
+            ),
+            sender_coalition_id=(
+                classification.sender_coalition_id
+                if classification is not None else None
+            ),
+            receiver_coalition_id=(
+                classification.receiver_coalition_id
+                if classification is not None else None
+            ),
         )
 
     signal = selected_production.signal
@@ -901,16 +1177,38 @@ def communicate(
     )
     if interpreted is None:
         result = CommunicationResult.UNKNOWN_SIGNAL
-        _increment_runtime(proposed_runtime, "unknown_signal_count")
+        if attempt_incremented:
+            _increment_runtime(proposed_runtime, "unknown_signal_count")
     elif interpreted is intended_meaning:
         result = CommunicationResult.SUCCESS
-        _increment_runtime(proposed_runtime, "successful_interpretation_count")
+        if attempt_incremented:
+            _increment_runtime(
+                proposed_runtime, "successful_interpretation_count")
     else:
         result = CommunicationResult.MISUNDERSTANDING
-        _increment_runtime(proposed_runtime, "misunderstanding_count")
+        if attempt_incremented:
+            _increment_runtime(proposed_runtime, "misunderstanding_count")
 
-    reinforcement = config.language_reinforcement_rate
-    learning = config.language_learning_rate
+    base_reinforcement = config.language_reinforcement_rate
+    base_learning = config.language_learning_rate
+    same_coalition = (
+        classification is not None
+        and classification.context
+        is CoalitionCommunicationContext.SAME_ACTIVE_COALITION
+    )
+    if same_coalition:
+        reinforcement = _effective_dialect_rate(
+            base_reinforcement,
+            dialect_config.same_coalition_reinforcement_multiplier,
+        )
+        learning = _effective_dialect_rate(
+            base_learning,
+            dialect_config.same_coalition_learning_multiplier,
+        )
+    else:
+        reinforcement = base_reinforcement
+        learning = base_learning
+    rate_applications = 0
     production_key = (intended_meaning, signal)
     proposed_sender.production[production_key] = _selected_use(
         selected_production,
@@ -919,13 +1217,15 @@ def communicate(
         confidence_delta=(
             reinforcement
             if result is CommunicationResult.SUCCESS
-            else -reinforcement / 2.0
+            else -base_reinforcement / 2.0
         ),
     )
+    if same_coalition and result is CommunicationResult.SUCCESS:
+        rate_applications += 1
     for key, association in tuple(proposed_sender.production.items()):
         if key != production_key and association.meaning is intended_meaning:
             proposed_sender.production[key] = _weaken_only(
-                association, reinforcement / 4.0)
+                association, base_reinforcement / 4.0)
 
     if result is CommunicationResult.SUCCESS:
         assert selected_comprehension is not None
@@ -937,15 +1237,17 @@ def communicate(
             confidence_delta=reinforcement,
         )
         proposed_receiver.comprehension[comprehension_key] = updated_comprehension
+        if same_coalition:
+            rate_applications += 1
         for key, association in tuple(proposed_receiver.comprehension.items()):
             if key == comprehension_key:
                 continue
             if association.signal == signal:
                 proposed_receiver.comprehension[key] = _weaken_only(
-                    association, reinforcement)
+                    association, base_reinforcement)
             elif association.meaning is intended_meaning:
                 proposed_receiver.comprehension[key] = _weaken_only(
-                    association, reinforcement / 4.0)
+                    association, base_reinforcement / 4.0)
 
         receiver_production_key = (intended_meaning, signal)
         receiver_production = proposed_receiver.production.get(
@@ -960,6 +1262,8 @@ def communicate(
                 )
             )
             production_activated = True
+            if same_coalition:
+                rate_applications += 1
         elif (
             updated_comprehension.confidence >= PROMOTION_CONFIDENCE
             and updated_comprehension.successful_uses >= PROMOTION_SUCCESS_COUNT
@@ -983,7 +1287,7 @@ def communicate(
                     association.meaning is intended_meaning
                 ):
                     proposed_receiver.production[key] = _weaken_only(
-                        association, reinforcement / 4.0)
+                        association, base_reinforcement / 4.0)
 
     elif result is CommunicationResult.MISUNDERSTANDING:
         assert selected_comprehension is not None
@@ -992,7 +1296,7 @@ def communicate(
             selected_comprehension,
             tick=validated_tick,
             succeeded=False,
-            confidence_delta=-reinforcement,
+            confidence_delta=-base_reinforcement,
         )
         correct_key = (signal, intended_meaning)
         correct = proposed_receiver.comprehension.get(correct_key)
@@ -1013,6 +1317,8 @@ def communicate(
                 tick=validated_tick,
                 confidence_delta=learning,
             )
+        if same_coalition:
+            rate_applications += 1
 
     else:
         correct_key = (signal, intended_meaning)
@@ -1034,6 +1340,15 @@ def communicate(
                 tick=validated_tick,
                 confidence_delta=learning,
             )
+        if same_coalition:
+            rate_applications += 1
+
+    if proposed_dialect is not None and rate_applications:
+        proposed_dialect.same_coalition_rate_application_count = _saturating_add(
+            proposed_dialect.same_coalition_rate_application_count,
+            rate_applications,
+            field_name="same_coalition_rate_application_count",
+        )
 
     proposed_sender, sender_lost = _retain_canonical(
         proposed_sender, config=config)
@@ -1045,18 +1360,30 @@ def communicate(
     validate_agent_language_state(proposed_sender, config=config)
     validate_agent_language_state(proposed_receiver, config=config)
     validate_language_runtime(proposed_runtime, initialized=True)
+    if proposed_dialect is not None:
+        validate_coalition_dialect_runtime(
+            proposed_dialect,
+            language_runtime=proposed_runtime,
+        )
 
     original_sender = sender.language
     original_receiver = receiver.language
     original_runtime = replace(runtime)
+    original_dialect = (
+        replace(dialect_runtime) if proposed_dialect is not None else None
+    )
     try:
         sender.language = proposed_sender
         receiver.language = proposed_receiver
         _commit_runtime(runtime, proposed_runtime)
+        if proposed_dialect is not None:
+            _commit_dialect_runtime(dialect_runtime, proposed_dialect)
     except BaseException:
         sender.language = original_sender
         receiver.language = original_receiver
         _commit_runtime(runtime, original_runtime)
+        if original_dialect is not None:
+            _commit_dialect_runtime(dialect_runtime, original_dialect)
         raise
 
     return CommunicationOutcome(
@@ -1068,6 +1395,17 @@ def communicate(
         produced_signal=signal,
         interpreted_meaning=interpreted,
         result=result,
+        coalition_context=(
+            classification.context if classification is not None else None
+        ),
+        sender_coalition_id=(
+            classification.sender_coalition_id
+            if classification is not None else None
+        ),
+        receiver_coalition_id=(
+            classification.receiver_coalition_id
+            if classification is not None else None
+        ),
     )
 
 
@@ -1266,7 +1604,7 @@ def canonical_language_snapshot(
 def language_runtime_record(runtime: LanguageRuntimeState) -> dict[str, object]:
     """Return enabled runtime state without implementation-specific objects."""
     validate_language_runtime(runtime, initialized=True)
-    return {
+    result = {
         "seed_domain_fingerprint": runtime.seed_domain_fingerprint,
         "communication_attempt_count": runtime.communication_attempt_count,
         "successful_interpretation_count": runtime.successful_interpretation_count,
@@ -1278,6 +1616,39 @@ def language_runtime_record(runtime: LanguageRuntimeState) -> dict[str, object]:
         "lost_association_count": runtime.lost_association_count,
         "last_communication_tick": runtime.last_communication_tick,
         "last_forgetting_tick": runtime.last_forgetting_tick,
+    }
+    if runtime.coalition_dialect_influence_enabled:
+        result["coalition_dialect_influence_enabled"] = True
+    return result
+
+
+def coalition_dialect_runtime_record(
+    runtime: CoalitionDialectRuntimeState,
+    *,
+    language_runtime: LanguageRuntimeState,
+) -> dict[str, object]:
+    """Return canonical bounded dialect counters for enabled hashing."""
+    validate_coalition_dialect_runtime(
+        runtime,
+        language_runtime=language_runtime,
+    )
+    return {
+        "same_coalition_communication_count": (
+            runtime.same_coalition_communication_count
+        ),
+        "different_coalition_communication_count": (
+            runtime.different_coalition_communication_count
+        ),
+        "assigned_unassigned_communication_count": (
+            runtime.assigned_unassigned_communication_count
+        ),
+        "both_unassigned_communication_count": (
+            runtime.both_unassigned_communication_count
+        ),
+        "same_coalition_rate_application_count": (
+            runtime.same_coalition_rate_application_count
+        ),
+        "last_classification_tick": runtime.last_classification_tick,
     }
 
 
@@ -1357,4 +1728,207 @@ def lexical_convergence_snapshot(
     return {
         "meanings": by_meaning,
         "population_agreement": population_agreement,
+    }
+
+
+def _dialect_meaning_summary(
+    counts: dict[Signal, int],
+    *,
+    meaning: Meaning,
+    member_count: int,
+) -> dict[str, object]:
+    speakers = sum(counts.values())
+    agreement = None
+    if speakers >= 2:
+        numerator = sum(count * (count - 1) for count in counts.values())
+        agreement = _quantize(numerator / (speakers * (speakers - 1)))
+    dominant = (
+        min(counts, key=lambda signal: (-counts[signal], signal.phoneme_ids))
+        if counts else None
+    )
+    return {
+        "meaning": meaning.name,
+        "speaker_count": speakers,
+        "non_speaker_count": member_count - speakers,
+        "dominant_signal": (
+            list(dominant.phoneme_ids) if dominant is not None else None
+        ),
+        "signal_frequencies": [
+            {"signal": list(signal.phoneme_ids), "count": count}
+            for signal, count in sorted(
+                counts.items(), key=lambda item: item[0].phoneme_ids)
+        ],
+        "pairwise_agreement": agreement,
+    }
+
+
+def coalition_dialect_summary(
+    people: Iterable[LanguageInhabitant],
+    *,
+    snapshot: CoalitionMembershipSnapshot,
+    language_config: LanguageConfig,
+    dialect_config: CoalitionDialectConfig,
+    language_runtime: LanguageRuntimeState,
+    dialect_runtime: CoalitionDialectRuntimeState,
+) -> dict[str, object]:
+    """Summarize current agent lexicons by frozen coalition in O(P x L)."""
+    _validate_config(language_config, require_enabled=True)
+    validated_dialect = validate_coalition_dialect_config(dialect_config)
+    if not validated_dialect.coalition_dialect_influence_enabled:
+        _raise(
+            "dialect_processing_disabled",
+            "dialect summaries require effective influence",
+        )
+    if type(snapshot) is not CoalitionMembershipSnapshot:
+        validate_coalition_membership_snapshot(snapshot, tick=1)
+    validated_snapshot = validate_coalition_membership_snapshot(
+        snapshot,
+        tick=snapshot.snapshot_tick,
+    )
+    runtime_record = coalition_dialect_runtime_record(
+        dialect_runtime,
+        language_runtime=language_runtime,
+    )
+
+    coalition_ids = validated_snapshot.active_coalition_ids
+    coalition_id_set = frozenset(coalition_ids)
+    member_counts = {coalition_id: 0 for coalition_id in coalition_ids}
+    signal_counts = {
+        coalition_id: {meaning: {} for meaning in Meaning}
+        for coalition_id in coalition_ids
+    }
+    unassigned_member_count = 0
+    unassigned_counts: dict[Meaning, dict[Signal, int]] = {
+        meaning: {} for meaning in Meaning
+    }
+    remaining_active_ids = set(
+        validated_snapshot._active_inhabitant_id_set)
+
+    for inhabitant in people:
+        inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+        if not _exact_nonnegative_int(inhabitant_id):
+            _raise(
+                "invalid_language_identity",
+                "dialect summary requires assigned IDs",
+            )
+        if inhabitant_id not in validated_snapshot._active_inhabitant_id_set:
+            _raise(
+                "dialect_summary_snapshot_mismatch",
+                "summary inhabitants must equal the frozen active-ID snapshot",
+            )
+        if inhabitant_id not in remaining_active_ids:
+            _raise(
+                "duplicate_language_identity",
+                "dialect summary IDs must be unique",
+            )
+        remaining_active_ids.remove(inhabitant_id)
+        coalition_id = validated_snapshot._member_to_coalition.get(
+            inhabitant_id)
+        if coalition_id is not None and coalition_id not in coalition_id_set:
+            _raise(
+                "invalid_coalition_membership_snapshot",
+                "snapshot membership references an inactive coalition",
+            )
+        state = validate_agent_language_state(
+            inhabitant.language,
+            config=language_config,
+        )
+        if coalition_id is None:
+            unassigned_member_count += 1
+            destination = unassigned_counts
+        else:
+            member_counts[coalition_id] += 1
+            destination = signal_counts[coalition_id]
+        for meaning in Meaning:
+            strongest = _select_production(state, meaning)
+            if strongest is None:
+                continue
+            counts = destination[meaning]
+            counts[strongest.signal] = counts.get(strongest.signal, 0) + 1
+
+    if remaining_active_ids:
+        _raise(
+            "dialect_summary_snapshot_mismatch",
+            "summary inhabitants must equal the frozen active-ID snapshot",
+        )
+
+    coalition_records: list[dict[str, object]] = []
+    for coalition_id in coalition_ids:
+        meanings = [
+            _dialect_meaning_summary(
+                signal_counts[coalition_id][meaning],
+                meaning=meaning,
+                member_count=member_counts[coalition_id],
+            )
+            for meaning in Meaning
+        ]
+        usable_agreements = [
+            record["pairwise_agreement"]
+            for record in meanings
+            if record["pairwise_agreement"] is not None
+        ]
+        coalition_records.append({
+            "coalition_id": coalition_id,
+            "active_member_count": member_counts[coalition_id],
+            "meanings": meanings,
+            "mean_agreement": (
+                _quantize(sum(usable_agreements) / len(usable_agreements))
+                if usable_agreements else None
+            ),
+        })
+
+    between_records: list[dict[str, object]] = []
+    for meaning in Meaning:
+        eligible = [
+            signal_counts[coalition_id][meaning]
+            for coalition_id in coalition_ids
+            if sum(signal_counts[coalition_id][meaning].values()) >= 2
+        ]
+        distance = None
+        if len(eligible) >= 2:
+            speaker_totals = [sum(counts.values()) for counts in eligible]
+            total_speakers = sum(speaker_totals)
+            cross_pairs = (
+                total_speakers * total_speakers
+                - sum(total * total for total in speaker_totals)
+            ) // 2
+            aggregate: dict[Signal, int] = {}
+            within_signal_squares: dict[Signal, int] = {}
+            for counts in eligible:
+                for signal, count in counts.items():
+                    aggregate[signal] = aggregate.get(signal, 0) + count
+                    within_signal_squares[signal] = (
+                        within_signal_squares.get(signal, 0) + count * count
+                    )
+            matching_cross_pairs = sum(
+                aggregate[signal] * aggregate[signal]
+                - within_signal_squares[signal]
+                for signal in aggregate
+            ) // 2
+            distance = _quantize(
+                (cross_pairs - matching_cross_pairs) / cross_pairs)
+        between_records.append({
+            "meaning": meaning.name,
+            "sufficient_coalition_count": len(eligible),
+            "lexical_distance": distance,
+        })
+
+    unassigned_meanings = [
+        _dialect_meaning_summary(
+            unassigned_counts[meaning],
+            meaning=meaning,
+            member_count=unassigned_member_count,
+        )
+        for meaning in Meaning
+    ]
+    return {
+        "snapshot_tick": validated_snapshot.snapshot_tick,
+        "active_coalition_count": len(coalition_ids),
+        "coalitions": coalition_records,
+        "between_coalitions": between_records,
+        "unassigned": {
+            "member_count": unassigned_member_count,
+            "meanings": unassigned_meanings,
+        },
+        "runtime": runtime_record,
     }

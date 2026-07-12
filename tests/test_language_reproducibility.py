@@ -15,11 +15,22 @@ from types import SimpleNamespace
 
 import pytest
 
-from thalren_vale.config import LanguageEvolutionConfig, SimulationConfig
+from thalren_vale.coalitions import (
+    CoalitionRuntimeState,
+    InformalCoalition,
+    build_coalition_membership_snapshot,
+)
+from thalren_vale.config import (
+    CoalitionConfig,
+    CoalitionDialectConfig,
+    LanguageEvolutionConfig,
+    SimulationConfig,
+)
 from thalren_vale.inhabitants import Inhabitant
 from thalren_vale.language import (
     AssociationOrigin,
     CommunicationContext,
+    CoalitionDialectRuntimeState,
     LanguageInvariantError,
     LexicalAssociation,
     Meaning,
@@ -34,6 +45,8 @@ from thalren_vale.state import SimulationState
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENABLED = LanguageEvolutionConfig(True, 32, 3, 0.20, 0.10, 5, True)
+DIALECT = CoalitionDialectConfig(True, 1.50, 1.25)
+COALITIONS = CoalitionConfig(True, 3, 0.24, 0.40, 0.20, 5, 32)
 
 
 def person(name: str, inhabitant_id: int) -> Inhabitant:
@@ -352,3 +365,197 @@ def test_disabled_hash_does_not_tolerate_a_missing_synthetic_language_state():
         match="missing AgentLanguageState",
     ):
         canonical_state_hash(state, world(), {"ticks": 1})
+
+
+def enabled_dialect_fixture():
+    people = [person(f"P{index}", index) for index in range(1, 4)]
+    state = SimulationState(people=people, next_inhabitant_id=4)
+    state.coalitions = CoalitionRuntimeState(
+        active_coalitions={0: InformalCoalition(0, 1, (1, 2, 3))},
+        member_to_coalition={1: 0, 2: 0, 3: 0},
+        next_coalition_id=1,
+        candidate_formation_count=1,
+        last_observation_tick=1,
+        last_active_inhabitant_ids=(1, 2, 3),
+    )
+    initialize_language_runtime(
+        state.language,
+        404,
+        coalition_dialect_influence_enabled=True,
+    )
+    membership = build_coalition_membership_snapshot(
+        state.coalitions,
+        snapshot_tick=2,
+        active_inhabitant_ids=(1, 2, 3),
+        config=COALITIONS,
+    )
+    communicate(
+        people[0],
+        people[1],
+        Meaning.FOOD,
+        context=CommunicationContext.AID_TRANSFER,
+        tick=2,
+        active_ids=frozenset({1, 2, 3}),
+        config=ENABLED,
+        runtime=state.language,
+        dialect_config=DIALECT,
+        dialect_runtime=state.dialect,
+        coalition_membership_snapshot=membership,
+    )
+    configuration = SimulationConfig(
+        social_memory_enabled=True,
+        language_evolution_enabled=True,
+        language_forgetting_interval=5,
+        coalition_emergence_enabled=True,
+        coalition_dialect_influence_enabled=True,
+    ).manifest_dict()
+    return state, configuration, world()
+
+
+def test_enabled_hash_covers_exact_dialect_controls_and_runtime():
+    state, configuration, tiles = enabled_dialect_fixture()
+    baseline = canonical_state_hash(state, tiles, configuration)
+
+    different_runtime = copy.deepcopy(state)
+    different_runtime.dialect.same_coalition_rate_application_count += 1
+    assert canonical_state_hash(
+        different_runtime, tiles, configuration) != baseline
+
+    different_controls = dict(configuration)
+    different_controls["same_coalition_learning_multiplier"] = 1.75
+    assert canonical_state_hash(state, tiles, different_controls) != baseline
+
+
+def test_disabled_dialect_controls_are_omitted_from_enabled_language_hash():
+    state, configuration, tiles = enabled_fixture()
+    historical = {
+        key: value
+        for key, value in configuration.items()
+        if key not in {
+            "coalition_dialect_influence_enabled",
+            "same_coalition_learning_multiplier",
+            "same_coalition_reinforcement_multiplier",
+            "dialect_controls_status",
+            "dialect_control_notices",
+        }
+    }
+
+    assert canonical_state_hash(
+        state, tiles, configuration
+    ) == canonical_state_hash(state, tiles, historical)
+
+
+def test_disabled_hash_rejects_hidden_or_mismatched_dialect_state():
+    state = SimulationState(people=[person("Stable", 1)], next_inhabitant_id=2)
+    state.dialect.same_coalition_communication_count = 1
+    state.dialect.last_classification_tick = 1
+    with pytest.raises(LanguageInvariantError, match="pristine"):
+        canonical_state_hash(state, world(), {"ticks": 1})
+
+    state = SimulationState(people=[person("Stable", 1)], next_inhabitant_id=2)
+    initialize_language_runtime(
+        state.language,
+        8,
+        coalition_dialect_influence_enabled=True,
+    )
+    configuration = SimulationConfig(
+        language_evolution_enabled=True,
+        language_forgetting_interval=5,
+    ).manifest_dict()
+    with pytest.raises(LanguageInvariantError, match="gate"):
+        canonical_state_hash(state, world(), configuration)
+
+
+def run_dialect_subprocess(hash_seed: str) -> dict:
+    script = textwrap.dedent(
+        """
+        import json
+
+        from thalren_vale.coalitions import (
+            CoalitionRuntimeState, InformalCoalition,
+            build_coalition_membership_snapshot,
+        )
+        from thalren_vale.config import (
+            CoalitionConfig, CoalitionDialectConfig,
+            LanguageEvolutionConfig, SimulationConfig,
+        )
+        from thalren_vale.inhabitants import Inhabitant
+        from thalren_vale.language import (
+            CommunicationContext, Meaning, canonical_language_snapshot,
+            coalition_dialect_summary, communicate, initialize_language_runtime,
+        )
+        from thalren_vale.reproducibility import canonical_state_hash
+        from thalren_vale.state import SimulationState
+
+        people = [Inhabitant(f"P{index}", 0, 0) for index in range(1, 4)]
+        for index, inhabitant in enumerate(people, start=1):
+            inhabitant.inhabitant_id = index
+            inhabitant.faction = None
+        state = SimulationState(people=people, next_inhabitant_id=4)
+        state.coalitions = CoalitionRuntimeState(
+            active_coalitions={0: InformalCoalition(0, 1, (1, 2, 3))},
+            member_to_coalition={3: 0, 1: 0, 2: 0},
+            next_coalition_id=1,
+            candidate_formation_count=1,
+            last_observation_tick=1,
+            last_active_inhabitant_ids=(1, 2, 3),
+        )
+        language = LanguageEvolutionConfig(True, 32, 3, 0.20, 0.10, 5, True)
+        coalitions = CoalitionConfig(True, 3, 0.24, 0.40, 0.20, 5, 32)
+        dialect = CoalitionDialectConfig(True, 1.50, 1.25)
+        initialize_language_runtime(
+            state.language, 404, coalition_dialect_influence_enabled=True)
+        snapshot = build_coalition_membership_snapshot(
+            state.coalitions, snapshot_tick=2,
+            active_inhabitant_ids=(3, 1, 2), config=coalitions)
+        for _ in range(4):
+            communicate(
+                people[0], people[1], Meaning.FOOD,
+                context=CommunicationContext.AID_TRANSFER,
+                tick=2, active_ids=frozenset({3, 1, 2}), config=language,
+                runtime=state.language, dialect_config=dialect,
+                dialect_runtime=state.dialect,
+                coalition_membership_snapshot=snapshot)
+        configuration = SimulationConfig(
+            social_memory_enabled=True,
+            language_evolution_enabled=True,
+            language_forgetting_interval=5,
+            coalition_emergence_enabled=True,
+            coalition_dialect_influence_enabled=True,
+        ).manifest_dict()
+        world = [[{
+            "biome": "plains", "habitable": True,
+            "resources": {
+                "food": 1, "wood": 0, "ore": 0, "stone": 0, "water": 0,
+            },
+        }]]
+        print(json.dumps({
+            "snapshot": canonical_language_snapshot(people, config=language),
+            "dialects": coalition_dialect_summary(
+                people, snapshot=snapshot, language_config=language,
+                dialect_config=dialect, language_runtime=state.language,
+                dialect_runtime=state.dialect),
+            "hash": canonical_state_hash(state, world, configuration),
+        }, sort_keys=True, separators=(",", ":")))
+        """
+    )
+    env = os.environ.copy()
+    env["PYTHONHASHSEED"] = hash_seed
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_enabled_dialect_snapshots_summaries_and_hashes_ignore_pythonhashseed():
+    assert run_dialect_subprocess("1") == run_dialect_subprocess("987654")

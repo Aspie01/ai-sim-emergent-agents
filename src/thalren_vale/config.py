@@ -55,6 +55,9 @@ DEFAULT_COALITION_FAMILIARITY_THRESHOLD = 0.40
 DEFAULT_COALITION_MAXIMUM_GRIEVANCE = 0.20
 DEFAULT_COALITION_PERSISTENCE_TICKS = 5
 DEFAULT_MAXIMUM_ACTIVE_COALITIONS = 32
+DEFAULT_COALITION_DIALECT_INFLUENCE_ENABLED = False
+DEFAULT_SAME_COALITION_LEARNING_MULTIPLIER = 1.50
+DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER = 1.25
 FACTION_TRUST_THRESHOLD = DEFAULT_FACTION_TRUST_THRESHOLD
 WAR_TENSION_THRESHOLD = DEFAULT_WAR_TENSION_THRESHOLD
 BELIEF_SHARING_PROBABILITY = DEFAULT_BELIEF_SHARING_PROBABILITY
@@ -114,6 +117,22 @@ VALID_COALITION_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+DIALECT_NOTICE_WITHOUT_LANGUAGE = (
+    'dialect_influence_requested_without_language'
+)
+DIALECT_NOTICE_WITHOUT_COALITIONS = (
+    'dialect_influence_requested_without_coalitions'
+)
+VALID_DIALECT_CONTROL_NOTICES = frozenset({
+    DIALECT_NOTICE_WITHOUT_LANGUAGE,
+    DIALECT_NOTICE_WITHOUT_COALITIONS,
+})
+VALID_DIALECT_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
 
 @dataclass(frozen=True)
 class SocialMemoryConfig:
@@ -149,6 +168,15 @@ class CoalitionConfig:
     coalition_maximum_grievance: float
     coalition_persistence_ticks: int
     maximum_active_coalitions: int
+
+
+@dataclass(frozen=True)
+class CoalitionDialectConfig:
+    """Effective engineering-only coalition-to-language controls."""
+
+    coalition_dialect_influence_enabled: bool
+    same_coalition_learning_multiplier: float
+    same_coalition_reinforcement_multiplier: float
 
 
 @dataclass(frozen=True)
@@ -188,11 +216,22 @@ class SimulationConfig:
     coalition_maximum_grievance: float = DEFAULT_COALITION_MAXIMUM_GRIEVANCE
     coalition_persistence_ticks: int = DEFAULT_COALITION_PERSISTENCE_TICKS
     maximum_active_coalitions: int = DEFAULT_MAXIMUM_ACTIVE_COALITIONS
+    coalition_dialect_influence_enabled: bool = (
+        DEFAULT_COALITION_DIALECT_INFLUENCE_ENABLED
+    )
+    same_coalition_learning_multiplier: float = (
+        DEFAULT_SAME_COALITION_LEARNING_MULTIPLIER
+    )
+    same_coalition_reinforcement_multiplier: float = (
+        DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER
+    )
     social_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     language_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     coalition_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    dialect_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -217,6 +256,21 @@ class SimulationConfig:
             self,
             'coalition_control_notices',
             tuple(sorted(coalition_notices)),
+        )
+
+        dialect_notices: list[str] = []
+        if self.coalition_dialect_influence_enabled is True:
+            if self.language_evolution_enabled is False:
+                dialect_notices.append(DIALECT_NOTICE_WITHOUT_LANGUAGE)
+            if self.coalition_emergence_enabled is False:
+                dialect_notices.append(DIALECT_NOTICE_WITHOUT_COALITIONS)
+            if dialect_notices:
+                object.__setattr__(
+                    self, 'coalition_dialect_influence_enabled', False)
+        object.__setattr__(
+            self,
+            'dialect_control_notices',
+            tuple(sorted(dialect_notices)),
         )
 
     @classmethod
@@ -351,6 +405,27 @@ class SimulationConfig:
                 if getattr(args, 'maximum_active_coalitions', None) is None
                 else args.maximum_active_coalitions
             ),
+            coalition_dialect_influence_enabled=(
+                bool(getattr(
+                    args, 'enable_coalition_dialect_influence', False))
+                and not bool(getattr(
+                    args, 'disable_coalition_dialect_influence', False))
+            ),
+            same_coalition_learning_multiplier=(
+                DEFAULT_SAME_COALITION_LEARNING_MULTIPLIER
+                if getattr(
+                    args, 'same_coalition_learning_multiplier', None) is None
+                else args.same_coalition_learning_multiplier
+            ),
+            same_coalition_reinforcement_multiplier=(
+                DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER
+                if getattr(
+                    args,
+                    'same_coalition_reinforcement_multiplier',
+                    None,
+                ) is None
+                else args.same_coalition_reinforcement_multiplier
+            ),
         )
         instance.validate()
         return instance
@@ -469,6 +544,42 @@ class SimulationConfig:
             for notice in self.coalition_control_notices
         ):
             raise ValueError('unknown coalition control normalization notice')
+        if type(self.coalition_dialect_influence_enabled) is not bool:
+            raise ValueError('coalition dialect influence setting must be boolean')
+        if self.coalition_dialect_influence_enabled and (
+            not self.language_evolution_enabled
+            or not self.coalition_emergence_enabled
+        ):
+            raise ValueError(
+                'coalition dialect influence requires language evolution and '
+                'coalition emergence')
+        for value, label in (
+            (
+                self.same_coalition_learning_multiplier,
+                'same-coalition learning multiplier',
+            ),
+            (
+                self.same_coalition_reinforcement_multiplier,
+                'same-coalition reinforcement multiplier',
+            ),
+        ):
+            if (
+                type(value) is not float
+                or not math.isfinite(value)
+                or not 1.0 <= value <= 2.0
+            ):
+                raise ValueError(
+                    f'{label} must be a finite float from 1.0 to 2.0')
+        if any(
+            notice not in VALID_DIALECT_CONTROL_NOTICES
+            for notice in self.dialect_control_notices
+        ):
+            raise ValueError('unknown dialect control normalization notice')
+        if self.dialect_control_notices and (
+            self.coalition_dialect_influence_enabled
+        ):
+            raise ValueError(
+                'dialect normalization notices require disabled influence')
 
     def apply_legacy_globals(self) -> None:
         """Keep modules using legacy constants synchronized during migration."""
@@ -494,6 +605,7 @@ class SimulationConfig:
         result.pop('social_control_notices', None)
         result.pop('language_control_notices', None)
         result.pop('coalition_control_notices', None)
+        result.pop('dialect_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
@@ -504,6 +616,9 @@ class SimulationConfig:
         result['coalition_control_notices'] = list(
             self.coalition_control_notices)
         result['coalition_controls_status'] = self.coalition_controls_status
+        result['dialect_control_notices'] = list(
+            self.dialect_control_notices)
+        result['dialect_controls_status'] = self.dialect_controls_status
         return result
 
     @property
@@ -597,4 +712,34 @@ class SimulationConfig:
             coalition_maximum_grievance=self.coalition_maximum_grievance,
             coalition_persistence_ticks=self.coalition_persistence_ticks,
             maximum_active_coalitions=self.maximum_active_coalitions,
+        )
+
+    @property
+    def dialect_controls_status(self) -> str:
+        """Return provenance status for uncontracted dialect controls."""
+        if self.dialect_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.coalition_dialect_influence_enabled
+            or self.same_coalition_learning_multiplier
+            != DEFAULT_SAME_COALITION_LEARNING_MULTIPLIER
+            or self.same_coalition_reinforcement_multiplier
+            != DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def coalition_dialect_config(self) -> CoalitionDialectConfig:
+        """Return immutable effective coalition-dialect controls."""
+        return CoalitionDialectConfig(
+            coalition_dialect_influence_enabled=(
+                self.coalition_dialect_influence_enabled
+            ),
+            same_coalition_learning_multiplier=(
+                self.same_coalition_learning_multiplier
+            ),
+            same_coalition_reinforcement_multiplier=(
+                self.same_coalition_reinforcement_multiplier
+            ),
         )

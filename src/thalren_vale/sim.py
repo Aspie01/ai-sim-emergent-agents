@@ -60,15 +60,22 @@ from . import display
 from . import dashboard_bridge
 from . import religion
 from .social import maintain_relationships
-from .coalitions import transition_informal_coalitions
+from .coalitions import (
+    build_coalition_membership_snapshot,
+    transition_informal_coalitions,
+)
 from .language import (
     AgentLanguageState,
     LanguageInvariantError,
     MAX_LANGUAGE_ASSOCIATIONS,
     MAX_SIGNAL_LENGTH,
+    dialect_runtime_is_pristine,
     initialize_language_runtime,
+    language_runtime_is_pristine,
     maintain_language_state,
     validate_agent_language_state,
+    validate_coalition_dialect_runtime,
+    validate_language_runtime,
 )
 
 TICKS = config.TICKS
@@ -155,11 +162,35 @@ def _validated_reset_language_owners() -> list[tuple[object, AgentLanguageState]
     return validated
 
 
+def _validate_reset_language_runtimes() -> None:
+    """Validate both runtime owners before reset mutates any run state."""
+    if language_runtime_is_pristine(state.language):
+        if not dialect_runtime_is_pristine(state.dialect):
+            raise LanguageInvariantError(
+                "nonpristine_dialect_runtime",
+                "disabled language runtime cannot conceal dialect state",
+            )
+        return
+
+    validate_language_runtime(state.language, initialized=True)
+    if state.language.coalition_dialect_influence_enabled:
+        validate_coalition_dialect_runtime(
+            state.dialect,
+            language_runtime=state.language,
+        )
+    elif not dialect_runtime_is_pristine(state.dialect):
+        raise LanguageInvariantError(
+            "nonpristine_dialect_runtime",
+            "disabled dialect influence cannot retain runtime state",
+        )
+
+
 def reset_runtime_state() -> None:
     """Reset all mutable stores that can leak across in-process runs."""
     global _last_dynamic_t
 
     language_owners = _validated_reset_language_owners()
+    _validate_reset_language_runtimes()
 
     for plugin in _loaded_plugins:
         try:
@@ -523,6 +554,8 @@ def economy_layer(
     t: int,
     social_config: config.SocialMemoryConfig | None = None,
     language_config: config.LanguageEvolutionConfig | None = None,
+    dialect_config: config.CoalitionDialectConfig | None = None,
+    coalition_config: config.CoalitionConfig | None = None,
 ) -> None:
     """Layer 4: currency, pricing, trade, raids, scarcity, wealth."""
     if social_config is None:
@@ -552,6 +585,30 @@ def economy_layer(
                 config.DEFAULT_LANGUAGE_INVENTION_ENABLED
             ),
         )
+    if dialect_config is None:
+        dialect_config = config.CoalitionDialectConfig(
+            coalition_dialect_influence_enabled=False,
+            same_coalition_learning_multiplier=(
+                config.DEFAULT_SAME_COALITION_LEARNING_MULTIPLIER
+            ),
+            same_coalition_reinforcement_multiplier=(
+                config.DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER
+            ),
+        )
+    coalition_membership_snapshot = None
+    if dialect_config.coalition_dialect_influence_enabled:
+        if coalition_config is None:
+            raise ValueError(
+                'enabled coalition dialect economy requires coalition controls')
+        coalition_membership_snapshot = build_coalition_membership_snapshot(
+            state.coalitions,
+            snapshot_tick=t,
+            active_inhabitant_ids=tuple(
+                getattr(inhabitant, 'inhabitant_id', None)
+                for inhabitant in people
+            ),
+            config=coalition_config,
+        )
     if (
         not social_config.social_memory_enabled
         and not language_config.language_evolution_enabled
@@ -573,6 +630,17 @@ def economy_layer(
             social_config=social_config,
             language_config=language_config,
             language_runtime=state.language,
+            dialect_config=(
+                dialect_config
+                if dialect_config.coalition_dialect_influence_enabled
+                else None
+            ),
+            dialect_runtime=(
+                state.dialect
+                if dialect_config.coalition_dialect_influence_enabled
+                else None
+            ),
+            coalition_membership_snapshot=coalition_membership_snapshot,
             rng=random,
         )
 
@@ -598,6 +666,11 @@ def maintain_emergent_state(
                 config=run_config.coalition_config,
             )
     if run_config.language_evolution_enabled:
+        if run_config.coalition_dialect_influence_enabled:
+            validate_coalition_dialect_runtime(
+                state.dialect,
+                language_runtime=state.language,
+            )
         maintain_language_state(
             people,
             newly_dead,
@@ -1899,6 +1972,19 @@ def run() -> None:
     _parser.add_argument(
         '--maximum-active-coalitions', type=int, default=None,
         help='Maximum active informal coalitions (engineering only)')
+    _coalition_dialect = _parser.add_mutually_exclusive_group()
+    _coalition_dialect.add_argument(
+        '--enable-coalition-dialect-influence', action='store_true',
+        help='Enable engineering-only coalition influence on language learning')
+    _coalition_dialect.add_argument(
+        '--disable-coalition-dialect-influence', action='store_true',
+        help='Explicitly retain coalition-neutral language learning')
+    _parser.add_argument(
+        '--same-coalition-learning-multiplier', type=float, default=None,
+        help='Same-coalition contextual learning multiplier (engineering only)')
+    _parser.add_argument(
+        '--same-coalition-reinforcement-multiplier', type=float, default=None,
+        help='Same-coalition successful-use multiplier (engineering only)')
     _args = _parser.parse_args()
 
     # ── Validate and apply effective configuration ──────────────────────────
@@ -1921,6 +2007,17 @@ def run() -> None:
                 'warning: coalition emergence was requested without effective '
                 'social memory; effective coalition emergence normalized to '
                 'false and the run is not V2-ready\n')
+    for _notice in _run_config.dialect_control_notices:
+        if _notice == config.DIALECT_NOTICE_WITHOUT_LANGUAGE:
+            sys.stderr.write(
+                'warning: coalition dialect influence was requested without '
+                'effective language evolution; influence normalized to false '
+                'and the run is not V2-ready\n')
+        elif _notice == config.DIALECT_NOTICE_WITHOUT_COALITIONS:
+            sys.stderr.write(
+                'warning: coalition dialect influence was requested without '
+                'effective coalition emergence; influence normalized to false '
+                'and the run is not V2-ready\n')
     _run_config.apply_legacy_globals()
     TICKS = _run_config.ticks
     POP_CAP = _run_config.population_cap
@@ -1938,7 +2035,13 @@ def run() -> None:
     _run_condition = _args.condition
     random.seed(_seed_value)
     if _run_config.language_evolution_enabled:
-        initialize_language_runtime(state.language, _seed_value)
+        initialize_language_runtime(
+            state.language,
+            _seed_value,
+            coalition_dialect_influence_enabled=(
+                _run_config.coalition_dialect_influence_enabled
+            ),
+        )
     # Serial mode: guarantees reproducibility by eliminating thread PRNG interleaving
     _serial_mode = (_args.seed is not None)
     _repro_config = _run_config.manifest_dict()
@@ -2060,6 +2163,8 @@ def run() -> None:
                     t,
                     _run_config.social_memory_config,
                     _run_config.language_evolution_config,
+                    _run_config.coalition_dialect_config,
+                    _run_config.coalition_config,
                 )
             _t_eco = (time.perf_counter() - _t_eco_start) * 1000
 

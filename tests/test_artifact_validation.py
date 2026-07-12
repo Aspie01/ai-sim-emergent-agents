@@ -37,6 +37,8 @@ from thalren_vale.artifact_validation import (
 from thalren_vale.events import EVENT_SCHEMA_VERSION
 from thalren_vale.config import (
     COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY,
+    DIALECT_NOTICE_WITHOUT_COALITIONS,
+    DIALECT_NOTICE_WITHOUT_LANGUAGE,
     SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY,
 )
 from thalren_vale.metrics import MetricsLogger
@@ -267,6 +269,11 @@ def make_artifacts(
         "maximum_active_coalitions": 32,
         "coalition_controls_status": "disabled",
         "coalition_control_notices": [],
+        "coalition_dialect_influence_enabled": False,
+        "same_coalition_learning_multiplier": 1.50,
+        "same_coalition_reinforcement_multiplier": 1.25,
+        "dialect_controls_status": "disabled",
+        "dialect_control_notices": [],
     })
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return run_dir, manifest_path
@@ -1071,6 +1078,159 @@ def test_normalized_coalition_request_is_preserved_and_blocks_ready(tmp_path):
     assert report.manifest["configuration"]["coalition_control_notices"] == [
         COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY
     ]
+
+
+DIALECT_CONFIGURATION_FIELDS = {
+    "coalition_dialect_influence_enabled",
+    "same_coalition_learning_multiplier",
+    "same_coalition_reinforcement_multiplier",
+    "dialect_controls_status",
+    "dialect_control_notices",
+}
+
+
+def inspect_dialect_configuration(tmp_path, updates):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    manifest["configuration"].update(updates)
+    write_manifest(manifest_path, manifest)
+    return inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "same_coalition_learning_multiplier": 1.75,
+            "dialect_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "same_coalition_reinforcement_multiplier": 1.50,
+            "dialect_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "social_memory_enabled": True,
+            "social_controls_status": "engineering_only_uncontracted",
+            "language_evolution_enabled": True,
+            "language_controls_status": "engineering_only_uncontracted",
+            "coalition_emergence_enabled": True,
+            "coalition_controls_status": "engineering_only_uncontracted",
+            "coalition_dialect_influence_enabled": True,
+            "dialect_controls_status": "engineering_only_uncontracted",
+        },
+    ],
+)
+def test_enabled_or_nondefault_dialect_controls_block_v2_ready(tmp_path, updates):
+    report = inspect_dialect_configuration(tmp_path, updates)
+
+    assert report.valid and not report.v2_ready
+    assert "dialect_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize("missing", sorted(DIALECT_CONFIGURATION_FIELDS))
+def test_missing_historical_dialect_field_is_valid_but_never_ready(
+    tmp_path,
+    missing,
+):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    del manifest["configuration"][missing]
+    write_manifest(manifest_path, manifest)
+
+    report = inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+    assert report.valid and not report.v2_ready
+    assert "dialect_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("coalition_dialect_influence_enabled", 1),
+        ("same_coalition_learning_multiplier", 1),
+        ("same_coalition_learning_multiplier", 2.1),
+        ("same_coalition_reinforcement_multiplier", float("nan")),
+        ("dialect_controls_status", "unknown"),
+        ("dialect_control_notices", "normalized"),
+        ("dialect_control_notices", ["invented_notice"]),
+    ],
+)
+def test_malformed_dialect_field_invalidates_artifact(tmp_path, field, value):
+    report = inspect_dialect_configuration(tmp_path, {field: value})
+
+    assert not report.valid and not report.v2_ready
+    assert "invalid_dialect_configuration" in issue_codes(report)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "coalition_dialect_influence_enabled": True,
+        },
+        {
+            "dialect_controls_status": "disabled",
+            "same_coalition_learning_multiplier": 1.75,
+        },
+        {
+            "dialect_controls_status": "normalized_uncontracted",
+            "coalition_dialect_influence_enabled": False,
+            "dialect_control_notices": [],
+        },
+        {
+            "dialect_controls_status": "normalized_uncontracted",
+            "coalition_dialect_influence_enabled": False,
+            "dialect_control_notices": [DIALECT_NOTICE_WITHOUT_LANGUAGE],
+        },
+        {
+            "dialect_controls_status": "engineering_only_uncontracted",
+            "coalition_dialect_influence_enabled": False,
+        },
+        {
+            "dialect_controls_status": "engineering_only_uncontracted",
+            "same_coalition_learning_multiplier": 1.75,
+            "dialect_control_notices": [DIALECT_NOTICE_WITHOUT_COALITIONS],
+        },
+    ],
+)
+def test_dialect_requested_effective_contradictions_invalidate_artifact(
+    tmp_path,
+    updates,
+):
+    report = inspect_dialect_configuration(tmp_path, updates)
+
+    assert not report.valid and not report.v2_ready
+    assert "invalid_dialect_configuration" in issue_codes(report)
+
+
+def test_exact_normalized_dialect_notices_remain_valid_but_not_ready(tmp_path):
+    report = inspect_dialect_configuration(tmp_path, {
+        "coalition_dialect_influence_enabled": False,
+        "dialect_controls_status": "normalized_uncontracted",
+        "dialect_control_notices": sorted([
+            DIALECT_NOTICE_WITHOUT_LANGUAGE,
+            DIALECT_NOTICE_WITHOUT_COALITIONS,
+        ]),
+    })
+
+    assert report.valid and not report.v2_ready
+    assert "dialect_controls_not_v2_ready" in readiness_codes(report)
 
 
 @pytest.mark.parametrize(

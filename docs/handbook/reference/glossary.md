@@ -1,0 +1,26 @@
+# Glossary
+
+| Term | Meaning in this revision |
+| --- | --- |
+| Active inhabitant | Living object admitted to `SimulationState.people` with a stable run-scoped ID |
+| Authentic communication | Language call produced exactly once by a successfully committed Layer-4 individual or faction-mediated transfer |
+| Coalition | Informal stable-ID social group derived from reciprocal `Relationship` topology; not a formal faction |
+| Condition | Filename-safe run label recorded in artifacts; not itself a behavioral hash input |
+| Context | Either transfer context (`AID_TRANSFER`, `PAID_TRADE`, `FACTION_TRADE`) or one of four coalition communication classifications |
+| Dialect | Engineering observation/rate effect associated with current coalition membership; not an official or coalition-owned language |
+| Directed relationship | Optional bounded stable-ID record with trust, affinity, grievance, obligation, familiarity and interaction history |
+| Formal faction | Older named causal institution driven by beliefs, legacy trust and proximity |
+| Generation | Lineage depth (`0` initially, parent maximum plus one at birth), not biological age |
+| Legacy trust | Name-keyed integer trust used by older survival/faction/reproduction mechanics |
+| Manifest | JSON termination, configuration, writer-health, inventory, provenance and state-fingerprint envelope |
+| Meaning | One of the four closed language concepts: food, wood, ore, stone |
+| Pristine | Exact default/empty validated runtime state required when a feature is disabled or before initialization |
+| Research-ready | Artifact valid under a complete exact `ExpectedRunContract`; current runner output does not attain this |
+| Run root | Working directory for one direct run, or batch root containing condition/seed child directories |
+| Selected-state hash | SHA-256 of the canonical documented projection; not a checkpoint |
+| Signal | Immutable tuple of 2–4 phoneme IDs in 0..7 |
+| Stable ID | Monotonic nonnegative inhabitant identity assigned transactionally on admission |
+| Structured event | Versioned typed CSV observation; in-memory metadata/message fields are not all persisted |
+| V1 / V2 | Historical Core Replication V1 pilot versus planned, unexecuted Core Replication V2 workflow |
+
+Terms such as “agreement,” “convergence,” and “dialect distance” describe implementation-level frequency arithmetic in this handbook. They are not finalized scientific endpoints.

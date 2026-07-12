@@ -1,0 +1,149 @@
+# Handbook status
+
+## Recorded revision
+
+- Handbook: Living Technical Handbook v0.1
+- Documented branch: `docs/technical-handbook-v0.1`
+- Documented commit: `23ef5dad78a86cbcf699dc0192373a3416eafc06`
+- Source feature equivalence: `feature/coalition-dialects-v1` points to the same commit
+- Generation date: 2026-07-12 (Canada/Eastern)
+- Working-tree caveat: the source tree was clean at reconnaissance start. Handbook files are intentionally uncommitted documentation additions, so the final working tree is expected to show `docs/handbook/` as untracked until the owner chooses a later Git action.
+
+This handbook is authoritative for the recorded source revision. It remains explicitly versioned and must be refreshed when current behavior changes.
+
+## Source-of-truth hierarchy
+
+1. Executed current code and bounded observed behavior.
+2. Passing current tests.
+3. Current executable source.
+4. Active schemas and configuration validation.
+5. Current authoritative project documentation.
+6. Active plans and handoffs.
+7. Comments and docstrings.
+8. Historical plans, reports, logs, and generated material.
+
+When these conflict, the handbook uses executable behavior, records the discrepancy, and does not silently rewrite historical evidence.
+
+## Systems documented
+
+| System | Status recorded in the handbook |
+| --- | --- |
+| Initialization, reset, world and resources | Implemented but experimental |
+| Inhabitants, needs, survival, reproduction and death | Implemented but experimental |
+| Beliefs, formal factions and settlements | Implemented but experimental |
+| Economy, aid, trade, raids and legacy trust | Implemented but experimental |
+| Directed social memory and partner bias | Implemented but experimental; Disabled by default; Engineering-only |
+| Informal coalitions | Implemented but experimental; Disabled by default; Engineering-only |
+| Endogenous Language v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Coalition Dialects v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Combat, technology, diplomacy and religion | Implemented but experimental |
+| Structured events, metrics, manifests and deep validation | Stable and verified engineering infrastructure |
+| Dashboard, RA tracker and mythology | Optional/diagnostic; mythology and RA disabled by default |
+| Plugins | Implemented causal extension system; not sandboxed or provenance-sealed |
+| Generic experiment runner | Fresh-root engineering runner; not V2 research-ready |
+
+## Systems absent or planned
+
+| Capability | Status |
+| --- | --- |
+| Active informal-coalition merging | Planned, not implemented |
+| Biological age/senescence/family model | Planned, not implemented only as a possibility; no active contract exists |
+| Checkpoint, PRNG restoration or event replay | Planned, not implemented |
+| Immutable experiment attempts, ledger, selection and safe resume | Planned, not implemented |
+| Clean-tag/environment/plugin preflight and V2 matrix orchestration | Planned, not implemented |
+| `feature/language-contact-v1` | Planned, not implemented |
+| `feature/intergenerational-language-v1` | Planned, not implemented |
+| `feature/lexical-evolution-v1` | Planned, not implemented |
+| `feature/compositional-protolanguage-v1` | Planned, not implemented |
+| `feature/grammar-evolution-v1` | Planned, not implemented |
+| `feature/language-coevolution-v1` | Planned, not implemented |
+| `feature/language-research-readiness-v1` | Planned, not implemented |
+
+No final language research hypotheses, estimands, metrics, evidence contracts, or readiness claims are defined here.
+
+## Current branch work
+
+The production commit already contains Endogenous Language v1 and Coalition Dialects v1. Current uncommitted work is documentation and the bounded documentation validator only; no simulation behavior, configuration, artifact schema, runner behavior, or research output is intentionally changed.
+
+## Unresolved questions
+
+Material intent questions are isolated in [OWNER_CLARIFICATIONS](OWNER_CLARIFICATIONS.md). They include reproduction accounting/reuse, health/death checkpoints, the beliefs identity-column mismatch, plugin provenance policy, selected-state-hash wording, and legacy display labels that disagree with executable values.
+
+## Audit record
+
+The first complete draft was independently cross-reviewed in Wave 4 for:
+
+- technical behavior and test-evidence accuracy;
+- user operations, commands, output paths, and artifact lifecycle;
+- architecture consistency, causal direction, staleness, navigation, and internal links.
+
+Final result:
+
+- Blockers: none.
+- High findings: all resolved. Corrections added a direct-run validator,
+  bounded structured-artifact/two-condition inspection, safe bounded command
+  references, independent state-hash versus checksum/inventory data flow,
+  correct scheduled-world-event versus disruption taxonomy, and selected-state
+  rather than complete-state hash wording.
+- Medium findings: resolved. Corrections covered Mermaid syntax, language RNG
+  wording, initial depletion fraction, world-stock metric absence, current
+  partner-bias status, focused test-evidence scope, deterministic built-in
+  plugin spawning, and research-reserve clamping.
+- Low findings: resolved where practical, including prerequisites, era-export
+  cadence, dashboard symbol, and structured-event terminology.
+- Scoped auditor rechecks passed after correction.
+
+## Verification commands and results
+
+```bash
+python docs/handbook/validate_handbook.py
+python -m thalren_vale --help
+python run_experiments.py --help
+python -m pytest -q tests/test_coalition_dialects.py tests/test_language_evolution.py tests/test_language_interaction_hooks.py tests/test_informal_coalitions.py tests/test_social_relationships.py tests/test_reproducibility.py tests/test_artifact_validation.py tests/test_experiment_runner.py tests/test_run_termination.py
+python -m pytest -q
+python -m compileall -q src run_experiments.py tests
+git diff --check
+```
+
+Results at completion:
+
+- Handbook validator: passed, 39 Markdown pages; required links and repository
+  references resolved.
+- Simulator and runner help: both exited 0.
+- Focused emergence/evidence chain: 718 passed in 16.15 seconds.
+- Default complete suite: 852 passed in 19.37 seconds. Per pytest
+  configuration, this does not collect root `test_parse_logs.py`.
+- Compilation: passed.
+- One-tick smoke: explicit seed 42, `metrics_only`, anti-stagnation disabled,
+  in a new `/tmp` working directory. It completed tick 1 and direct strict
+  validation returned `schema2_valid`, `valid=True`, `v2_ready=False`.
+- The smoke directory was removed after inspection.
+- `git diff --check`: passed.
+
+No plan, experiment matrix, research tier, benchmark, historical evidence scan,
+or canonical repository evidence root was executed or created by this
+documentation run.
+
+## Known documentation limitations
+
+- Many older core mechanics lack focused unit tests; those pages are source-verified and label the gap.
+- The handbook records current quirks rather than changing simulation behavior to align with stale prose.
+- State hashing is documented as a selected-state fingerprint, not complete persistence.
+- Optional dashboard, RA, mythology, and plugin behavior lacks complete provenance/validation.
+- Line-level source references are avoided where symbol names are more stable; the recorded commit is the precision boundary.
+- Model-tier routing is external to repository evidence and must be reported truthfully by the completion agent.
+
+## Update criteria
+
+Create a new handbook revision after any change to:
+
+- initialization, tick order, state ownership, or causal boundaries;
+- configuration fields/defaults/normalization;
+- RNG use, canonical ordering, reset, or state-hash payload;
+- events, metrics, summaries, manifests, schemas, or output layout;
+- runner lifecycle, resume, attempts, validation, provenance, or readiness;
+- social, coalition, language, or dialect behavior;
+- plugin policy, inventory, or observer behavior;
+- authorization of a new experiment or language milestone.
+
+The later `feature/language-research-readiness-v1` milestone is **Planned, not implemented** and will produce the research-readiness revision; it does not retroactively make this implementation-level handbook unnecessary or scientifically authoritative beyond its recorded scope.

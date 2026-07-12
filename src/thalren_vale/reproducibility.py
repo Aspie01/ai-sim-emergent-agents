@@ -26,15 +26,31 @@ from .artifact_contract import (
     require_safe_manifest_target,
 )
 from .events import EVENT_SCHEMA_VERSION
+from .config import LanguageEvolutionConfig
 from .social import relationship_records
 from .coalitions import (
     CoalitionRuntimeState,
     canonical_candidate_snapshot,
     canonical_coalition_snapshot,
 )
+from .language import (
+    AgentLanguageState,
+    LanguageInvariantError,
+    LanguageRuntimeState,
+    agent_language_record,
+    language_runtime_is_pristine,
+    language_runtime_record,
+    validate_language_config,
+)
 
 
-def _person_record(person, *, include_social: bool = False) -> dict:
+def _person_record(
+    person,
+    *,
+    include_social: bool = False,
+    include_language: bool = False,
+    language_config=None,
+) -> dict:
     religion = getattr(person, "religion", None)
     record = {
         "name": person.name,
@@ -50,13 +66,23 @@ def _person_record(person, *, include_social: bool = False) -> dict:
         "religion": getattr(religion, "name", None),
         "is_priest": person.is_priest,
     }
-    if include_social:
+    if include_social or include_language:
         inhabitant_id = getattr(person, "inhabitant_id", None)
         if type(inhabitant_id) is not int or inhabitant_id < 0:
             raise ValueError(
                 "enabled social state requires assigned inhabitant IDs")
         record["inhabitant_id"] = inhabitant_id
+    if include_social:
         record["relationships"] = relationship_records(person)
+    if include_language:
+        if language_config is None:
+            raise ValueError("enabled language hashing requires effective controls")
+        language = agent_language_record(person, config=language_config)
+        record["language"] = {
+            key: value
+            for key, value in language.items()
+            if key != "inhabitant_id"
+        }
     return record
 
 
@@ -192,6 +218,45 @@ def _require_empty_disabled_coalition_state(state) -> None:
         )
 
 
+def _require_pristine_disabled_language_state(state) -> None:
+    """Reject every language field omitted from the disabled behavioral hash."""
+    for cohort, inhabitants in (
+        ("living", state.people),
+        ("dead", state.all_dead),
+    ):
+        for index, inhabitant in enumerate(inhabitants):
+            language = getattr(inhabitant, "language", None)
+            if type(language) is not AgentLanguageState:
+                raise LanguageInvariantError(
+                    "missing_disabled_agent_language_state",
+                    "disabled language requires explicit pristine agent state: "
+                    f"{cohort}[{index}] is missing AgentLanguageState",
+                )
+            if (
+                language.production
+                or language.comprehension
+                or language.next_invention_index != 0
+                or type(language.next_invention_index) is not int
+            ):
+                inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+                raise LanguageInvariantError(
+                    "nonpristine_disabled_agent_language_state",
+                    "disabled language evolution requires pristine agent state: "
+                    f"{cohort}[{index}] inhabitant_id={inhabitant_id!r}",
+                )
+    runtime = getattr(state, "language", None)
+    if type(runtime) is not LanguageRuntimeState:
+        raise LanguageInvariantError(
+            "missing_disabled_language_runtime",
+            "disabled language runtime is missing or invalid",
+        )
+    if not language_runtime_is_pristine(runtime):
+        raise LanguageInvariantError(
+            "nonpristine_disabled_language_runtime",
+            "disabled language evolution requires pristine runtime state",
+        )
+
+
 def _coalition_state_record(runtime: CoalitionRuntimeState) -> dict:
     """Return the complete coalition runtime in canonical JSON-safe form."""
     return {
@@ -215,12 +280,64 @@ def _coalition_state_record(runtime: CoalitionRuntimeState) -> dict:
     }
 
 
+def _language_hash_config(configuration: dict) -> LanguageEvolutionConfig:
+    """Build the exact effective language controls required by state records."""
+    required = (
+        "language_evolution_enabled",
+        "maximum_language_associations",
+        "maximum_signal_length",
+        "language_learning_rate",
+        "language_reinforcement_rate",
+        "language_forgetting_interval",
+        "language_invention_enabled",
+        "language_controls_status",
+        "language_control_notices",
+    )
+    missing = [name for name in required if name not in configuration]
+    if missing:
+        raise ValueError(
+            "enabled language hashing lacks controls: " + ", ".join(missing))
+    if configuration["language_controls_status"] != (
+        "engineering_only_uncontracted"
+    ):
+        raise ValueError(
+            "enabled language hashing requires engineering-only status")
+    if (
+        type(configuration["language_control_notices"]) is not list
+        or configuration["language_control_notices"]
+    ):
+        raise ValueError(
+            "enabled language hashing requires exact empty language notices")
+    result = LanguageEvolutionConfig(
+        language_evolution_enabled=configuration["language_evolution_enabled"],
+        maximum_language_associations=configuration[
+            "maximum_language_associations"],
+        maximum_signal_length=configuration["maximum_signal_length"],
+        language_learning_rate=configuration["language_learning_rate"],
+        language_reinforcement_rate=configuration[
+            "language_reinforcement_rate"],
+        language_forgetting_interval=configuration[
+            "language_forgetting_interval"],
+        language_invention_enabled=configuration[
+            "language_invention_enabled"],
+    )
+    validate_language_config(result, require_enabled=True)
+    return result
+
+
 def canonical_state_hash(state, world: list, configuration: dict) -> str:
     """Return a SHA-256 fingerprint of behaviorally relevant final state."""
     social_memory_enabled = configuration.get("social_memory_enabled") is True
     coalition_emergence_enabled = (
         configuration.get("coalition_emergence_enabled") is True
     )
+    if (
+        "language_evolution_enabled" in configuration
+        and type(configuration["language_evolution_enabled"]) is not bool
+    ):
+        raise ValueError("language evolution configuration must be boolean")
+    language_evolution_enabled = configuration.get(
+        "language_evolution_enabled", False)
     non_behavioral_keys = {
         "condition",
         "log_mode",
@@ -238,6 +355,20 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             "maximum_social_ties",
             "relationship_decay_interval",
         })
+    language_configuration_keys = {
+        "language_evolution_enabled",
+        "maximum_language_associations",
+        "maximum_signal_length",
+        "language_learning_rate",
+        "language_reinforcement_rate",
+        "language_forgetting_interval",
+        "language_invention_enabled",
+        "language_controls_status",
+        "language_control_notices",
+    }
+    if not language_evolution_enabled:
+        _require_pristine_disabled_language_state(state)
+        non_behavioral_keys.update(language_configuration_keys)
     coalition_configuration_keys = {
         "coalition_emergence_enabled",
         "coalition_minimum_size",
@@ -259,17 +390,42 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         for key, value in configuration.items()
         if key not in non_behavioral_keys
     }
+    language_hash_config = (
+        _language_hash_config(configuration)
+        if language_evolution_enabled else None
+    )
     people_records = [
-        _person_record(person, include_social=social_memory_enabled)
+        _person_record(
+            person,
+            include_social=social_memory_enabled,
+            include_language=language_evolution_enabled,
+            language_config=language_hash_config,
+        )
         for person in state.people
     ]
     dead_records = [
-        _person_record(person, include_social=social_memory_enabled)
+        _person_record(
+            person,
+            include_social=social_memory_enabled,
+            include_language=language_evolution_enabled,
+            language_config=language_hash_config,
+        )
         for person in state.all_dead
     ]
+    identity_enabled = social_memory_enabled or language_evolution_enabled
+    if language_evolution_enabled:
+        identities = [
+            record["inhabitant_id"]
+            for record in (*people_records, *dead_records)
+        ]
+        if len(identities) != len(set(identities)):
+            raise LanguageInvariantError(
+                "duplicate_language_identity",
+                "enabled language hashing requires unique inhabitant IDs",
+            )
     person_sort_key = (
         (lambda record: record["inhabitant_id"])
-        if social_memory_enabled
+        if identity_enabled
         else (lambda record: record["name"])
     )
     payload = {
@@ -302,12 +458,17 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             for row in world
         ],
     }
-    if social_memory_enabled:
+    if identity_enabled:
         next_inhabitant_id = getattr(state, "next_inhabitant_id", None)
         if type(next_inhabitant_id) is not int or next_inhabitant_id < 0:
             raise ValueError(
                 "enabled social state requires a nonnegative ID allocator")
         payload["next_inhabitant_id"] = next_inhabitant_id
+    if language_evolution_enabled:
+        runtime = getattr(state, "language", None)
+        if type(runtime) is not LanguageRuntimeState:
+            raise ValueError("enabled language state requires a valid runtime")
+        payload["language_state"] = language_runtime_record(runtime)
     if coalition_emergence_enabled:
         runtime = getattr(state, "coalitions", None)
         if not isinstance(runtime, CoalitionRuntimeState):

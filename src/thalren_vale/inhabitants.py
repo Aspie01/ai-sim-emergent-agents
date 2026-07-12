@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from .world import world, tick, BIOME_MAX, grid_move, grid_neighbors, get_settlement_at, SETTLEMENT_MOVE_PENALTY, tile_is_sea, BIOME_MOVE_COST, _SEA_ID
 from .events import JournalToken
+from .language import AgentLanguageState
 
 NAMES = [
     # ── Original pool ─────────────────────────────────────────────────────
@@ -59,7 +60,7 @@ def regen_rate(t):
 # ── Inhabitant ─────────────────────────────────────────────────────────────
 class Inhabitant:
     __slots__ = (
-        'name', 'inhabitant_id', 'relationships', 'r', 'c', 'health', 'hunger', 'inventory',
+        'name', 'inhabitant_id', 'relationships', 'language', 'r', 'c', 'health', 'hunger', 'inventory',
         'beliefs', 'trust', 'trust_last_seen', 'memory', 'trade_count', 'was_pushed',
         'prev_health', 'biome_ticks', 'faction_ticks', 'was_rejected',
         'zero_food_ticks', 'currency',
@@ -82,6 +83,7 @@ class Inhabitant:
         self.name      = name
         self.inhabitant_id = None
         self.relationships = {}
+        self.language = AgentLanguageState()
         self.r, self.c = r, c
         self.health    = 100
         self.hunger    = 0

@@ -1,5 +1,6 @@
 """Independent-process reproducibility guarantees."""
 
+import csv
 import json
 import os
 import subprocess
@@ -155,6 +156,53 @@ def test_enabled_coalition_state_hash_is_stable_across_processes(tmp_path):
     )
 
 
+def test_enabled_language_state_hash_is_stable_across_processes(tmp_path):
+    extra_args = ("--enable-language-evolution",)
+    first = run_and_read_manifest(tmp_path / "first", 456, extra_args)
+    second = run_and_read_manifest(tmp_path / "second", 456, extra_args)
+
+    assert first["state_hash"] == second["state_hash"]
+    assert first["configuration"] == second["configuration"]
+    assert first["configuration"]["language_evolution_enabled"] is True
+    assert first["configuration"]["language_controls_status"] == (
+        "engineering_only_uncontracted"
+    )
+    assert first["configuration"]["language_control_notices"] == []
+
+
+def test_enabled_language_observation_preserves_existing_simulation_artifacts(
+    tmp_path,
+):
+    baseline_root = tmp_path / "baseline"
+    enabled_root = tmp_path / "enabled"
+    baseline = run_and_read_manifest(baseline_root, 456)
+    enabled = run_and_read_manifest(
+        enabled_root, 456, ("--enable-language-evolution",))
+
+    for artifact in ("metrics", "events", "beliefs"):
+        baseline_path = baseline_root / "data" / baseline[
+            "artifact_inventory"
+        ][artifact]["path"]
+        enabled_path = enabled_root / "data" / enabled[
+            "artifact_inventory"
+        ][artifact]["path"]
+        assert enabled_path.read_bytes() == baseline_path.read_bytes()
+
+    def biological_summary(root, manifest):
+        path = root / "data" / manifest["artifact_inventory"]["summary"][
+            "path"
+        ]
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            row = next(csv.DictReader(handle))
+        row.pop("wall_clock_seconds")
+        row.pop("peak_ram_mb")
+        return row
+
+    assert biological_summary(enabled_root, enabled) == biological_summary(
+        baseline_root, baseline)
+    assert enabled["state_hash"] != baseline["state_hash"]
+
+
 def test_raid_disabled_runs_are_deterministic_and_record_policy(tmp_path):
     extra_args = ("--disable-raids",)
     first = run_and_read_manifest(tmp_path / "first", 456, extra_args)
@@ -195,6 +243,15 @@ def test_manifest_records_code_provenance(tmp_path):
     assert manifest["configuration"]["relationship_decay_interval"] == 25
     assert manifest["configuration"]["social_controls_status"] == "disabled"
     assert manifest["configuration"]["social_control_notices"] == []
+    assert manifest["configuration"]["language_evolution_enabled"] is False
+    assert manifest["configuration"]["maximum_language_associations"] == 32
+    assert manifest["configuration"]["maximum_signal_length"] == 3
+    assert manifest["configuration"]["language_learning_rate"] == 0.20
+    assert manifest["configuration"]["language_reinforcement_rate"] == 0.10
+    assert manifest["configuration"]["language_forgetting_interval"] == 25
+    assert manifest["configuration"]["language_invention_enabled"] is True
+    assert manifest["configuration"]["language_controls_status"] == "disabled"
+    assert manifest["configuration"]["language_control_notices"] == []
     assert manifest["configuration"]["coalition_emergence_enabled"] is False
     assert manifest["configuration"]["coalition_minimum_size"] == 3
     assert manifest["configuration"]["coalition_trust_threshold"] == 0.24

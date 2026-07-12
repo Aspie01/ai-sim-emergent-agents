@@ -41,6 +41,13 @@ DEFAULT_SOCIAL_MEMORY_ENABLED = False
 DEFAULT_SOCIAL_PARTNER_BIAS_ENABLED = False
 DEFAULT_MAXIMUM_SOCIAL_TIES = 32
 DEFAULT_RELATIONSHIP_DECAY_INTERVAL = 25
+DEFAULT_LANGUAGE_EVOLUTION_ENABLED = False
+DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS = 32
+DEFAULT_MAXIMUM_SIGNAL_LENGTH = 3
+DEFAULT_LANGUAGE_LEARNING_RATE = 0.20
+DEFAULT_LANGUAGE_REINFORCEMENT_RATE = 0.10
+DEFAULT_LANGUAGE_FORGETTING_INTERVAL = 25
+DEFAULT_LANGUAGE_INVENTION_ENABLED = True
 DEFAULT_COALITION_EMERGENCE_ENABLED = False
 DEFAULT_COALITION_MINIMUM_SIZE = 3
 DEFAULT_COALITION_TRUST_THRESHOLD = 0.24
@@ -89,6 +96,12 @@ VALID_SOCIAL_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+VALID_LANGUAGE_CONTROL_NOTICES = frozenset()
+VALID_LANGUAGE_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'engineering_only_uncontracted',
+})
+
 COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY = (
     'coalition_emergence_requested_without_social_memory'
 )
@@ -110,6 +123,19 @@ class SocialMemoryConfig:
     social_partner_bias_enabled: bool
     maximum_social_ties: int
     relationship_decay_interval: int
+
+
+@dataclass(frozen=True)
+class LanguageEvolutionConfig:
+    """Effective engineering-only controls for protolanguage evolution."""
+
+    language_evolution_enabled: bool
+    maximum_language_associations: int
+    maximum_signal_length: int
+    language_learning_rate: float
+    language_reinforcement_rate: float
+    language_forgetting_interval: int
+    language_invention_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -144,6 +170,15 @@ class SimulationConfig:
     social_partner_bias_enabled: bool = DEFAULT_SOCIAL_PARTNER_BIAS_ENABLED
     maximum_social_ties: int = DEFAULT_MAXIMUM_SOCIAL_TIES
     relationship_decay_interval: int = DEFAULT_RELATIONSHIP_DECAY_INTERVAL
+    language_evolution_enabled: bool = DEFAULT_LANGUAGE_EVOLUTION_ENABLED
+    maximum_language_associations: int = (
+        DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS
+    )
+    maximum_signal_length: int = DEFAULT_MAXIMUM_SIGNAL_LENGTH
+    language_learning_rate: float = DEFAULT_LANGUAGE_LEARNING_RATE
+    language_reinforcement_rate: float = DEFAULT_LANGUAGE_REINFORCEMENT_RATE
+    language_forgetting_interval: int = DEFAULT_LANGUAGE_FORGETTING_INTERVAL
+    language_invention_enabled: bool = DEFAULT_LANGUAGE_INVENTION_ENABLED
     coalition_emergence_enabled: bool = DEFAULT_COALITION_EMERGENCE_ENABLED
     coalition_minimum_size: int = DEFAULT_COALITION_MINIMUM_SIZE
     coalition_trust_threshold: float = DEFAULT_COALITION_TRUST_THRESHOLD
@@ -155,6 +190,8 @@ class SimulationConfig:
     maximum_active_coalitions: int = DEFAULT_MAXIMUM_ACTIVE_COALITIONS
     social_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
+    language_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
     coalition_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
@@ -165,6 +202,8 @@ class SimulationConfig:
             notices.append(SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY)
         object.__setattr__(
             self, 'social_control_notices', tuple(sorted(notices)))
+
+        object.__setattr__(self, 'language_control_notices', ())
 
         coalition_notices: list[str] = []
         if (
@@ -243,6 +282,40 @@ class SimulationConfig:
                 DEFAULT_RELATIONSHIP_DECAY_INTERVAL
                 if getattr(args, 'relationship_decay_interval', None) is None
                 else args.relationship_decay_interval
+            ),
+            language_evolution_enabled=(
+                bool(getattr(args, 'enable_language_evolution', False))
+                and not bool(getattr(args, 'disable_language_evolution', False))
+            ),
+            maximum_language_associations=(
+                DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS
+                if getattr(args, 'maximum_language_associations', None) is None
+                else args.maximum_language_associations
+            ),
+            maximum_signal_length=(
+                DEFAULT_MAXIMUM_SIGNAL_LENGTH
+                if getattr(args, 'maximum_signal_length', None) is None
+                else args.maximum_signal_length
+            ),
+            language_learning_rate=(
+                DEFAULT_LANGUAGE_LEARNING_RATE
+                if getattr(args, 'language_learning_rate', None) is None
+                else args.language_learning_rate
+            ),
+            language_reinforcement_rate=(
+                DEFAULT_LANGUAGE_REINFORCEMENT_RATE
+                if getattr(args, 'language_reinforcement_rate', None) is None
+                else args.language_reinforcement_rate
+            ),
+            language_forgetting_interval=(
+                DEFAULT_LANGUAGE_FORGETTING_INTERVAL
+                if getattr(args, 'language_forgetting_interval', None) is None
+                else args.language_forgetting_interval
+            ),
+            language_invention_enabled=(
+                not bool(getattr(args, 'disable_language_invention', False))
+                if not bool(getattr(args, 'enable_language_invention', False))
+                else True
             ),
             coalition_emergence_enabled=(
                 bool(getattr(args, 'enable_coalition_emergence', False))
@@ -327,6 +400,39 @@ class SimulationConfig:
             for notice in self.social_control_notices
         ):
             raise ValueError('unknown social control normalization notice')
+        if type(self.language_evolution_enabled) is not bool:
+            raise ValueError('language evolution setting must be boolean')
+        if (
+            type(self.maximum_language_associations) is not int
+            or not 1 <= self.maximum_language_associations <= 40
+        ):
+            raise ValueError(
+                'maximum language associations must be an integer from 1 to 40')
+        if (
+            type(self.maximum_signal_length) is not int
+            or not 2 <= self.maximum_signal_length <= 4
+        ):
+            raise ValueError('maximum signal length must be an integer from 2 to 4')
+        for value, label in (
+            (self.language_learning_rate, 'language learning rate'),
+            (self.language_reinforcement_rate, 'language reinforcement rate'),
+        ):
+            if (
+                type(value) is not float
+                or not math.isfinite(value)
+                or not 0.0 < value <= 1.0
+            ):
+                raise ValueError(f'{label} must be a finite float in (0.0, 1.0]')
+        if (
+            type(self.language_forgetting_interval) is not int
+            or self.language_forgetting_interval < 1
+        ):
+            raise ValueError(
+                'language forgetting interval must be a positive integer')
+        if type(self.language_invention_enabled) is not bool:
+            raise ValueError('language invention setting must be boolean')
+        if self.language_control_notices:
+            raise ValueError('language control notices are not defined in v1')
         if type(self.coalition_emergence_enabled) is not bool:
             raise ValueError('coalition emergence setting must be boolean')
         if (
@@ -386,11 +492,15 @@ class SimulationConfig:
     def manifest_dict(self) -> dict:
         result = asdict(self)
         result.pop('social_control_notices', None)
+        result.pop('language_control_notices', None)
         result.pop('coalition_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
         result['social_controls_status'] = self.social_controls_status
+        result['language_control_notices'] = list(
+            self.language_control_notices)
+        result['language_controls_status'] = self.language_controls_status
         result['coalition_control_notices'] = list(
             self.coalition_control_notices)
         result['coalition_controls_status'] = self.coalition_controls_status
@@ -419,6 +529,39 @@ class SimulationConfig:
             social_partner_bias_enabled=self.social_partner_bias_enabled,
             maximum_social_ties=self.maximum_social_ties,
             relationship_decay_interval=self.relationship_decay_interval,
+        )
+
+
+    @property
+    def language_controls_status(self) -> str:
+        """Return provenance status for uncontracted language controls."""
+        if (
+            self.language_evolution_enabled
+            or self.maximum_language_associations
+            != DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS
+            or self.maximum_signal_length != DEFAULT_MAXIMUM_SIGNAL_LENGTH
+            or self.language_learning_rate != DEFAULT_LANGUAGE_LEARNING_RATE
+            or self.language_reinforcement_rate
+            != DEFAULT_LANGUAGE_REINFORCEMENT_RATE
+            or self.language_forgetting_interval
+            != DEFAULT_LANGUAGE_FORGETTING_INTERVAL
+            or self.language_invention_enabled
+            is not DEFAULT_LANGUAGE_INVENTION_ENABLED
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def language_evolution_config(self) -> LanguageEvolutionConfig:
+        """Return immutable effective controls for language processing."""
+        return LanguageEvolutionConfig(
+            language_evolution_enabled=self.language_evolution_enabled,
+            maximum_language_associations=self.maximum_language_associations,
+            maximum_signal_length=self.maximum_signal_length,
+            language_learning_rate=self.language_learning_rate,
+            language_reinforcement_rate=self.language_reinforcement_rate,
+            language_forgetting_interval=self.language_forgetting_interval,
+            language_invention_enabled=self.language_invention_enabled,
         )
 
     @property

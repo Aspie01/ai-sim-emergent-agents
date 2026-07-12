@@ -31,6 +31,15 @@ def cli_args(**overrides):
         "disable_social_partner_bias": False,
         "maximum_social_ties": None,
         "relationship_decay_interval": None,
+        "enable_language_evolution": False,
+        "disable_language_evolution": False,
+        "maximum_language_associations": None,
+        "maximum_signal_length": None,
+        "language_learning_rate": None,
+        "language_reinforcement_rate": None,
+        "language_forgetting_interval": None,
+        "enable_language_invention": False,
+        "disable_language_invention": False,
         "enable_coalition_emergence": False,
         "disable_coalition_emergence": False,
         "coalition_minimum_size": None,
@@ -121,6 +130,38 @@ def test_enabled_or_nondefault_social_controls_are_engineering_only():
     )
 
 
+def test_language_controls_default_to_exact_research_safe_values():
+    manifest = SimulationConfig.from_cli(cli_args()).manifest_dict()
+
+    assert manifest["language_evolution_enabled"] is False
+    assert manifest["maximum_language_associations"] == 32
+    assert manifest["maximum_signal_length"] == 3
+    assert manifest["language_learning_rate"] == 0.20
+    assert manifest["language_reinforcement_rate"] == 0.10
+    assert manifest["language_forgetting_interval"] == 25
+    assert manifest["language_invention_enabled"] is True
+    assert manifest["language_controls_status"] == "disabled"
+    assert manifest["language_control_notices"] == []
+
+
+def test_enabled_or_nondefault_language_controls_are_engineering_only():
+    enabled = SimulationConfig.from_cli(
+        cli_args(enable_language_evolution=True))
+    nondefault = SimulationConfig.from_cli(cli_args(
+        maximum_language_associations=12,
+        maximum_signal_length=2,
+        language_learning_rate=0.30,
+        language_reinforcement_rate=0.25,
+        language_forgetting_interval=5,
+        disable_language_invention=True,
+    ))
+
+    assert enabled.language_evolution_enabled is True
+    assert enabled.language_controls_status == "engineering_only_uncontracted"
+    assert nondefault.language_invention_enabled is False
+    assert nondefault.language_controls_status == "engineering_only_uncontracted"
+
+
 def test_coalition_controls_default_to_exact_research_safe_values():
     result = SimulationConfig.from_cli(cli_args())
     manifest = result.manifest_dict()
@@ -193,6 +234,11 @@ def test_enabled_or_nondefault_coalition_controls_are_engineering_only():
         ({"log_mode": "loud"}, "log mode"),
         ({"maximum_social_ties": 0}, "maximum social ties"),
         ({"relationship_decay_interval": 0}, "decay interval"),
+        ({"maximum_language_associations": 0}, "language associations"),
+        ({"maximum_signal_length": 5}, "signal length"),
+        ({"language_learning_rate": 0.0}, "learning rate"),
+        ({"language_reinforcement_rate": float("nan")}, "reinforcement rate"),
+        ({"language_forgetting_interval": 0}, "forgetting interval"),
         ({"coalition_minimum_size": 2}, "coalition minimum size"),
         ({"coalition_trust_threshold": 1}, "finite float"),
         ({"coalition_familiarity_threshold": float("nan")}, "finite float"),

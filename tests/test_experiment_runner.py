@@ -201,6 +201,42 @@ EQUALS_COALITION_ARGUMENTS = [
     ["--maximum-active-coalitions=32"],
 ]
 
+ABBREVIATED_LANGUAGE_ARGUMENTS = [
+    ["--enable-language-e"],
+    ["--disable-language-e"],
+    ["--maximum-language-a", "16"],
+    ["--maximum-signal-l", "3"],
+    ["--language-learning-r", "0.2"],
+    ["--language-reinforcement-r", "0.1"],
+    ["--language-forgetting-i", "25"],
+    ["--enable-language-i"],
+    ["--disable-language-i"],
+]
+
+FULL_LANGUAGE_ARGUMENTS = [
+    ["--enable-language-evolution"],
+    ["--disable-language-evolution"],
+    ["--maximum-language-associations", "16"],
+    ["--maximum-signal-length", "3"],
+    ["--language-learning-rate", "0.2"],
+    ["--language-reinforcement-rate", "0.1"],
+    ["--language-forgetting-interval", "25"],
+    ["--enable-language-invention"],
+    ["--disable-language-invention"],
+]
+
+EQUALS_LANGUAGE_ARGUMENTS = [
+    ["--enable-language-evolution=true"],
+    ["--disable-language-evolution=true"],
+    ["--maximum-language-associations=16"],
+    ["--maximum-signal-length=3"],
+    ["--language-learning-rate=0.2"],
+    ["--language-reinforcement-rate=0.1"],
+    ["--language-forgetting-interval=25"],
+    ["--enable-language-invention=true"],
+    ["--disable-language-invention=true"],
+]
+
 
 @pytest.mark.parametrize(
     "extra_args",
@@ -252,6 +288,34 @@ def test_runner_rejects_uncontracted_coalition_controls_before_creating_root(
     )
 
     with pytest.raises(ValueError, match="uncontracted coalition control"):
+        runner._run_cells_in_fresh_root([cell], output)
+
+    assert child_calls == []
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    ABBREVIATED_LANGUAGE_ARGUMENTS
+    + FULL_LANGUAGE_ARGUMENTS
+    + EQUALS_LANGUAGE_ARGUMENTS,
+)
+def test_runner_rejects_uncontracted_language_controls_before_creating_root(
+    tmp_path,
+    monkeypatch,
+    extra_args,
+):
+    output = tmp_path / "outputs"
+    cell = fresh_cell_spec()[0]
+    cell["extra_args"] = extra_args
+    child_calls = []
+    monkeypatch.setattr(
+        runner,
+        "_simulation_command",
+        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+    )
+
+    with pytest.raises(ValueError, match="uncontracted language control"):
         runner._run_cells_in_fresh_root([cell], output)
 
     assert child_calls == []
@@ -358,6 +422,39 @@ def test_simulator_rejects_abbreviated_coalition_options_before_execution(
     assert not (tmp_path / "data").exists()
 
 
+@pytest.mark.parametrize("extra_args", ABBREVIATED_LANGUAGE_ARGUMENTS)
+def test_simulator_rejects_abbreviated_language_options_before_execution(
+    tmp_path,
+    extra_args,
+):
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(runner.SOURCE_ROOT)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "thalren_vale",
+            *extra_args,
+            "--ticks",
+            "0",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "unrecognized arguments" in result.stderr
+    assert extra_args[0] in result.stderr
+    assert "ticks must be at least 1" not in result.stderr
+    assert not (tmp_path / "data").exists()
+
+
 def test_plan_loading_rejects_engineering_social_controls(tmp_path):
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(
@@ -395,6 +492,26 @@ def test_plan_loading_rejects_engineering_coalition_controls(tmp_path):
     )
 
     with pytest.raises(ValueError, match="uncontracted coalition control"):
+        runner.load_plan(plan_path)
+
+
+def test_plan_loading_rejects_engineering_language_controls(tmp_path):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({
+            "schema_version": runner.PLAN_SCHEMA_VERSION,
+            "experiment_id": "language-not-contracted",
+            "conditions": [{
+                "name": "baseline",
+                "seeds": "1",
+                "ticks": 1,
+                "extra_args": "--enable-language-evolution",
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="uncontracted language control"):
         runner.load_plan(plan_path)
 
 

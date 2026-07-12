@@ -21,14 +21,27 @@ from .factions     import RIVALRIES
 from . import combat
 from .events import emit_event
 from .config import (
+    DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
+    DEFAULT_LANGUAGE_INVENTION_ENABLED,
+    DEFAULT_LANGUAGE_LEARNING_RATE,
+    DEFAULT_LANGUAGE_REINFORCEMENT_RATE,
+    DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS,
+    DEFAULT_MAXIMUM_SIGNAL_LENGTH,
     DEFAULT_MAXIMUM_SOCIAL_TIES,
     DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
+    LanguageEvolutionConfig,
     SocialMemoryConfig,
 )
 from .social import (
     InteractionKind,
     record_interaction,
     relationship_preference_score,
+)
+from .language import (
+    CommunicationContext,
+    LanguageRuntimeState,
+    communicate,
+    meaning_for_resource,
 )
 
 # ── Module-level state ─────────────────────────────────────────────────────
@@ -48,6 +61,15 @@ _DISABLED_SOCIAL_CONFIG = SocialMemoryConfig(
     social_partner_bias_enabled=False,
     maximum_social_ties=DEFAULT_MAXIMUM_SOCIAL_TIES,
     relationship_decay_interval=DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
+)
+_DISABLED_LANGUAGE_CONFIG = LanguageEvolutionConfig(
+    language_evolution_enabled=False,
+    maximum_language_associations=DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS,
+    maximum_signal_length=DEFAULT_MAXIMUM_SIGNAL_LENGTH,
+    language_learning_rate=DEFAULT_LANGUAGE_LEARNING_RATE,
+    language_reinforcement_rate=DEFAULT_LANGUAGE_REINFORCEMENT_RATE,
+    language_forgetting_interval=DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
+    language_invention_enabled=DEFAULT_LANGUAGE_INVENTION_ENABLED,
 )
 
 
@@ -159,6 +181,8 @@ def _do_trade(
     key,
     *,
     social_config=_DISABLED_SOCIAL_CONFIG,
+    language_config=_DISABLED_LANGUAGE_CONFIG,
+    language_runtime: LanguageRuntimeState | None = None,
     active_ids=frozenset(),
 ):
     donors = [m for m in giver.members if m.inventory.get(res, 0) >= amount]
@@ -229,6 +253,20 @@ def _do_trade(
     msg = (f"Tick {t:03d}: 🤝 Trade: {giver.name} → {receiver.name}  "
            f"{amount} {res}  (tension now {tension})")
     event_log.append(msg)
+
+    if language_config.language_evolution_enabled:
+        if language_runtime is None:
+            raise ValueError('enabled language trade requires a runtime')
+        communicate(
+            donor,
+            taker,
+            meaning_for_resource(res),
+            context=CommunicationContext.FACTION_TRADE,
+            tick=t,
+            active_ids=active_ids,
+            config=language_config,
+            runtime=language_runtime,
+        )
     return True
 
 
@@ -238,6 +276,8 @@ def _faction_trade(
     event_log,
     *,
     social_config=_DISABLED_SOCIAL_CONFIG,
+    language_config=_DISABLED_LANGUAGE_CONFIG,
+    language_runtime: LanguageRuntimeState | None = None,
     active_ids=frozenset(),
 ):
     for fa, fb in combinations(active, 2):
@@ -269,12 +309,18 @@ def _faction_trade(
             if sup_a[res] >= 5 and sup_a[res] >= sup_b[res] * 2:
                 _do_trade(
                     fa, fb, res, amount, t, event_log, key,
-                    social_config=social_config, active_ids=active_ids)
+                    social_config=social_config,
+                    language_config=language_config,
+                    language_runtime=language_runtime,
+                    active_ids=active_ids)
                 break
             elif sup_b[res] >= 5 and sup_b[res] >= sup_a[res] * 2:
                 _do_trade(
                     fb, fa, res, amount, t, event_log, key,
-                    social_config=social_config, active_ids=active_ids)
+                    social_config=social_config,
+                    language_config=language_config,
+                    language_runtime=language_runtime,
+                    active_ids=active_ids)
                 break
         else:
             # No natural trade trigger — random small negotiation failure
@@ -347,7 +393,8 @@ def _assigned_active_ids(people) -> tuple[frozenset[int], dict[int, object]]:
     for inhabitant in people:
         inhabitant_id = getattr(inhabitant, 'inhabitant_id', None)
         if type(inhabitant_id) is not int or inhabitant_id < 0:
-            raise ValueError('enabled social economy requires assigned inhabitant IDs')
+            raise ValueError(
+                'enabled emergent-state economy requires assigned inhabitant IDs')
         if inhabitant_id in active_ids:
             raise ValueError(f'duplicate active inhabitant ID: {inhabitant_id}')
         active_ids.add(inhabitant_id)
@@ -362,6 +409,8 @@ def _commit_individual_transfer(
     *,
     t: int,
     social_config: SocialMemoryConfig,
+    language_config: LanguageEvolutionConfig = _DISABLED_LANGUAGE_CONFIG,
+    language_runtime: LanguageRuntimeState | None = None,
     active_ids: frozenset[int],
 ) -> None:
     """Commit one existing individual transfer, then record its social outcome."""
@@ -388,6 +437,23 @@ def _commit_individual_transfer(
             config=social_config,
         )
 
+    if language_config.language_evolution_enabled:
+        if language_runtime is None:
+            raise ValueError('enabled individual language transfer requires a runtime')
+        communicate(
+            giver,
+            recipient,
+            meaning_for_resource(res),
+            context=(
+                CommunicationContext.PAID_TRADE
+                if pay > 0 else CommunicationContext.AID_TRANSFER
+            ),
+            tick=t,
+            active_ids=active_ids,
+            config=language_config,
+            runtime=language_runtime,
+        )
+
 
 def _attempt_individual_transfer(
     giver,
@@ -395,6 +461,8 @@ def _attempt_individual_transfer(
     *,
     t: int,
     social_config: SocialMemoryConfig,
+    language_config: LanguageEvolutionConfig = _DISABLED_LANGUAGE_CONFIG,
+    language_runtime: LanguageRuntimeState | None = None,
     active_ids: frozenset[int],
 ) -> bool:
     for res in RES_TRADE:
@@ -405,6 +473,8 @@ def _attempt_individual_transfer(
                 res,
                 t=t,
                 social_config=social_config,
+                language_config=language_config,
+                language_runtime=language_runtime,
                 active_ids=active_ids,
             )
             return True
@@ -416,6 +486,8 @@ def _historical_barter(
     t,
     *,
     social_config: SocialMemoryConfig,
+    language_config: LanguageEvolutionConfig = _DISABLED_LANGUAGE_CONFIG,
+    language_runtime: LanguageRuntimeState | None = None,
     active_ids: frozenset[int],
     rng,
 ) -> None:
@@ -435,6 +507,8 @@ def _historical_barter(
                 b,
                 t=t,
                 social_config=social_config,
+                language_config=language_config,
+                language_runtime=language_runtime,
                 active_ids=active_ids,
             )
 
@@ -530,6 +604,8 @@ def _relationship_biased_barter(
     t,
     *,
     social_config: SocialMemoryConfig,
+    language_config: LanguageEvolutionConfig = _DISABLED_LANGUAGE_CONFIG,
+    language_runtime: LanguageRuntimeState | None = None,
     rng,
 ) -> frozenset[int]:
     frozen = _freeze_social_economy_inputs(people, rng)
@@ -570,6 +646,8 @@ def _relationship_biased_barter(
                     selected,
                     t=t,
                     social_config=social_config,
+                    language_config=language_config,
+                    language_runtime=language_runtime,
                     active_ids=frozen.active_ids,
                 )
                 if redirected:
@@ -583,6 +661,8 @@ def _relationship_biased_barter(
                 baseline_target,
                 t=t,
                 social_config=social_config,
+                language_config=language_config,
+                language_runtime=language_runtime,
                 active_ids=frozen.active_ids,
             )
             available_ids.discard(giver_id)
@@ -596,10 +676,15 @@ def _individual_barter(
     event_log,
     *,
     social_config=_DISABLED_SOCIAL_CONFIG,
+    language_config=_DISABLED_LANGUAGE_CONFIG,
+    language_runtime: LanguageRuntimeState | None = None,
     rng=random,
 ) -> frozenset[int]:
     del event_log  # Individual transfers intentionally remain internal state changes.
-    if not social_config.social_memory_enabled:
+    if (
+        not social_config.social_memory_enabled
+        and not language_config.language_evolution_enabled
+    ):
         _historical_barter(
             people,
             t,
@@ -609,12 +694,14 @@ def _individual_barter(
         )
         return frozenset()
 
+    active_ids, _inhabitant_by_id = _assigned_active_ids(people)
     if not social_config.social_partner_bias_enabled:
-        active_ids, _inhabitant_by_id = _assigned_active_ids(people)
         _historical_barter(
             people,
             t,
             social_config=social_config,
+            language_config=language_config,
+            language_runtime=language_runtime,
             active_ids=active_ids,
             rng=rng,
         )
@@ -624,6 +711,8 @@ def _individual_barter(
         people,
         t,
         social_config=social_config,
+        language_config=language_config,
+        language_runtime=language_runtime,
         rng=rng,
     )
 
@@ -694,6 +783,8 @@ def economy_tick(
     *,
     raids_enabled=True,
     social_config=_DISABLED_SOCIAL_CONFIG,
+    language_config=_DISABLED_LANGUAGE_CONFIG,
+    language_runtime: LanguageRuntimeState | None = None,
     rng=random,
 ):
     """Run one economy tick, optionally suppressing hostile faction raids."""
@@ -718,7 +809,11 @@ def economy_tick(
         _scarcity_shock(people, t, event_log)
 
     # 4. Individual barter
-    if not social_config.social_memory_enabled:
+    feature_context_enabled = (
+        social_config.social_memory_enabled
+        or language_config.language_evolution_enabled
+    )
+    if not feature_context_enabled:
         active_ids = _individual_barter(people, t, event_log)
     else:
         active_ids = _individual_barter(
@@ -726,12 +821,14 @@ def economy_tick(
             t,
             event_log,
             social_config=social_config,
+            language_config=language_config,
+            language_runtime=language_runtime,
             rng=rng,
         )
 
     # 5. Inter-faction trade (every 3 ticks to avoid log spam)
     if t % 3 == 0 and len(active) >= 2:
-        if not social_config.social_memory_enabled:
+        if not feature_context_enabled:
             _faction_trade(active, t, event_log)
         else:
             _faction_trade(
@@ -739,6 +836,8 @@ def economy_tick(
                 t,
                 event_log,
                 social_config=social_config,
+                language_config=language_config,
+                language_runtime=language_runtime,
                 active_ids=active_ids,
             )
 

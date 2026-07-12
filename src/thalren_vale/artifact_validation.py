@@ -52,11 +52,20 @@ from .config import (
     DEFAULT_COALITION_PERSISTENCE_TICKS,
     DEFAULT_COALITION_TRUST_THRESHOLD,
     DEFAULT_MAXIMUM_ACTIVE_COALITIONS,
+    DEFAULT_LANGUAGE_EVOLUTION_ENABLED,
+    DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
+    DEFAULT_LANGUAGE_INVENTION_ENABLED,
+    DEFAULT_LANGUAGE_LEARNING_RATE,
+    DEFAULT_LANGUAGE_REINFORCEMENT_RATE,
+    DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS,
+    DEFAULT_MAXIMUM_SIGNAL_LENGTH,
     DEFAULT_MAXIMUM_SOCIAL_TIES,
     DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
     VALID_COALITION_CONTROL_NOTICES,
     VALID_COALITION_CONTROL_STATUSES,
     VALID_DISABLE_LAYERS,
+    VALID_LANGUAGE_CONTROL_NOTICES,
+    VALID_LANGUAGE_CONTROL_STATUSES,
     VALID_LOG_MODES,
     VALID_SOCIAL_CONTROL_NOTICES,
     VALID_SOCIAL_CONTROL_STATUSES,
@@ -558,6 +567,107 @@ def _validate_social_configuration(
         _add(
             issues,
             "invalid_social_configuration",
+            message,
+            "manifest",
+        )
+
+
+def _validate_language_configuration(
+    config: dict,
+    issues: _IssueCollector,
+) -> None:
+    """Validate present language controls without requiring historical fields."""
+
+    def finite_positive_unit_float(value: object) -> bool:
+        return (
+            type(value) is float
+            and math.isfinite(value)
+            and 0.0 < value <= 1.0
+        )
+
+    validators = {
+        "language_evolution_enabled": _is_bool,
+        "maximum_language_associations": (
+            lambda value: _is_int(value) and 1 <= value <= 40
+        ),
+        "maximum_signal_length": (
+            lambda value: _is_int(value) and 2 <= value <= 4
+        ),
+        "language_learning_rate": finite_positive_unit_float,
+        "language_reinforcement_rate": finite_positive_unit_float,
+        "language_forgetting_interval": (
+            lambda value: _is_int(value) and value >= 1
+        ),
+        "language_invention_enabled": _is_bool,
+        "language_controls_status": (
+            lambda value: _is_str(value)
+            and value in VALID_LANGUAGE_CONTROL_STATUSES
+        ),
+        "language_control_notices": (
+            lambda value: _is_list(value)
+            and all(
+                _is_str(item) and item in VALID_LANGUAGE_CONTROL_NOTICES
+                for item in value
+            )
+            and len(value) == len(set(value))
+            and value == sorted(value)
+        ),
+    }
+    valid_present: set[str] = set()
+    for name, validator in validators.items():
+        if name not in config:
+            continue
+        if not validator(config[name]):
+            _add(
+                issues,
+                "invalid_language_configuration",
+                f"{name} is malformed",
+                "manifest",
+            )
+        else:
+            valid_present.add(name)
+
+    defaults = {
+        "language_evolution_enabled": DEFAULT_LANGUAGE_EVOLUTION_ENABLED,
+        "maximum_language_associations": (
+            DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS
+        ),
+        "maximum_signal_length": DEFAULT_MAXIMUM_SIGNAL_LENGTH,
+        "language_learning_rate": DEFAULT_LANGUAGE_LEARNING_RATE,
+        "language_reinforcement_rate": DEFAULT_LANGUAGE_REINFORCEMENT_RATE,
+        "language_forgetting_interval": DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
+        "language_invention_enabled": DEFAULT_LANGUAGE_INVENTION_ENABLED,
+    }
+    present_controls = set(defaults).intersection(valid_present)
+    any_nondefault = any(
+        not _exact_equal(config[name], defaults[name])
+        for name in present_controls
+    )
+    controls_complete = set(defaults) <= valid_present
+    status = (
+        config.get("language_controls_status")
+        if "language_controls_status" in valid_present else None
+    )
+    notices = (
+        config.get("language_control_notices")
+        if "language_control_notices" in valid_present else None
+    )
+    errors: list[str] = []
+
+    if notices:
+        errors.append("language v1 does not define normalization notices")
+    if status == "disabled" and (any_nondefault or bool(notices)):
+        errors.append("disabled language status conflicts with present controls")
+    if status == "engineering_only_uncontracted":
+        if controls_complete and not any_nondefault:
+            errors.append("engineering language status requires a nondefault control")
+        if notices:
+            errors.append("engineering language status conflicts with notices")
+
+    for message in dict.fromkeys(errors):
+        _add(
+            issues,
+            "invalid_language_configuration",
             message,
             "manifest",
         )
@@ -1723,6 +1833,27 @@ def _readiness_issues(
                 f"found {actual!r}",
                 "manifest",
             )
+    safe_language_controls = {
+        "language_evolution_enabled": False,
+        "maximum_language_associations": DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS,
+        "maximum_signal_length": DEFAULT_MAXIMUM_SIGNAL_LENGTH,
+        "language_learning_rate": DEFAULT_LANGUAGE_LEARNING_RATE,
+        "language_reinforcement_rate": DEFAULT_LANGUAGE_REINFORCEMENT_RATE,
+        "language_forgetting_interval": DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
+        "language_invention_enabled": DEFAULT_LANGUAGE_INVENTION_ENABLED,
+        "language_controls_status": "disabled",
+        "language_control_notices": [],
+    }
+    for name, expected in safe_language_controls.items():
+        actual = config.get(name)
+        if not _exact_equal(actual, expected):
+            _add(
+                issues,
+                "language_controls_not_v2_ready",
+                f"configuration.{name}: expected {expected!r}, "
+                f"found {actual!r}",
+                "manifest",
+            )
     safe_coalition_controls = {
         "coalition_emergence_enabled": False,
         "coalition_minimum_size": DEFAULT_COALITION_MINIMUM_SIZE,
@@ -1915,6 +2046,7 @@ def _validate_strict(
         ):
             _add(issues, "invalid_configuration", "raid policy conflicts with disabled layers", "manifest")
         _validate_social_configuration(config, issues)
+        _validate_language_configuration(config, issues)
         _validate_coalition_configuration(config, issues)
     execution_mode = manifest.get("execution_mode")
     if not _is_str(execution_mode) or execution_mode not in {"serial", "threaded"}:

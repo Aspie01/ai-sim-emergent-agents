@@ -61,8 +61,27 @@ from . import dashboard_bridge
 from . import religion
 from .social import maintain_relationships
 from .coalitions import transition_informal_coalitions
+from .language import (
+    AgentLanguageState,
+    LanguageInvariantError,
+    MAX_LANGUAGE_ASSOCIATIONS,
+    MAX_SIGNAL_LENGTH,
+    initialize_language_runtime,
+    maintain_language_state,
+    validate_agent_language_state,
+)
 
 TICKS = config.TICKS
+
+_RESET_LANGUAGE_VALIDATION_CONFIG = config.LanguageEvolutionConfig(
+    language_evolution_enabled=False,
+    maximum_language_associations=MAX_LANGUAGE_ASSOCIATIONS,
+    maximum_signal_length=MAX_SIGNAL_LENGTH,
+    language_learning_rate=config.DEFAULT_LANGUAGE_LEARNING_RATE,
+    language_reinforcement_rate=config.DEFAULT_LANGUAGE_REINFORCEMENT_RATE,
+    language_forgetting_interval=config.DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
+    language_invention_enabled=config.DEFAULT_LANGUAGE_INVENTION_ENABLED,
+)
 
 # ── Shared simulation state ────────────────────────────────────────────────
 state = SimulationState(
@@ -111,19 +130,49 @@ _trade_lock  = threading.Lock()
 _admission_lock = threading.Lock()
 
 
+def _validated_reset_language_owners() -> list[tuple[object, AgentLanguageState]]:
+    """Validate every unique authoritative language owner before reset mutates."""
+    validated: list[tuple[object, AgentLanguageState]] = []
+    seen_inhabitant_identities: set[int] = set()
+    for cohort, inhabitants in (("living", people), ("dead", all_dead)):
+        for index, inhabitant in enumerate(inhabitants):
+            inhabitant_identity = id(inhabitant)
+            if inhabitant_identity in seen_inhabitant_identities:
+                continue
+            seen_inhabitant_identities.add(inhabitant_identity)
+            try:
+                language_state = inhabitant.language
+            except AttributeError as exc:
+                raise LanguageInvariantError(
+                    "missing_reset_agent_language_state",
+                    f"{cohort}[{index}] lacks AgentLanguageState",
+                ) from exc
+            validated_state = validate_agent_language_state(
+                language_state,
+                config=_RESET_LANGUAGE_VALIDATION_CONFIG,
+            )
+            validated.append((inhabitant, validated_state))
+    return validated
+
+
 def reset_runtime_state() -> None:
     """Reset all mutable stores that can leak across in-process runs."""
     global _last_dynamic_t
+
+    language_owners = _validated_reset_language_owners()
 
     for plugin in _loaded_plugins:
         try:
             plugin.on_unload()
         except Exception:
             pass
-    for inhabitant in (*people, *all_dead):
+    for inhabitant, language_state in language_owners:
         relationships = getattr(inhabitant, 'relationships', None)
         if isinstance(relationships, dict):
             relationships.clear()
+        language_state.production.clear()
+        language_state.comprehension.clear()
+        language_state.next_invention_index = 0
     state.reset()
     _last_dynamic_t = 0
 
@@ -473,6 +522,7 @@ def factions_layer(t: int, dead_names: set) -> None:
 def economy_layer(
     t: int,
     social_config: config.SocialMemoryConfig | None = None,
+    language_config: config.LanguageEvolutionConfig | None = None,
 ) -> None:
     """Layer 4: currency, pricing, trade, raids, scarcity, wealth."""
     if social_config is None:
@@ -484,7 +534,28 @@ def economy_layer(
                 config.DEFAULT_RELATIONSHIP_DECAY_INTERVAL
             ),
         )
-    if not social_config.social_memory_enabled:
+    if language_config is None:
+        language_config = config.LanguageEvolutionConfig(
+            language_evolution_enabled=False,
+            maximum_language_associations=(
+                config.DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS
+            ),
+            maximum_signal_length=config.DEFAULT_MAXIMUM_SIGNAL_LENGTH,
+            language_learning_rate=config.DEFAULT_LANGUAGE_LEARNING_RATE,
+            language_reinforcement_rate=(
+                config.DEFAULT_LANGUAGE_REINFORCEMENT_RATE
+            ),
+            language_forgetting_interval=(
+                config.DEFAULT_LANGUAGE_FORGETTING_INTERVAL
+            ),
+            language_invention_enabled=(
+                config.DEFAULT_LANGUAGE_INVENTION_ENABLED
+            ),
+        )
+    if (
+        not social_config.social_memory_enabled
+        and not language_config.language_evolution_enabled
+    ):
         economy.economy_tick(
             people,
             factions,
@@ -500,7 +571,39 @@ def economy_layer(
             event_log,
             raids_enabled='raids' not in _disabled_layers,
             social_config=social_config,
+            language_config=language_config,
+            language_runtime=state.language,
             rng=random,
+        )
+
+
+def maintain_emergent_state(
+    t: int,
+    newly_dead: list,
+    run_config: config.SimulationConfig,
+) -> None:
+    """Maintain social, coalition, then language state in authoritative order."""
+    if run_config.social_memory_enabled:
+        maintain_relationships(
+            people,
+            newly_dead,
+            tick=t,
+            config=run_config.social_memory_config,
+        )
+        if run_config.coalition_emergence_enabled:
+            state.coalitions = transition_informal_coalitions(
+                people,
+                state.coalitions,
+                tick=t,
+                config=run_config.coalition_config,
+            )
+    if run_config.language_evolution_enabled:
+        maintain_language_state(
+            people,
+            newly_dead,
+            tick=t,
+            config=run_config.language_evolution_config,
+            runtime=state.language,
         )
 
 
@@ -1742,6 +1845,35 @@ def run() -> None:
     _parser.add_argument(
         '--relationship-decay-interval', type=int, default=None,
         help='Ticks between deterministic relationship decay passes')
+    _language_evolution = _parser.add_mutually_exclusive_group()
+    _language_evolution.add_argument(
+        '--enable-language-evolution', action='store_true',
+        help='Enable engineering-only observational protolanguage evolution')
+    _language_evolution.add_argument(
+        '--disable-language-evolution', action='store_true',
+        help='Explicitly retain the no-language historical baseline')
+    _parser.add_argument(
+        '--maximum-language-associations', type=int, default=None,
+        help='Maximum production plus comprehension associations per inhabitant')
+    _parser.add_argument(
+        '--maximum-signal-length', type=int, default=None,
+        help='Maximum abstract signal length from 2 to 4')
+    _parser.add_argument(
+        '--language-learning-rate', type=float, default=None,
+        help='Initial and corrective observational language-learning delta')
+    _parser.add_argument(
+        '--language-reinforcement-rate', type=float, default=None,
+        help='Successful-use language reinforcement delta')
+    _parser.add_argument(
+        '--language-forgetting-interval', type=int, default=None,
+        help='Ticks between deterministic language forgetting passes')
+    _language_invention = _parser.add_mutually_exclusive_group()
+    _language_invention.add_argument(
+        '--enable-language-invention', action='store_true',
+        help='Allow counter-based invention when no production signal is usable')
+    _language_invention.add_argument(
+        '--disable-language-invention', action='store_true',
+        help='Disable new signal invention while retaining learned vocabulary')
     _coalition_emergence = _parser.add_mutually_exclusive_group()
     _coalition_emergence.add_argument(
         '--enable-coalition-emergence', action='store_true',
@@ -1805,6 +1937,8 @@ def run() -> None:
     _run_seed = _seed_value
     _run_condition = _args.condition
     random.seed(_seed_value)
+    if _run_config.language_evolution_enabled:
+        initialize_language_runtime(state.language, _seed_value)
     # Serial mode: guarantees reproducibility by eliminating thread PRNG interleaving
     _serial_mode = (_args.seed is not None)
     _repro_config = _run_config.manifest_dict()
@@ -1922,7 +2056,11 @@ def run() -> None:
             # ── Layer 4: Economy ────────────────────────────────────────────
             _t_eco_start = time.perf_counter()
             if 'economy' not in _disabled_layers:
-                economy_layer(t, _run_config.social_memory_config)
+                economy_layer(
+                    t,
+                    _run_config.social_memory_config,
+                    _run_config.language_evolution_config,
+                )
             _t_eco = (time.perf_counter() - _t_eco_start) * 1000
 
             # ── Layer 5: Combat ─────────────────────────────────────────────
@@ -2168,24 +2306,19 @@ def run() -> None:
                     _peace_applied  = set()
             _t_antistag = (time.perf_counter() - _t_antistag_start) * 1000
 
-            # ── Bounded social-memory maintenance ──────────────────────────
-            # Skip the subsystem entirely for the historical baseline.
+            # ── Bounded emergent-state maintenance ─────────────────────────
+            # Authoritative order is social, coalition, then language.
             _t_social = 0.0
-            if _run_config.social_memory_enabled:
+            if (
+                _run_config.social_memory_enabled
+                or _run_config.language_evolution_enabled
+            ):
                 _t_social_start = time.perf_counter()
-                maintain_relationships(
-                    people,
+                maintain_emergent_state(
+                    t,
                     all_dead[_dead_count_at_tick_start:],
-                    tick=t,
-                    config=_run_config.social_memory_config,
+                    _run_config,
                 )
-                if _run_config.coalition_emergence_enabled:
-                    state.coalitions = transition_informal_coalitions(
-                        people,
-                        state.coalitions,
-                        tick=t,
-                        config=_run_config.coalition_config,
-                    )
                 _t_social = (
                     time.perf_counter() - _t_social_start
                 ) * 1000
@@ -2236,8 +2369,11 @@ def run() -> None:
                 _real.write(f"  Era:           {_t_era:>8.1f}\n")
                 _real.write(f"  Housekeeping:  {_t_house:>8.1f}\n")
                 _real.write(f"  AntiStag:      {_t_antistag:>8.1f}\n")
-                if _run_config.social_memory_enabled:
-                    _real.write(f"  SocialMemory:  {_t_social:>8.1f}\n")
+                if (
+                    _run_config.social_memory_enabled
+                    or _run_config.language_evolution_enabled
+                ):
+                    _real.write(f"  EmergentState: {_t_social:>8.1f}\n")
                 _real.write(f"  ────────────────────────\n")
                 _real.write(f"  SUM (layers):  {_t_total:>8.1f}\n")
                 _real.flush()

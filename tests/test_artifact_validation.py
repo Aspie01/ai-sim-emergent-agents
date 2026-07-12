@@ -249,6 +249,15 @@ def make_artifacts(
         "relationship_decay_interval": 25,
         "social_controls_status": "disabled",
         "social_control_notices": [],
+        "language_evolution_enabled": False,
+        "maximum_language_associations": 32,
+        "maximum_signal_length": 3,
+        "language_learning_rate": 0.20,
+        "language_reinforcement_rate": 0.10,
+        "language_forgetting_interval": 25,
+        "language_invention_enabled": True,
+        "language_controls_status": "disabled",
+        "language_control_notices": [],
         "coalition_emergence_enabled": False,
         "coalition_minimum_size": 3,
         "coalition_trust_threshold": 0.24,
@@ -759,6 +768,125 @@ def test_normalized_unsupported_social_request_is_preserved_and_blocks_ready(
     assert report.manifest["configuration"]["social_control_notices"] == [
         SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY
     ]
+
+
+LANGUAGE_CONFIGURATION_FIELDS = {
+    "language_evolution_enabled",
+    "maximum_language_associations",
+    "maximum_signal_length",
+    "language_learning_rate",
+    "language_reinforcement_rate",
+    "language_forgetting_interval",
+    "language_invention_enabled",
+    "language_controls_status",
+    "language_control_notices",
+}
+
+
+def inspect_language_configuration(tmp_path, updates, *, replace_fields=False):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    if replace_fields:
+        for field in LANGUAGE_CONFIGURATION_FIELDS:
+            manifest["configuration"].pop(field, None)
+    manifest["configuration"].update(updates)
+    write_manifest(manifest_path, manifest)
+    return inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "language_evolution_enabled": True,
+            "language_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "maximum_language_associations": 16,
+            "language_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "maximum_signal_length": 4,
+            "language_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "language_learning_rate": 0.30,
+            "language_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "language_reinforcement_rate": 0.20,
+            "language_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "language_forgetting_interval": 10,
+            "language_controls_status": "engineering_only_uncontracted",
+        },
+        {
+            "language_invention_enabled": False,
+            "language_controls_status": "engineering_only_uncontracted",
+        },
+    ],
+)
+def test_uncontracted_language_controls_block_v2_readiness(tmp_path, updates):
+    report = inspect_language_configuration(tmp_path, updates)
+
+    assert report.valid and not report.v2_ready
+    assert "language_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize("missing", sorted(LANGUAGE_CONFIGURATION_FIELDS))
+def test_missing_language_control_is_valid_but_not_v2_ready(tmp_path, missing):
+    run_dir, manifest_path = make_artifacts(tmp_path / "missing", event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    del manifest["configuration"][missing]
+    write_manifest(manifest_path, manifest)
+
+    report = inspect_run_outputs(
+        run_dir, CONDITION, SEED, expected_ticks=3, mode="strict",
+        expected_contract=contract)
+
+    assert report.valid and not report.v2_ready
+    assert "language_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("language_evolution_enabled", 0),
+        ("maximum_language_associations", 0),
+        ("maximum_signal_length", 5),
+        ("language_learning_rate", 0.0),
+        ("language_reinforcement_rate", float("nan")),
+        ("language_forgetting_interval", 0),
+        ("language_invention_enabled", 1),
+        ("language_controls_status", "normalized_uncontracted"),
+        ("language_control_notices", ["invented_notice"]),
+    ],
+)
+def test_malformed_language_control_invalidates_artifact(tmp_path, field, value):
+    report = inspect_language_configuration(tmp_path, {field: value})
+
+    assert not report.valid and not report.v2_ready
+    assert "invalid_language_configuration" in issue_codes(report)
+
+
+def test_inconsistent_disabled_language_status_invalidates_artifact(tmp_path):
+    report = inspect_language_configuration(tmp_path, {
+        "language_evolution_enabled": True,
+        "language_controls_status": "disabled",
+    })
+
+    assert not report.valid
+    assert "invalid_language_configuration" in issue_codes(report)
 
 
 COALITION_CONFIGURATION_FIELDS = {

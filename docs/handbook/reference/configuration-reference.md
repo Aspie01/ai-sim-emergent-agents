@@ -1,6 +1,6 @@
 # Configuration reference
 
-`SimulationConfig` is a frozen effective configuration. The simulator parses with `allow_abbrev=False`, normalizes feature dependencies, validates values, updates a small set of compatibility globals, and passes explicit frozen subconfigurations to the newer social, coalition, language, and dialect systems.
+`SimulationConfig` is a frozen effective configuration. The simulator parses with `allow_abbrev=False`, normalizes feature dependencies, validates values, updates a small set of compatibility globals, and passes explicit frozen subconfigurations to the newer social, coalition, language, dialect, and contact systems.
 
 ## Core fields
 
@@ -87,6 +87,27 @@ Missing dependencies normalize influence off and record the sorted applicable no
 - `dialect_influence_requested_without_language`
 - `dialect_influence_requested_without_coalitions`
 
+## Language-contact controls
+
+| Field | Default | Valid range / dependency |
+| --- | ---: | --- |
+| `language_contact_enabled` | false | Requires effective language and coalitions; independent of dialect influence |
+| `cross_group_learning_multiplier` | exact float 1.50 | Inclusive 1..2 |
+| `borrowing_exposure_threshold` | 3 | Integer 2..32 |
+| `borrowing_confidence_threshold` | exact float 0.50 | Inclusive 0.10..1.0 |
+
+CLI forms are `--enable-language-contact`, `--disable-language-contact`,
+`--cross-group-learning-multiplier`, `--borrowing-exposure-threshold`, and
+`--borrowing-confidence-threshold`. Missing effective dependencies normalize
+contact off and record the sorted applicable notices:
+
+- `language_contact_requested_without_language`
+- `language_contact_requested_without_coalitions`
+
+Only authentic `DIFFERENT_ACTIVE_COALITIONS` communication uses these controls.
+Assigned/unassigned and both-unassigned communication stays at base Language v1
+rates.
+
 ## Provenance status
 
 Each newer feature family records one of:
@@ -95,7 +116,7 @@ Each newer feature family records one of:
 - `normalized_uncontracted`: an invalid dependency request was normalized off and notices record why;
 - `engineering_only_uncontracted`: a feature is enabled or any control is nondefault, without normalization notices.
 
-These are provenance classifications, not alternate runtime switches. The generic experiment runner rejects all social, coalition, language, and dialect option families before root creation or child launch.
+These are provenance classifications, not alternate runtime switches. The generic experiment runner rejects all social, coalition, language, dialect, and contact option families before root creation or child launch.
 
 ## Seed and entry-point caveats
 
@@ -110,6 +131,8 @@ example from the repository directory.
 ## Implementation evidence
 
 - Source: `src/thalren_vale/config.py`, `src/thalren_vale/sim.py::run`, `src/thalren_vale/__main__.py`.
-- Tests: `tests/test_config.py`, `tests/test_reproducibility.py`, `tests/test_artifact_validation.py`, `tests/test_experiment_runner.py`.
+- Tests: `tests/test_config.py`, `tests/test_language_contact.py`,
+  `tests/test_language_reproducibility.py`, `tests/test_reproducibility.py`,
+  `tests/test_artifact_validation.py`, `tests/test_experiment_runner.py`.
 - Verified help: `python -m thalren_vale --help`.
 - Current status: Stable and verified configuration machinery; newer emergence controls remain Engineering-only.

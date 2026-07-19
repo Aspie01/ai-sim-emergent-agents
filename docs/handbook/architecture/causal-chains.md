@@ -64,7 +64,28 @@ last fully committed coalition observation
 -> member-owned vocabulary update
 ```
 
-This is a one-way causal extension. All non-same-coalition contexts use base Language-v1 rates; there is no out-group penalty. Language never changes coalition topology or lifecycle.
+This is a one-way causal extension. The dialect feature applies no out-group
+penalty. Non-same-coalition contexts use base Language v1 rates unless the
+independent Language Contact v1 gate qualifies a different-active-coalitions
+event. Language never changes coalition topology or lifecycle.
+
+## Language contact
+
+```text
+authentic different-coalition communication
+-> stronger receiver-side acquisition
+-> bounded cross-boundary exposure evidence
+-> contact-qualified borrowing promotion
+-> mixed individual vocabularies
+-> measurable contact-driven convergence or continued divergence
+```
+
+Only `DIFFERENT_ACTIVE_COALITIONS` follows this extension. Assigned/unassigned
+and both-unassigned communication remain base-rate language behavior. Contact
+changes only inhabitant-owned language state; coalitions do not own languages,
+and language cannot change transfers, relationships, partner choice, coalition
+lifecycle, factions, combat, survival, or population state. See
+[Language contact](../systems/language-contact.md).
 
 ## Formal civilization chain
 
@@ -105,6 +126,7 @@ The generic runner currently records only part of the complete provenance shown.
 | Relationships -> informal coalitions | Causal |
 | Transfer -> language opportunity | Observational with language-only mutation |
 | Coalition membership -> same-group language rates | Causal one-way |
+| Different active coalitions -> positive contact acquisition/borrowing | Causal one-way within language |
 | Language -> economy/coalitions/survival | Intentionally isolated |
 | State -> metrics/events/dashboard | Diagnostic/observational |
 | Plan -> child process/artifacts | Operational causal chain |
@@ -113,4 +135,4 @@ The generic runner currently records only part of the complete provenance shown.
 ## Implementation evidence
 
 - Sources: `inhabitants.py`, `economy.py`, `social.py`, `coalitions.py`, `language.py`, `sim.py`, `run_experiments.py`.
-- Tests: social, coalition, language, dialect, termination, and artifact suites listed in [test reference](../reference/test-reference.md).
+- Tests: social, coalition, language, dialect, contact, termination, and artifact suites listed in [test reference](../reference/test-reference.md).

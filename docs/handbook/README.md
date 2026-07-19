@@ -2,10 +2,16 @@
 
 This is the authoritative technical handbook for the current Thalren Vale repository revision:
 
-- Branch: `docs/technical-handbook-v0.1`
-- Commit: `23ef5dad78a86cbcf699dc0192373a3416eafc06`
-- Source feature head: the same commit as `feature/coalition-dialects-v1`
-- Generated: 2026-07-12
+- Branch: `feature/language-contact-v1`
+- Base `HEAD` commit: `83df90247b1226f0535df1a5c71a4ddb60b3bc45`
+- Documented implementation state: the approved, uncommitted Language Contact
+  v1 working tree on that branch
+- Updated: 2026-07-18
+
+The commit identifies the base revision; it does not by itself contain the
+Language Contact v1 implementation. The implementation and these handbook
+updates remain uncommitted branch work until the owner creates the final feature
+commit.
 
 It is written for the project owner, new developers, future Codex sessions, researchers inspecting results, and reviewers auditing causal isolation, determinism, or evidence integrity. It explains executable behavior; it does not promote engineering tests or historical pilot outputs into research conclusions.
 
@@ -41,6 +47,7 @@ The compact visual overview is the [full system map](diagrams/full-system-map.md
 - [Informal coalitions](systems/informal-coalitions.md)
 - [Endogenous language](systems/endogenous-language.md)
 - [Coalition dialects](systems/coalition-dialects.md)
+- [Language contact](systems/language-contact.md)
 - [Combat, technology, diplomacy, and religion](systems/conflict-technology-diplomacy-religion.md)
 - [Events, observers, and plugins](systems/events-observers-and-plugins.md)
 
@@ -88,10 +95,10 @@ authoritative alone.
 | Informal Coalition Emergence v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/endogenous-language-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/coalition-dialects-v1` | Implemented but experimental; Disabled by default; Engineering-only |
+| `feature/language-contact-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | Generic experiment runner | Implemented fresh-root engineering runner; not research-ready |
 | Core Replication V1 | Historical pilot material |
 | Core Replication V2 evidence | Planned, not implemented |
-| `feature/language-contact-v1` | Planned, not implemented |
 | `feature/intergenerational-language-v1` | Planned, not implemented |
 | `feature/lexical-evolution-v1` | Planned, not implemented |
 | `feature/compositional-protolanguage-v1` | Planned, not implemented |
@@ -119,7 +126,9 @@ The handbook preserves a visible distinction between source-verified behavior an
 - A fixed-seed hash match is not a checkpoint or full replay proof.
 - Passing tests do not establish scientific conclusions.
 - Formal factions and informal coalitions are different systems.
-- Coalition membership can influence language learning only through the enabled dialect extension; language cannot influence coalition lifecycle or any economic/biological outcome.
+- Coalition membership can influence language only through the enabled dialect
+  and contact extensions; language cannot influence coalition lifecycle or any
+  economic, social, or biological outcome.
 - Plugins are causal Python extensions, not sandboxed observers.
 - The beliefs CSV’s `inhabitant_id` column contains display names in this schema revision.
 - Known obsolete equilibrium JSON files must not be used as current evidence.

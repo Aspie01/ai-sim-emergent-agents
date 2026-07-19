@@ -26,7 +26,11 @@ from .artifact_contract import (
     require_safe_manifest_target,
 )
 from .events import EVENT_SCHEMA_VERSION
-from .config import CoalitionDialectConfig, LanguageEvolutionConfig
+from .config import (
+    CoalitionDialectConfig,
+    LanguageContactConfig,
+    LanguageEvolutionConfig,
+)
 from .social import relationship_records
 from .coalitions import (
     CoalitionRuntimeState,
@@ -36,14 +40,19 @@ from .coalitions import (
 from .language import (
     AgentLanguageState,
     CoalitionDialectRuntimeState,
+    LanguageContactRuntimeState,
     LanguageInvariantError,
     LanguageRuntimeState,
     agent_language_record,
     coalition_dialect_runtime_record,
+    contact_runtime_is_pristine,
     dialect_runtime_is_pristine,
+    language_contact_runtime_record,
     language_runtime_is_pristine,
     language_runtime_record,
     validate_coalition_dialect_config,
+    validate_language_contact_config,
+    validate_language_contact_runtime,
     validate_language_config,
 )
 
@@ -53,7 +62,9 @@ def _person_record(
     *,
     include_social: bool = False,
     include_language: bool = False,
+    include_contact: bool = False,
     language_config=None,
+    contact_config=None,
 ) -> dict:
     religion = getattr(person, "religion", None)
     record = {
@@ -81,7 +92,12 @@ def _person_record(
     if include_language:
         if language_config is None:
             raise ValueError("enabled language hashing requires effective controls")
-        language = agent_language_record(person, config=language_config)
+        language = agent_language_record(
+            person,
+            config=language_config,
+            include_contact=include_contact,
+            contact_config=contact_config,
+        )
         record["language"] = {
             key: value
             for key, value in language.items()
@@ -276,6 +292,52 @@ def _require_pristine_disabled_dialect_state(state) -> None:
         )
 
 
+def _require_pristine_disabled_contact_state(state) -> None:
+    """Reject contact state omitted from the contact-disabled payload."""
+    for cohort, inhabitants in (
+        ("living", state.people),
+        ("dead", state.all_dead),
+    ):
+        for index, inhabitant in enumerate(inhabitants):
+            language = getattr(inhabitant, "language", None)
+            if type(language) is not AgentLanguageState:
+                raise LanguageInvariantError(
+                    "missing_disabled_agent_language_state",
+                    "disabled contact requires explicit agent language state: "
+                    f"{cohort}[{index}] is missing AgentLanguageState",
+                )
+            hidden = [
+                (store_name, association)
+                for store_name, store in (
+                    ("production", language.production),
+                    ("comprehension", language.comprehension),
+                )
+                for association in store.values()
+                if (
+                    getattr(association, "contact_exposure", None) is not None
+                    or getattr(association, "borrowing_provenance", None) is not None
+                )
+            ]
+            if hidden:
+                inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+                raise LanguageInvariantError(
+                    "nonpristine_disabled_contact_metadata",
+                    "disabled language contact cannot conceal association metadata: "
+                    f"{cohort}[{index}] inhabitant_id={inhabitant_id!r}",
+                )
+    runtime = getattr(state, "language_contact", None)
+    if type(runtime) is not LanguageContactRuntimeState:
+        raise LanguageInvariantError(
+            "missing_disabled_contact_runtime",
+            "disabled language contact requires an explicit runtime",
+        )
+    if not contact_runtime_is_pristine(runtime):
+        raise LanguageInvariantError(
+            "nonpristine_disabled_contact_runtime",
+            "disabled language contact requires pristine runtime state",
+        )
+
+
 def _coalition_state_record(runtime: CoalitionRuntimeState) -> dict:
     """Return the complete coalition runtime in canonical JSON-safe form."""
     return {
@@ -382,6 +444,53 @@ def _dialect_hash_config(configuration: dict) -> CoalitionDialectConfig:
     return result
 
 
+def _contact_hash_config(configuration: dict) -> LanguageContactConfig:
+    """Build exact enabled contact controls for behavioral hashing."""
+    required = (
+        "language_contact_enabled",
+        "cross_group_learning_multiplier",
+        "borrowing_exposure_threshold",
+        "borrowing_confidence_threshold",
+        "language_contact_controls_status",
+        "language_contact_control_notices",
+    )
+    missing = [name for name in required if name not in configuration]
+    if missing:
+        raise ValueError(
+            "enabled language contact hashing lacks controls: "
+            + ", ".join(missing)
+        )
+    if configuration["language_contact_controls_status"] != (
+        "engineering_only_uncontracted"
+    ):
+        raise ValueError(
+            "enabled language contact hashing requires engineering-only status"
+        )
+    if (
+        type(configuration["language_contact_control_notices"]) is not list
+        or configuration["language_contact_control_notices"]
+    ):
+        raise ValueError(
+            "enabled language contact hashing requires exact empty notices"
+        )
+    result = LanguageContactConfig(
+        language_contact_enabled=configuration["language_contact_enabled"],
+        cross_group_learning_multiplier=configuration[
+            "cross_group_learning_multiplier"
+        ],
+        borrowing_exposure_threshold=configuration[
+            "borrowing_exposure_threshold"
+        ],
+        borrowing_confidence_threshold=configuration[
+            "borrowing_confidence_threshold"
+        ],
+    )
+    validate_language_contact_config(result)
+    if not result.language_contact_enabled:
+        raise ValueError("enabled contact hashing requires effective contact")
+    return result
+
+
 def canonical_state_hash(state, world: list, configuration: dict) -> str:
     """Return a SHA-256 fingerprint of behaviorally relevant final state."""
     social_memory_enabled = configuration.get("social_memory_enabled") is True
@@ -402,6 +511,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         raise ValueError("coalition dialect influence must be boolean")
     dialect_influence_enabled = configuration.get(
         "coalition_dialect_influence_enabled", False)
+    if (
+        "language_contact_enabled" in configuration
+        and type(configuration["language_contact_enabled"]) is not bool
+    ):
+        raise ValueError("language contact setting must be boolean")
+    language_contact_enabled = configuration.get(
+        "language_contact_enabled", False)
     non_behavioral_keys = {
         "condition",
         "log_mode",
@@ -451,12 +567,26 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         "dialect_controls_status",
         "dialect_control_notices",
     }
+    contact_configuration_keys = {
+        "language_contact_enabled",
+        "cross_group_learning_multiplier",
+        "borrowing_exposure_threshold",
+        "borrowing_confidence_threshold",
+        "language_contact_controls_status",
+        "language_contact_control_notices",
+    }
     if not dialect_influence_enabled:
         _require_pristine_disabled_dialect_state(state)
         non_behavioral_keys.update(dialect_configuration_keys)
     elif not language_evolution_enabled or not coalition_emergence_enabled:
         raise ValueError(
             "enabled coalition dialect influence requires language and coalitions")
+    if not language_contact_enabled:
+        _require_pristine_disabled_contact_state(state)
+        non_behavioral_keys.update(contact_configuration_keys)
+    elif not language_evolution_enabled or not coalition_emergence_enabled:
+        raise ValueError(
+            "enabled language contact requires language and coalitions")
     if not coalition_emergence_enabled:
         _require_empty_disabled_coalition_state(state)
         non_behavioral_keys.update(coalition_configuration_keys)
@@ -473,12 +603,18 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
     )
     if dialect_influence_enabled:
         _dialect_hash_config(configuration)
+    contact_hash_config = (
+        _contact_hash_config(configuration)
+        if language_contact_enabled else None
+    )
     people_records = [
         _person_record(
             person,
             include_social=social_memory_enabled,
             include_language=language_evolution_enabled,
+            include_contact=language_contact_enabled,
             language_config=language_hash_config,
+            contact_config=contact_hash_config,
         )
         for person in state.people
     ]
@@ -487,7 +623,9 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             person,
             include_social=social_memory_enabled,
             include_language=language_evolution_enabled,
+            include_contact=language_contact_enabled,
             language_config=language_hash_config,
+            contact_config=contact_hash_config,
         )
         for person in state.all_dead
     ]
@@ -554,6 +692,11 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
                 "dialect_runtime_gate_mismatch",
                 "language runtime dialect gate disagrees with effective controls",
             )
+        if runtime.language_contact_enabled is not language_contact_enabled:
+            raise LanguageInvariantError(
+                "contact_runtime_gate_mismatch",
+                "language runtime contact gate disagrees with effective controls",
+            )
         payload["language_state"] = language_runtime_record(runtime)
     if coalition_emergence_enabled:
         runtime = getattr(state, "coalitions", None)
@@ -567,6 +710,21 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         payload["coalition_dialect_state"] = coalition_dialect_runtime_record(
             dialect_runtime,
             language_runtime=state.language,
+        )
+    if language_contact_enabled:
+        contact_runtime = getattr(state, "language_contact", None)
+        if type(contact_runtime) is not LanguageContactRuntimeState:
+            raise ValueError("enabled contact state requires a valid runtime")
+        validate_language_contact_runtime(
+            contact_runtime,
+            config=contact_hash_config,
+            language_runtime=state.language,
+            dialect_runtime=(state.dialect if dialect_influence_enabled else None),
+        )
+        payload["language_contact_state"] = language_contact_runtime_record(
+            contact_runtime,
+            language_runtime=state.language,
+            dialect_runtime=(state.dialect if dialect_influence_enabled else None),
         )
     encoded = json.dumps(
         _json_safe(payload),

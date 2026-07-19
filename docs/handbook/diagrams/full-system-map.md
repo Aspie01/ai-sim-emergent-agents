@@ -13,6 +13,7 @@ flowchart TB
     COAL[Informal coalitions]
     LANG[Endogenous language]
     DIALECT[Coalition dialect context]
+    CONTACT[Language contact context]
     COMBAT[Formal combat]
     TECH[Technology]
     DIPLO[Diplomacy]
@@ -41,6 +42,9 @@ flowchart TB
     ECON -->|communication opportunity| LANG
     COAL -->|frozen membership| DIALECT
     DIALECT -->|rate adjustment only| LANG
+    ECON -->|authentic communicator pair| CONTACT
+    COAL -->|frozen different membership| CONTACT
+    CONTACT -->|positive acquisition and provenance| LANG
     FACTION --> COMBAT
     ECON --> COMBAT
     COMBAT --> TECH
@@ -84,7 +88,8 @@ flowchart TB
 - Dotted edges show observation without intended feedback.
 - The selected-state hash is computed directly from authoritative state and
   hashed controls; required CSV contents do not produce it.
-- The `COAL -> DIALECT -> LANG` path is one-way; no language-to-coalition edge exists.
+- The `COAL -> DIALECT -> LANG` and `COAL/ECON -> CONTACT -> LANG` paths are
+  one-way; no language-to-coalition, social, or material edge exists.
 - Plugins are causal even though their advertised bridge snapshots are immutable.
 
 See [architecture overview](../architecture/architecture-overview.md) and [system dependency map](../architecture/system-dependency-map.md).

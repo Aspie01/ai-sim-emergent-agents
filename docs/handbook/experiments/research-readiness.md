@@ -2,7 +2,7 @@
 
 ## Current conclusion
 
-The repository contains strong engineering validation for deterministic seeded execution, termination-aware structured artifacts, deep validation, social memory, informal coalitions, endogenous language, and coalition dialects. It does not contain executed Core Replication V2 evidence or a complete V2 orchestration/provenance workflow.
+The repository contains strong engineering validation for deterministic seeded execution, termination-aware structured artifacts, deep validation, social memory, informal coalitions, endogenous language, coalition dialects, and Language Contact v1. It does not contain executed Core Replication V2 evidence or a complete V2 orchestration/provenance workflow.
 
 Valid engineering evidence and research-ready evidence are different states:
 
@@ -44,12 +44,12 @@ Completed engineering implementations at the documented revision:
 
 - `feature/endogenous-language-v1`: Implemented but experimental; Disabled by default; Engineering-only.
 - `feature/coalition-dialects-v1`: Implemented but experimental; Disabled by default; Engineering-only.
+- `feature/language-contact-v1`: Implemented but experimental; Disabled by default; Engineering-only.
 
 Future milestones:
 
 | Milestone | Status |
 | --- | --- |
-| `feature/language-contact-v1` | Planned, not implemented |
 | `feature/intergenerational-language-v1` | Planned, not implemented |
 | `feature/lexical-evolution-v1` | Planned, not implemented |
 | `feature/compositional-protolanguage-v1` | Planned, not implemented |
@@ -57,7 +57,13 @@ Future milestones:
 | `feature/language-coevolution-v1` | Planned, not implemented |
 | `feature/language-research-readiness-v1` | Planned, not implemented |
 
-No current source implements contact-specific borrowing, inherited vocabulary, signal mutation/lineage, compositional signals, grammar/syntax, language-to-coalition/social feedback, or a finalized language research contract. This handbook does not invent hypotheses, endpoints, metrics, uncertainty rules, or research conclusions for them.
+Current source implements bounded different-coalition acquisition, exposure,
+and contact-qualified borrowing as a language-only engineering mechanism. It
+does not implement inherited vocabulary, signal mutation/lineage,
+compositional signals, grammar/syntax, language-to-coalition/social feedback,
+or a finalized language research contract. On-demand contact summaries are not
+approved research endpoints. This handbook does not invent hypotheses,
+estimands, uncertainty rules, or research conclusions for them.
 
 ## Core Replication V2 authorization
 
@@ -71,6 +77,8 @@ Tests establish implementation contracts such as:
 - authentic exact-once social/language hooks;
 - deterministic coalition graph/lifecycle behavior;
 - one-way dialect influence and causal isolation;
+- different-coalition contact qualification, borrowing provenance, one-pass
+  summaries, hashing, and causal isolation;
 - termination and manifest sealing;
 - artifact streaming, checksums, cross-file consistency, and readiness vetoes;
 - runner containment and timeout/cancellation classification.

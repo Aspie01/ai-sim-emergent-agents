@@ -8,6 +8,8 @@ from thalren_vale.config import (
     COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY,
     DIALECT_NOTICE_WITHOUT_COALITIONS,
     DIALECT_NOTICE_WITHOUT_LANGUAGE,
+    LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
+    LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
     SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY,
     SimulationConfig,
 )
@@ -54,6 +56,11 @@ def cli_args(**overrides):
         "disable_coalition_dialect_influence": False,
         "same_coalition_learning_multiplier": None,
         "same_coalition_reinforcement_multiplier": None,
+        "enable_language_contact": False,
+        "disable_language_contact": False,
+        "cross_group_learning_multiplier": None,
+        "borrowing_exposure_threshold": None,
+        "borrowing_confidence_threshold": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -273,6 +280,99 @@ def test_enabled_or_nondefault_dialect_controls_are_engineering_only():
     assert nondefault.dialect_controls_status == "engineering_only_uncontracted"
 
 
+def test_language_contact_controls_default_to_exact_research_safe_values():
+    result = SimulationConfig.from_cli(cli_args())
+    manifest = result.manifest_dict()
+
+    assert manifest["language_contact_enabled"] is False
+    assert type(manifest["cross_group_learning_multiplier"]) is float
+    assert manifest["cross_group_learning_multiplier"] == 1.50
+    assert type(manifest["borrowing_exposure_threshold"]) is int
+    assert manifest["borrowing_exposure_threshold"] == 3
+    assert type(manifest["borrowing_confidence_threshold"]) is float
+    assert manifest["borrowing_confidence_threshold"] == 0.50
+    assert manifest["language_contact_controls_status"] == "disabled"
+    assert manifest["language_contact_control_notices"] == []
+
+
+def test_language_contact_request_normalizes_against_effective_dependencies():
+    neither = SimulationConfig.from_cli(cli_args(
+        enable_language_contact=True))
+    no_coalitions = SimulationConfig.from_cli(cli_args(
+        enable_language_evolution=True,
+        enable_language_contact=True,
+    ))
+    no_language = SimulationConfig.from_cli(cli_args(
+        enable_social_memory=True,
+        enable_coalition_emergence=True,
+        enable_language_contact=True,
+    ))
+
+    assert neither.language_contact_enabled is False
+    assert neither.language_contact_controls_status == "normalized_uncontracted"
+    assert neither.language_contact_control_notices == tuple(sorted((
+        LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
+        LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
+    )))
+    assert no_coalitions.language_contact_control_notices == (
+        LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
+    )
+    assert no_language.language_contact_control_notices == (
+        LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
+    )
+
+
+def test_language_contact_uses_effective_coalition_after_its_normalization():
+    result = SimulationConfig.from_cli(cli_args(
+        enable_language_evolution=True,
+        enable_coalition_emergence=True,
+        enable_language_contact=True,
+    ))
+
+    assert result.coalition_emergence_enabled is False
+    assert result.coalition_control_notices == (
+        "coalition_emergence_requested_without_social_memory",
+    )
+    assert result.language_contact_enabled is False
+    assert result.language_contact_control_notices == (
+        LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
+    )
+
+
+def test_enabled_contact_is_independent_of_coalition_dialect_influence():
+    result = SimulationConfig.from_cli(cli_args(
+        enable_social_memory=True,
+        enable_language_evolution=True,
+        enable_coalition_emergence=True,
+        enable_language_contact=True,
+    ))
+
+    assert result.language_contact_enabled is True
+    assert result.language_contact_control_notices == ()
+    assert result.language_contact_controls_status == (
+        "engineering_only_uncontracted"
+    )
+    assert result.coalition_dialect_influence_enabled is False
+    assert result.dialect_controls_status == "disabled"
+
+
+def test_nondefault_contact_controls_are_engineering_only_without_normalization():
+    result = SimulationConfig.from_cli(cli_args(
+        cross_group_learning_multiplier=1.75,
+        borrowing_exposure_threshold=4,
+        borrowing_confidence_threshold=0.60,
+    ))
+
+    assert result.language_contact_enabled is False
+    assert result.language_contact_control_notices == ()
+    assert result.language_contact_controls_status == (
+        "engineering_only_uncontracted"
+    )
+    assert result.language_controls_status == "disabled"
+    assert result.coalition_controls_status == "disabled"
+    assert result.dialect_controls_status == "disabled"
+
+
 @pytest.mark.parametrize(
     ("override", "message"),
     [
@@ -301,6 +401,15 @@ def test_enabled_or_nondefault_dialect_controls_are_engineering_only():
         ({"same_coalition_learning_multiplier": 1}, "finite float"),
         ({"same_coalition_learning_multiplier": 2.1}, "finite float"),
         ({"same_coalition_reinforcement_multiplier": float("nan")}, "finite float"),
+        ({"cross_group_learning_multiplier": 1}, "finite float"),
+        ({"cross_group_learning_multiplier": 2.1}, "finite float"),
+        ({"cross_group_learning_multiplier": float("nan")}, "finite float"),
+        ({"borrowing_exposure_threshold": True}, "exposure threshold"),
+        ({"borrowing_exposure_threshold": 1}, "exposure threshold"),
+        ({"borrowing_exposure_threshold": 33}, "exposure threshold"),
+        ({"borrowing_confidence_threshold": 1}, "finite float"),
+        ({"borrowing_confidence_threshold": 0.09}, "finite float"),
+        ({"borrowing_confidence_threshold": float("inf")}, "finite float"),
     ],
 )
 def test_invalid_configuration_is_rejected(override, message):

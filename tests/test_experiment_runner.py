@@ -260,6 +260,39 @@ EQUALS_DIALECT_ARGUMENTS = [
     ["--same-coalition=1.5"],
 ]
 
+CONTACT_OPTION_NAMES = (
+    "--enable-language-contact",
+    "--disable-language-contact",
+    "--cross-group-learning-multiplier",
+    "--borrowing-exposure-threshold",
+    "--borrowing-confidence-threshold",
+)
+
+FULL_CONTACT_ARGUMENTS = [
+    ["--enable-language-contact"],
+    ["--disable-language-contact"],
+    ["--cross-group-learning-multiplier", "1.5"],
+    ["--borrowing-exposure-threshold", "3"],
+    ["--borrowing-confidence-threshold", "0.5"],
+]
+
+EQUALS_CONTACT_ARGUMENTS = [
+    ["--enable-language-contact=true"],
+    ["--disable-language-contact=true"],
+    ["--cross-group-learning-multiplier=1.5"],
+    ["--borrowing-exposure-threshold=3"],
+    ["--borrowing-confidence-threshold=0.5"],
+]
+
+PROPER_PREFIX_CONTACT_ARGUMENTS = [
+    [prefix]
+    for prefix in sorted({
+        option[:length]
+        for option in CONTACT_OPTION_NAMES
+        for length in range(3, len(option))
+    })
+]
+
 
 @pytest.mark.parametrize(
     "extra_args",
@@ -371,6 +404,59 @@ def test_runner_rejects_every_dialect_prefix_before_filesystem_or_child_activity
 
     assert child_calls == []
     assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    PROPER_PREFIX_CONTACT_ARGUMENTS
+    + FULL_CONTACT_ARGUMENTS
+    + EQUALS_CONTACT_ARGUMENTS,
+)
+def test_runner_rejects_every_contact_prefix_before_filesystem_or_child_activity(
+    tmp_path,
+    monkeypatch,
+    extra_args,
+):
+    output = tmp_path / "outputs"
+    cell = fresh_cell_spec()[0]
+    cell["extra_args"] = extra_args
+    child_calls = []
+    monkeypatch.setattr(
+        runner,
+        "_simulation_command",
+        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+    )
+
+    with pytest.raises(ValueError):
+        runner._run_cells_in_fresh_root([cell], output)
+
+    assert child_calls == []
+    assert not output.exists()
+
+
+def test_rejected_contact_control_preserves_existing_output_tree(
+    tmp_path,
+    monkeypatch,
+):
+    output = tmp_path / "outputs"
+    output.mkdir()
+    sentinel = output / "sentinel.bin"
+    sentinel.write_bytes(b"preserve contact rejection\x00")
+    before = snapshot_tree(output)
+    cell = fresh_cell_spec()[0]
+    cell["extra_args"] = ["--borrowing"]
+    child_calls = []
+    monkeypatch.setattr(
+        runner,
+        "_simulation_command",
+        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+    )
+
+    with pytest.raises(ValueError, match="uncontracted language contact control"):
+        runner._run_cells_in_fresh_root([cell], output)
+
+    assert child_calls == []
+    assert snapshot_tree(output) == before
 
 
 def test_rejected_coalition_control_preserves_existing_output_tree(
@@ -539,6 +625,49 @@ def test_simulator_rejects_abbreviated_dialect_options_before_execution(
     assert not (tmp_path / "data").exists()
 
 
+@pytest.mark.parametrize(
+    "extra_args",
+    (
+        ["--enable-language-cont"],
+        ["--disable-language-cont"],
+        ["--cross-group-learning"],
+        ["--borrowing-exposure"],
+        ["--borrowing-confidence"],
+        ["--borrowing"],
+    ),
+)
+def test_simulator_rejects_abbreviated_contact_options_before_execution(
+    tmp_path,
+    extra_args,
+):
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(runner.SOURCE_ROOT)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "thalren_vale",
+            *extra_args,
+            "--ticks",
+            "0",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "unrecognized arguments" in result.stderr
+    assert extra_args[0] in result.stderr
+    assert "ticks must be at least 1" not in result.stderr
+    assert not (tmp_path / "data").exists()
+
+
 def test_plan_loading_rejects_engineering_social_controls(tmp_path):
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(
@@ -625,6 +754,63 @@ def test_plan_loading_rejects_exact_ambiguous_and_equals_dialect_flags(
 
     with pytest.raises(ValueError, match="uncontracted dialect control"):
         runner.load_plan(plan_path)
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    (
+        "--enable-language-contact",
+        "--cross-group-learning-multiplier=1.5",
+        "--borrowing",
+    ),
+)
+def test_plan_loading_rejects_exact_equals_and_ambiguous_contact_flags(
+    tmp_path,
+    extra_args,
+):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({
+            "schema_version": runner.PLAN_SCHEMA_VERSION,
+            "experiment_id": "contact-not-contracted",
+            "conditions": [{
+                "name": "baseline",
+                "seeds": "1",
+                "ticks": 1,
+                "extra_args": extra_args,
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="uncontracted language contact control"):
+        runner.load_plan(plan_path)
+
+
+def test_verify_rejects_contact_plan_without_changing_existing_output(tmp_path):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({
+            "schema_version": runner.PLAN_SCHEMA_VERSION,
+            "experiment_id": "contact-not-contracted",
+            "conditions": [{
+                "name": "baseline",
+                "seeds": "1",
+                "ticks": 1,
+                "extra_args": "--borrowing-confidence-threshold=0.5",
+            }],
+        }),
+        encoding="utf-8",
+    )
+    output = tmp_path / "outputs"
+    output.mkdir()
+    (output / "sentinel").write_bytes(b"unchanged")
+    before = snapshot_tree(output)
+
+    with pytest.raises(ValueError, match="uncontracted language contact control"):
+        verify_outputs(plan_path, output, validation_mode="strict")
+
+    assert snapshot_tree(output) == before
 
 
 class EscapingDict(dict):

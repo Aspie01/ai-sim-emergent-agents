@@ -26,7 +26,7 @@
 | `economy.py` | Individual/faction transfers, currency, prices, routes, scarcity, raids |
 | `social.py` | Optional stable-ID directed relationships and maintenance |
 | `coalitions.py` | Optional deterministic informal-coalition graph and lifecycle |
-| `language.py` | Optional individual signal production/comprehension and dialect summaries |
+| `language.py` | Optional individual signal production/comprehension, dialect context, language contact, and on-demand summaries |
 | `combat.py` | Formal wars, battles, alliances, tribute and post-war changes |
 | `technology.py` | Research tree and passive effects |
 | `diplomacy.py` | Treaties, council votes, reputation, surrender terms |

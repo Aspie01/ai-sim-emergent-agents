@@ -69,12 +69,15 @@ from .language import (
     LanguageInvariantError,
     MAX_LANGUAGE_ASSOCIATIONS,
     MAX_SIGNAL_LENGTH,
+    contact_runtime_is_pristine,
     dialect_runtime_is_pristine,
+    initialize_language_contact_runtime,
     initialize_language_runtime,
     language_runtime_is_pristine,
     maintain_language_state,
     validate_agent_language_state,
     validate_coalition_dialect_runtime,
+    validate_language_contact_runtime,
     validate_language_runtime,
 )
 
@@ -137,7 +140,9 @@ _trade_lock  = threading.Lock()
 _admission_lock = threading.Lock()
 
 
-def _validated_reset_language_owners() -> list[tuple[object, AgentLanguageState]]:
+def _validated_reset_language_owners(
+    contact_config: config.LanguageContactConfig | None,
+) -> list[tuple[object, AgentLanguageState]]:
     """Validate every unique authoritative language owner before reset mutates."""
     validated: list[tuple[object, AgentLanguageState]] = []
     seen_inhabitant_identities: set[int] = set()
@@ -157,20 +162,27 @@ def _validated_reset_language_owners() -> list[tuple[object, AgentLanguageState]
             validated_state = validate_agent_language_state(
                 language_state,
                 config=_RESET_LANGUAGE_VALIDATION_CONFIG,
+                contact_config=contact_config,
             )
             validated.append((inhabitant, validated_state))
     return validated
 
 
-def _validate_reset_language_runtimes() -> None:
-    """Validate both runtime owners before reset mutates any run state."""
+def _validate_reset_language_runtimes(
+) -> config.LanguageContactConfig | None:
+    """Validate all language runtimes and return active contact controls."""
     if language_runtime_is_pristine(state.language):
         if not dialect_runtime_is_pristine(state.dialect):
             raise LanguageInvariantError(
                 "nonpristine_dialect_runtime",
                 "disabled language runtime cannot conceal dialect state",
             )
-        return
+        if not contact_runtime_is_pristine(state.language_contact):
+            raise LanguageInvariantError(
+                "nonpristine_language_contact_runtime",
+                "disabled language runtime cannot conceal contact state",
+            )
+        return None
 
     validate_language_runtime(state.language, initialized=True)
     if state.language.coalition_dialect_influence_enabled:
@@ -183,14 +195,43 @@ def _validate_reset_language_runtimes() -> None:
             "nonpristine_dialect_runtime",
             "disabled dialect influence cannot retain runtime state",
         )
+    if state.language.language_contact_enabled:
+        contact_config = config.LanguageContactConfig(
+            language_contact_enabled=True,
+            cross_group_learning_multiplier=(
+                state.language_contact.cross_group_learning_multiplier
+            ),
+            borrowing_exposure_threshold=(
+                state.language_contact.borrowing_exposure_threshold
+            ),
+            borrowing_confidence_threshold=(
+                state.language_contact.borrowing_confidence_threshold
+            ),
+        )
+        validate_language_contact_runtime(
+            state.language_contact,
+            config=contact_config,
+            language_runtime=state.language,
+            dialect_runtime=(
+                state.dialect
+                if state.language.coalition_dialect_influence_enabled else None
+            ),
+        )
+        return contact_config
+    if not contact_runtime_is_pristine(state.language_contact):
+        raise LanguageInvariantError(
+            "nonpristine_language_contact_runtime",
+            "disabled language contact cannot retain runtime state",
+        )
+    return None
 
 
 def reset_runtime_state() -> None:
     """Reset all mutable stores that can leak across in-process runs."""
     global _last_dynamic_t
 
-    language_owners = _validated_reset_language_owners()
-    _validate_reset_language_runtimes()
+    contact_config = _validate_reset_language_runtimes()
+    language_owners = _validated_reset_language_owners(contact_config)
 
     for plugin in _loaded_plugins:
         try:
@@ -556,6 +597,7 @@ def economy_layer(
     language_config: config.LanguageEvolutionConfig | None = None,
     dialect_config: config.CoalitionDialectConfig | None = None,
     coalition_config: config.CoalitionConfig | None = None,
+    contact_config: config.LanguageContactConfig | None = None,
 ) -> None:
     """Layer 4: currency, pricing, trade, raids, scarcity, wealth."""
     if social_config is None:
@@ -595,11 +637,28 @@ def economy_layer(
                 config.DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER
             ),
         )
+    if contact_config is None:
+        contact_config = config.LanguageContactConfig(
+            language_contact_enabled=False,
+            cross_group_learning_multiplier=(
+                config.DEFAULT_CROSS_GROUP_LEARNING_MULTIPLIER
+            ),
+            borrowing_exposure_threshold=(
+                config.DEFAULT_BORROWING_EXPOSURE_THRESHOLD
+            ),
+            borrowing_confidence_threshold=(
+                config.DEFAULT_BORROWING_CONFIDENCE_THRESHOLD
+            ),
+        )
     coalition_membership_snapshot = None
-    if dialect_config.coalition_dialect_influence_enabled:
+    coalition_context_required = (
+        dialect_config.coalition_dialect_influence_enabled
+        or contact_config.language_contact_enabled
+    )
+    if coalition_context_required:
         if coalition_config is None:
             raise ValueError(
-                'enabled coalition dialect economy requires coalition controls')
+                'enabled coalition language economy requires coalition controls')
         coalition_membership_snapshot = build_coalition_membership_snapshot(
             state.coalitions,
             snapshot_tick=t,
@@ -640,6 +699,14 @@ def economy_layer(
                 if dialect_config.coalition_dialect_influence_enabled
                 else None
             ),
+            contact_config=(
+                contact_config
+                if contact_config.language_contact_enabled else None
+            ),
+            contact_runtime=(
+                state.language_contact
+                if contact_config.language_contact_enabled else None
+            ),
             coalition_membership_snapshot=coalition_membership_snapshot,
             rng=random,
         )
@@ -671,12 +738,26 @@ def maintain_emergent_state(
                 state.dialect,
                 language_runtime=state.language,
             )
+        if run_config.language_contact_enabled:
+            validate_language_contact_runtime(
+                state.language_contact,
+                config=run_config.language_contact_config,
+                language_runtime=state.language,
+                dialect_runtime=(
+                    state.dialect
+                    if run_config.coalition_dialect_influence_enabled else None
+                ),
+            )
         maintain_language_state(
             people,
             newly_dead,
             tick=t,
             config=run_config.language_evolution_config,
             runtime=state.language,
+            contact_config=(
+                run_config.language_contact_config
+                if run_config.language_contact_enabled else None
+            ),
         )
 
 
@@ -1985,6 +2066,22 @@ def run() -> None:
     _parser.add_argument(
         '--same-coalition-reinforcement-multiplier', type=float, default=None,
         help='Same-coalition successful-use multiplier (engineering only)')
+    _language_contact = _parser.add_mutually_exclusive_group()
+    _language_contact.add_argument(
+        '--enable-language-contact', action='store_true',
+        help='Enable engineering-only cross-coalition language contact')
+    _language_contact.add_argument(
+        '--disable-language-contact', action='store_true',
+        help='Explicitly retain contact-neutral language evolution')
+    _parser.add_argument(
+        '--cross-group-learning-multiplier', type=float, default=None,
+        help='Cross-coalition contextual learning multiplier (engineering only)')
+    _parser.add_argument(
+        '--borrowing-exposure-threshold', type=int, default=None,
+        help='Successful-contact promotion exposure threshold (engineering only)')
+    _parser.add_argument(
+        '--borrowing-confidence-threshold', type=float, default=None,
+        help='Successful-contact promotion confidence threshold (engineering only)')
     _args = _parser.parse_args()
 
     # ── Validate and apply effective configuration ──────────────────────────
@@ -2018,6 +2115,17 @@ def run() -> None:
                 'warning: coalition dialect influence was requested without '
                 'effective coalition emergence; influence normalized to false '
                 'and the run is not V2-ready\n')
+    for _notice in _run_config.language_contact_control_notices:
+        if _notice == config.LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE:
+            sys.stderr.write(
+                'warning: language contact was requested without effective '
+                'language evolution; contact normalized to false and the run '
+                'is not V2-ready\n')
+        elif _notice == config.LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS:
+            sys.stderr.write(
+                'warning: language contact was requested without effective '
+                'coalition emergence; contact normalized to false and the run '
+                'is not V2-ready\n')
     _run_config.apply_legacy_globals()
     TICKS = _run_config.ticks
     POP_CAP = _run_config.population_cap
@@ -2041,7 +2149,13 @@ def run() -> None:
             coalition_dialect_influence_enabled=(
                 _run_config.coalition_dialect_influence_enabled
             ),
+            language_contact_enabled=_run_config.language_contact_enabled,
         )
+        if _run_config.language_contact_enabled:
+            initialize_language_contact_runtime(
+                state.language_contact,
+                _run_config.language_contact_config,
+            )
     # Serial mode: guarantees reproducibility by eliminating thread PRNG interleaving
     _serial_mode = (_args.seed is not None)
     _repro_config = _run_config.manifest_dict()
@@ -2165,6 +2279,7 @@ def run() -> None:
                     _run_config.language_evolution_config,
                     _run_config.coalition_dialect_config,
                     _run_config.coalition_config,
+                    _run_config.language_contact_config,
                 )
             _t_eco = (time.perf_counter() - _t_eco_start) * 1000
 

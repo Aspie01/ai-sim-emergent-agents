@@ -21,7 +21,7 @@ world tiles
 -> inhabitant needs, movement, inventory and death
 -> beliefs and formal factions
 -> reproduction
--> economy/resources/currency/relationships/language exposure
+-> economy/resources/currency/relationships/language and contact exposure
 -> combat, technology, diplomacy, religion
 -> scheduled interventions and plugins
 -> social/coalition/language maintenance
@@ -29,6 +29,15 @@ world tiles
 ```
 
 State changes are direct Python object mutations except where a focused subsystem proposes and validates replacement state. The event journal records the order in which observations were produced; it is not the mutation transport.
+
+When Language Contact v1 is effective, one pre-economy coalition snapshot feeds
+the shared communication classification. Only authentic
+`DIFFERENT_ACTIVE_COALITIONS` communication can flow into multiplied positive
+receiver learning, bounded `ContactExposure`, and contact-qualified
+`BorrowingProvenance`. Assigned/unassigned and both-unassigned communication
+remain on the base language path. Contact state flows only into individual
+language state, on-demand summaries, and the selected-state hash; it has no
+return path into social or material state.
 
 ## Observation to artifacts
 
@@ -57,6 +66,12 @@ state and hashed controls after required writers close. It is not derived from
 the CSV contents. Checksums independently bind the required CSV bytes into the
 manifest inventory.
 
+Enabled contact hashing includes exact effective controls, bounded contact
+runtime, comprehension exposure metadata, and production borrowing provenance.
+Disabled contact controls are omitted only when runtime and association state
+are pristine; hidden contact state fails closed. Contact adds no standard event
+or metrics artifact fields.
+
 The current belief CSV header says `inhabitant_id`, but the producer writes the inhabitant display name. The deep validator verifies a nonempty unique string at each snapshot tick; it does not reinterpret it as the stable integer ID.
 
 ## Plan to batch result
@@ -80,7 +95,9 @@ Canonical analysis should begin with revalidation of the raw structured set. Der
 
 ## Implementation evidence
 
-- `src/thalren_vale/events.py`, `metrics.py`, `reproducibility.py`.
+- `src/thalren_vale/events.py`, `metrics.py`, `language.py`, `reproducibility.py`.
 - `src/thalren_vale/artifact_validation.py`.
 - `run_experiments.py`.
-- Tests: `tests/test_events.py`, `tests/test_artifact_validation.py`, `tests/test_experiment_runner.py`.
+- Tests: `tests/test_events.py`, `tests/test_language_contact.py`,
+  `tests/test_language_reproducibility.py`, `tests/test_artifact_validation.py`,
+  `tests/test_experiment_runner.py`.

@@ -52,7 +52,12 @@ Dashboard JSON, raw logs, chronicles, and mythology are diagnostic and unvalidat
 
 ## A planned language feature is missing
 
-Only Endogenous Language v1 and Coalition Dialects v1 are implemented. Contact, inheritance, lexical evolution, compositional protolanguage, grammar, coevolution, and research-readiness milestones are **Planned, not implemented**.
+Endogenous Language v1, Coalition Dialects v1, and Language Contact v1 are
+implemented engineering features. Intergenerational transmission, lexical
+evolution, compositional protolanguage, grammar, coevolution, and
+research-readiness milestones are **Planned, not implemented**. Contact applies
+only to authentic different-active-coalitions communication; assigned/unassigned
+communication intentionally remains base Language v1 behavior.
 
 ## Documentation appears inconsistent with source
 

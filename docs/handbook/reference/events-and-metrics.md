@@ -170,12 +170,13 @@ must contain exactly one row. Principal semantics:
 Strict validation cross-checks summary values against metrics and events. A
 summary file alone is never proof of a valid run.
 
-## Language, coalition, and dialect observability
+## Language, coalition, dialect, and contact observability
 
 Current structured event and metrics schemas contain no dedicated endogenous
-language, informal coalition, or coalition-dialect event/metric fields. Those
-systems expose bounded runtime state, hashes, tests, and on-demand summaries,
-but do not add research artifact schemas in the completed v1 milestones.
+language, informal coalition, coalition-dialect, or language-contact
+event/metric fields. Those systems expose bounded runtime state, hashes, tests,
+and on-demand summaries, but do not add research artifact schemas in the
+completed v1 milestones.
 
 ## Implementation evidence
 

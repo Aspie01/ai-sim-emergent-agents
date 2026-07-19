@@ -1,8 +1,15 @@
 # Project overview
 
-Thalren Vale is a tick-driven civilization simulation. Named inhabitants occupy a procedurally generated grid, gather and exchange resources, carry beliefs, form formal factions, research technologies, negotiate, fight, establish religions, reproduce, and die. Optional engineering-only layers retain directed social relationships, derive informal coalitions from those relationships, and let committed aid or trade teach individual signal vocabularies. Coalition Dialects v1 can increase language learning between members of the same prior-tick informal coalition; the influence is deliberately one-way.
+Thalren Vale is a tick-driven civilization simulation. Named inhabitants occupy a procedurally generated grid, gather and exchange resources, carry beliefs, form formal factions, research technologies, negotiate, fight, establish religions, reproduce, and die. Optional engineering-only layers retain directed social relationships, derive informal coalitions from those relationships, and let committed aid or trade teach individual signal vocabularies. Coalition Dialects v1 can increase language learning between members of the same prior-tick informal coalition. Language Contact v1 can strengthen positive acquisition and record borrowing between different active coalitions. Both influences are deliberately one-way into individual language state.
 
-This handbook documents the code at commit `23ef5dad78a86cbcf699dc0192373a3416eafc06`. It describes implementation behavior, not a claim that every mechanic is scientifically validated. The repository contains strong tests for configuration, deterministic seeded execution, structured artifacts, social memory, informal coalitions, endogenous language, and coalition dialects. Several older civilization layers have only indirect regression coverage; their pages say so explicitly.
+This handbook documents the approved, uncommitted Language Contact v1 working
+tree on branch `feature/language-contact-v1`, based at commit
+`83df90247b1226f0535df1a5c71a4ddb60b3bc45`. It describes implementation
+behavior, not a claim that every mechanic is scientifically validated. The
+repository contains strong tests for configuration, deterministic seeded
+execution, structured artifacts, social memory, informal coalitions, endogenous
+language, coalition dialects, and language contact. Several older civilization
+layers have only indirect regression coverage; their pages say so explicitly.
 
 ## What happens in a run
 
@@ -30,18 +37,22 @@ The simulation is not globally transactional. Individual admission, coalition tr
 | Informal coalitions | Implemented but experimental; Disabled by default; Engineering-only |
 | Endogenous Language v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Coalition Dialects v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Language Contact v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Dashboard, raw narratives, RA tracker, mythology | Optional or diagnostic; not canonical evidence |
 | Generic experiment runner | Fresh-root engineering runner; not V2 research-ready |
 | Core Replication V2 execution and evidence | Planned, not implemented |
 
-All later language milestones listed in [research readiness](../experiments/research-readiness.md) are **Planned, not implemented**.
+Intergenerational transmission, lexical evolution, compositional
+protolanguage, grammar evolution, language coevolution, and language research
+readiness remain **Planned, not implemented** as listed in
+[research readiness](../experiments/research-readiness.md).
 
 ## Recommended reading paths
 
 - Owner or first-time user: [operations](operations.md) -> [output layout](../data/output-directory-layout.md) -> [identifying valid runs](../data/identifying-valid-runs.md).
 - Developer: [architecture overview](../architecture/architecture-overview.md) -> [tick lifecycle](../architecture/tick-lifecycle.md) -> [state ownership](../architecture/state-ownership-map.md).
 - Research reviewer: [determinism](../architecture/determinism-and-rng.md) -> [artifact catalog](../data/artifact-catalog.md) -> [run lifecycle and validation](../experiments/run-lifecycle-and-validation.md).
-- Social/language reviewer: [aid, trade, and relationships](../systems/aid-trade-and-relationships.md) -> [informal coalitions](../systems/informal-coalitions.md) -> [endogenous language](../systems/endogenous-language.md) -> [coalition dialects](../systems/coalition-dialects.md).
+- Social/language reviewer: [aid, trade, and relationships](../systems/aid-trade-and-relationships.md) -> [informal coalitions](../systems/informal-coalitions.md) -> [endogenous language](../systems/endogenous-language.md) -> [coalition dialects](../systems/coalition-dialects.md) -> [language contact](../systems/language-contact.md).
 
 ## Evidence boundaries
 

@@ -30,6 +30,7 @@ from .config import (
     DEFAULT_MAXIMUM_SIGNAL_LENGTH,
     DEFAULT_MAXIMUM_SOCIAL_TIES,
     DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
+    LanguageContactConfig,
     LanguageEvolutionConfig,
     SocialMemoryConfig,
 )
@@ -42,6 +43,7 @@ from .social import (
 from .language import (
     CoalitionDialectRuntimeState,
     CommunicationContext,
+    LanguageContactRuntimeState,
     LanguageRuntimeState,
     communicate,
     meaning_for_resource,
@@ -74,6 +76,32 @@ _DISABLED_LANGUAGE_CONFIG = LanguageEvolutionConfig(
     language_forgetting_interval=DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
     language_invention_enabled=DEFAULT_LANGUAGE_INVENTION_ENABLED,
 )
+
+
+def _coalition_language_kwargs(
+    *,
+    dialect_config: CoalitionDialectConfig | None,
+    dialect_runtime: CoalitionDialectRuntimeState | None,
+    contact_config: LanguageContactConfig | None,
+    contact_runtime: LanguageContactRuntimeState | None,
+    coalition_membership_snapshot: CoalitionMembershipSnapshot | None,
+) -> dict[str, object]:
+    """Pass only effective coalition-language owners into communication."""
+    result: dict[str, object] = {}
+    if (
+        dialect_config is not None
+        and dialect_config.coalition_dialect_influence_enabled
+    ):
+        result["dialect_config"] = dialect_config
+        result["dialect_runtime"] = dialect_runtime
+    if contact_config is not None and contact_config.language_contact_enabled:
+        result["contact_config"] = contact_config
+        result["contact_runtime"] = contact_runtime
+    if result:
+        result["coalition_membership_snapshot"] = (
+            coalition_membership_snapshot
+        )
+    return result
 
 
 @dataclass(frozen=True)
@@ -188,6 +216,8 @@ def _do_trade(
     language_runtime: LanguageRuntimeState | None = None,
     dialect_config: CoalitionDialectConfig | None = None,
     dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    contact_config: LanguageContactConfig | None = None,
+    contact_runtime: LanguageContactRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids=frozenset(),
 ):
@@ -272,19 +302,12 @@ def _do_trade(
             active_ids=active_ids,
             config=language_config,
             runtime=language_runtime,
-            **(
-                {
-                    'dialect_config': dialect_config,
-                    'dialect_runtime': dialect_runtime,
-                    'coalition_membership_snapshot': (
-                        coalition_membership_snapshot
-                    ),
-                }
-                if (
-                    dialect_config is not None
-                    and dialect_config.coalition_dialect_influence_enabled
-                )
-                else {}
+            **_coalition_language_kwargs(
+                dialect_config=dialect_config,
+                dialect_runtime=dialect_runtime,
+                contact_config=contact_config,
+                contact_runtime=contact_runtime,
+                coalition_membership_snapshot=coalition_membership_snapshot,
             ),
         )
     return True
@@ -300,6 +323,8 @@ def _faction_trade(
     language_runtime: LanguageRuntimeState | None = None,
     dialect_config: CoalitionDialectConfig | None = None,
     dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    contact_config: LanguageContactConfig | None = None,
+    contact_runtime: LanguageContactRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids=frozenset(),
 ):
@@ -337,6 +362,8 @@ def _faction_trade(
                     language_runtime=language_runtime,
                     dialect_config=dialect_config,
                     dialect_runtime=dialect_runtime,
+                    contact_config=contact_config,
+                    contact_runtime=contact_runtime,
                     coalition_membership_snapshot=(
                         coalition_membership_snapshot
                     ),
@@ -350,6 +377,8 @@ def _faction_trade(
                     language_runtime=language_runtime,
                     dialect_config=dialect_config,
                     dialect_runtime=dialect_runtime,
+                    contact_config=contact_config,
+                    contact_runtime=contact_runtime,
                     coalition_membership_snapshot=(
                         coalition_membership_snapshot
                     ),
@@ -446,6 +475,8 @@ def _commit_individual_transfer(
     language_runtime: LanguageRuntimeState | None = None,
     dialect_config: CoalitionDialectConfig | None = None,
     dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    contact_config: LanguageContactConfig | None = None,
+    contact_runtime: LanguageContactRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
 ) -> None:
@@ -488,19 +519,12 @@ def _commit_individual_transfer(
             active_ids=active_ids,
             config=language_config,
             runtime=language_runtime,
-            **(
-                {
-                    'dialect_config': dialect_config,
-                    'dialect_runtime': dialect_runtime,
-                    'coalition_membership_snapshot': (
-                        coalition_membership_snapshot
-                    ),
-                }
-                if (
-                    dialect_config is not None
-                    and dialect_config.coalition_dialect_influence_enabled
-                )
-                else {}
+            **_coalition_language_kwargs(
+                dialect_config=dialect_config,
+                dialect_runtime=dialect_runtime,
+                contact_config=contact_config,
+                contact_runtime=contact_runtime,
+                coalition_membership_snapshot=coalition_membership_snapshot,
             ),
         )
 
@@ -515,6 +539,8 @@ def _attempt_individual_transfer(
     language_runtime: LanguageRuntimeState | None = None,
     dialect_config: CoalitionDialectConfig | None = None,
     dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    contact_config: LanguageContactConfig | None = None,
+    contact_runtime: LanguageContactRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
 ) -> bool:
@@ -530,6 +556,8 @@ def _attempt_individual_transfer(
                 language_runtime=language_runtime,
                 dialect_config=dialect_config,
                 dialect_runtime=dialect_runtime,
+                contact_config=contact_config,
+                contact_runtime=contact_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )
@@ -546,6 +574,8 @@ def _historical_barter(
     language_runtime: LanguageRuntimeState | None = None,
     dialect_config: CoalitionDialectConfig | None = None,
     dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    contact_config: LanguageContactConfig | None = None,
+    contact_runtime: LanguageContactRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
     rng,
@@ -570,6 +600,8 @@ def _historical_barter(
                 language_runtime=language_runtime,
                 dialect_config=dialect_config,
                 dialect_runtime=dialect_runtime,
+                contact_config=contact_config,
+                contact_runtime=contact_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )
@@ -670,6 +702,8 @@ def _relationship_biased_barter(
     language_runtime: LanguageRuntimeState | None = None,
     dialect_config: CoalitionDialectConfig | None = None,
     dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    contact_config: LanguageContactConfig | None = None,
+    contact_runtime: LanguageContactRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng,
 ) -> frozenset[int]:
@@ -715,6 +749,8 @@ def _relationship_biased_barter(
                     language_runtime=language_runtime,
                     dialect_config=dialect_config,
                     dialect_runtime=dialect_runtime,
+                    contact_config=contact_config,
+                    contact_runtime=contact_runtime,
                     coalition_membership_snapshot=(
                         coalition_membership_snapshot
                     ),
@@ -735,6 +771,8 @@ def _relationship_biased_barter(
                 language_runtime=language_runtime,
                 dialect_config=dialect_config,
                 dialect_runtime=dialect_runtime,
+                contact_config=contact_config,
+                contact_runtime=contact_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=frozen.active_ids,
             )
@@ -753,6 +791,8 @@ def _individual_barter(
     language_runtime: LanguageRuntimeState | None = None,
     dialect_config: CoalitionDialectConfig | None = None,
     dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    contact_config: LanguageContactConfig | None = None,
+    contact_runtime: LanguageContactRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng=random,
 ) -> frozenset[int]:
@@ -780,6 +820,8 @@ def _individual_barter(
             language_runtime=language_runtime,
             dialect_config=dialect_config,
             dialect_runtime=dialect_runtime,
+            contact_config=contact_config,
+            contact_runtime=contact_runtime,
             coalition_membership_snapshot=coalition_membership_snapshot,
             active_ids=active_ids,
             rng=rng,
@@ -794,6 +836,8 @@ def _individual_barter(
         language_runtime=language_runtime,
         dialect_config=dialect_config,
         dialect_runtime=dialect_runtime,
+        contact_config=contact_config,
+        contact_runtime=contact_runtime,
         coalition_membership_snapshot=coalition_membership_snapshot,
         rng=rng,
     )
@@ -869,6 +913,8 @@ def economy_tick(
     language_runtime: LanguageRuntimeState | None = None,
     dialect_config: CoalitionDialectConfig | None = None,
     dialect_runtime: CoalitionDialectRuntimeState | None = None,
+    contact_config: LanguageContactConfig | None = None,
+    contact_runtime: LanguageContactRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng=random,
 ):
@@ -910,6 +956,8 @@ def economy_tick(
             language_runtime=language_runtime,
             dialect_config=dialect_config,
             dialect_runtime=dialect_runtime,
+            contact_config=contact_config,
+            contact_runtime=contact_runtime,
             coalition_membership_snapshot=coalition_membership_snapshot,
             rng=rng,
         )
@@ -928,6 +976,8 @@ def economy_tick(
                 language_runtime=language_runtime,
                 dialect_config=dialect_config,
                 dialect_runtime=dialect_runtime,
+                contact_config=contact_config,
+                contact_runtime=contact_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )

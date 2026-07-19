@@ -23,20 +23,24 @@ from thalren_vale.coalitions import (
 from thalren_vale.config import (
     CoalitionConfig,
     CoalitionDialectConfig,
+    LanguageContactConfig,
     LanguageEvolutionConfig,
     SimulationConfig,
 )
 from thalren_vale.inhabitants import Inhabitant
 from thalren_vale.language import (
     AssociationOrigin,
+    BorrowingProvenance,
     CommunicationContext,
     CoalitionDialectRuntimeState,
+    ContactExposure,
     LanguageInvariantError,
     LexicalAssociation,
     Meaning,
     Signal,
     canonical_language_snapshot,
     communicate,
+    initialize_language_contact_runtime,
     initialize_language_runtime,
 )
 from thalren_vale.reproducibility import canonical_state_hash
@@ -46,6 +50,7 @@ from thalren_vale.state import SimulationState
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENABLED = LanguageEvolutionConfig(True, 32, 3, 0.20, 0.10, 5, True)
 DIALECT = CoalitionDialectConfig(True, 1.50, 1.25)
+CONTACT = LanguageContactConfig(True, 1.50, 3, 0.50)
 COALITIONS = CoalitionConfig(True, 3, 0.24, 0.40, 0.20, 5, 32)
 
 
@@ -559,3 +564,338 @@ def run_dialect_subprocess(hash_seed: str) -> dict:
 
 def test_enabled_dialect_snapshots_summaries_and_hashes_ignore_pythonhashseed():
     assert run_dialect_subprocess("1") == run_dialect_subprocess("987654")
+
+
+def enabled_contact_fixture():
+    people = [person(f"P{index}", index) for index in range(1, 7)]
+    state = SimulationState(people=people, next_inhabitant_id=7)
+    state.coalitions = CoalitionRuntimeState(
+        active_coalitions={
+            0: InformalCoalition(0, 1, (1, 2, 3)),
+            1: InformalCoalition(1, 1, (4, 5, 6)),
+        },
+        member_to_coalition={
+            1: 0, 2: 0, 3: 0,
+            4: 1, 5: 1, 6: 1,
+        },
+        next_coalition_id=2,
+        candidate_formation_count=2,
+        last_observation_tick=1,
+        last_active_inhabitant_ids=(1, 2, 3, 4, 5, 6),
+    )
+    initialize_language_runtime(
+        state.language,
+        505,
+        language_contact_enabled=True,
+    )
+    initialize_language_contact_runtime(state.language_contact, CONTACT)
+    membership = build_coalition_membership_snapshot(
+        state.coalitions,
+        snapshot_tick=2,
+        active_inhabitant_ids=(1, 2, 3, 4, 5, 6),
+        config=COALITIONS,
+    )
+    for _occurrence in range(3):
+        communicate(
+            people[0],
+            people[3],
+            Meaning.FOOD,
+            context=CommunicationContext.AID_TRANSFER,
+            tick=2,
+            active_ids=frozenset(range(1, 7)),
+            config=ENABLED,
+            runtime=state.language,
+            contact_config=CONTACT,
+            contact_runtime=state.language_contact,
+            coalition_membership_snapshot=membership,
+        )
+    configuration = SimulationConfig(
+        social_memory_enabled=True,
+        language_evolution_enabled=True,
+        language_forgetting_interval=5,
+        coalition_emergence_enabled=True,
+        language_contact_enabled=True,
+    ).manifest_dict()
+    return state, configuration, world()
+
+
+def test_enabled_hash_covers_contact_controls_runtime_and_association_metadata():
+    state, configuration, tiles = enabled_contact_fixture()
+    baseline = canonical_state_hash(state, tiles, configuration)
+
+    different_runtime = copy.deepcopy(state)
+    different_runtime.language_contact.borrowed_production_use_count += 1
+    assert canonical_state_hash(
+        different_runtime, tiles, configuration) != baseline
+
+    for field_name, changed_value in (
+        ("cross_group_learning_multiplier", 1.75),
+        ("borrowing_exposure_threshold", 2),
+        ("borrowing_confidence_threshold", 0.60),
+    ):
+        different_controls = copy.deepcopy(state)
+        setattr(different_controls.language_contact, field_name, changed_value)
+        changed_configuration = dict(configuration)
+        changed_configuration[field_name] = changed_value
+        assert canonical_state_hash(
+            different_controls, tiles, changed_configuration) != baseline
+
+    different_tick = copy.deepcopy(state)
+    different_tick.language_contact.last_contact_tick = 1
+    assert canonical_state_hash(different_tick, tiles, configuration) != baseline
+
+    mismatched_configuration = dict(configuration)
+    mismatched_configuration["cross_group_learning_multiplier"] = 1.75
+    with pytest.raises(LanguageInvariantError, match="config_mismatch"):
+        canonical_state_hash(state, tiles, mismatched_configuration)
+
+    different_exposure = copy.deepcopy(state)
+    receiver = different_exposure.people[3]
+    comprehension_key, comprehension = next(
+        (key, association)
+        for key, association in receiver.language.comprehension.items()
+        if association.contact_exposure is not None
+    )
+    receiver.language.comprehension[comprehension_key] = replace(
+        comprehension,
+        observation_count=comprehension.observation_count + 1,
+        contact_exposure=replace(
+            comprehension.contact_exposure,
+            exposure_count=comprehension.contact_exposure.exposure_count + 1,
+        ),
+    )
+    assert canonical_state_hash(
+        different_exposure, tiles, configuration) != baseline
+
+    different_provenance = copy.deepcopy(state)
+    receiver = different_provenance.people[3]
+    production_key, production = next(
+        (key, association)
+        for key, association in receiver.language.production.items()
+        if association.borrowing_provenance is not None
+    )
+    receiver.language.production[production_key] = replace(
+        production,
+        borrowing_provenance=replace(
+            production.borrowing_provenance,
+            adoption_source_speaker_id=2,
+        ),
+    )
+    assert canonical_state_hash(
+        different_provenance, tiles, configuration) != baseline
+
+
+def test_enabled_hash_rejects_malformed_contact_metadata_before_digesting():
+    state, configuration, tiles = enabled_contact_fixture()
+    receiver = state.people[3]
+    comprehension_key, comprehension = next(
+        (key, association)
+        for key, association in receiver.language.comprehension.items()
+        if association.contact_exposure is not None
+    )
+    receiver.language.comprehension[comprehension_key] = replace(
+        comprehension,
+        contact_exposure=replace(
+            comprehension.contact_exposure,
+            exposure_count=comprehension.observation_count + 1,
+        ),
+    )
+    before = copy.deepcopy((
+        [person.language for person in state.people],
+        state.language,
+        state.language_contact,
+        state.coalitions,
+    ))
+
+    with pytest.raises(LanguageInvariantError, match="exposures exceed"):
+        canonical_state_hash(state, tiles, configuration)
+
+    assert (
+        [person.language for person in state.people],
+        state.language,
+        state.language_contact,
+        state.coalitions,
+    ) == before
+
+
+def test_disabled_contact_controls_are_omitted_from_enabled_language_hash():
+    state, configuration, tiles = enabled_fixture()
+    historical = {
+        key: value
+        for key, value in configuration.items()
+        if key not in {
+            "language_contact_enabled",
+            "cross_group_learning_multiplier",
+            "borrowing_exposure_threshold",
+            "borrowing_confidence_threshold",
+            "language_contact_controls_status",
+            "language_contact_control_notices",
+        }
+    }
+
+    assert canonical_state_hash(
+        state, tiles, configuration
+    ) == canonical_state_hash(state, tiles, historical)
+
+
+@pytest.mark.parametrize("hidden", ["exposure", "provenance", "runtime"])
+def test_disabled_contact_hash_rejects_hidden_state(hidden):
+    state, configuration, tiles = enabled_fixture()
+    signal = Signal((0, 1))
+    if hidden == "exposure":
+        state.people[1].language.comprehension[(signal, Meaning.FOOD)] = (
+            LexicalAssociation(
+                meaning=Meaning.FOOD,
+                signal=signal,
+                confidence=0.50,
+                observation_count=1,
+                last_used_tick=1,
+                origin=AssociationOrigin.LEARNED,
+                learned_from_id=1,
+                contact_exposure=ContactExposure(1, 1, 0, 1, 0),
+            )
+        )
+    elif hidden == "provenance":
+        state.people[1].language.production[(Meaning.FOOD, signal)] = (
+            LexicalAssociation(
+                meaning=Meaning.FOOD,
+                signal=signal,
+                confidence=0.50,
+                observation_count=1,
+                last_used_tick=1,
+                origin=AssociationOrigin.LEARNED,
+                learned_from_id=1,
+                borrowing_provenance=BorrowingProvenance(
+                    1, 1, 0, 2, 1, 0, 3, 2,
+                ),
+            )
+        )
+    else:
+        initialize_language_contact_runtime(state.language_contact, CONTACT)
+
+    with pytest.raises(LanguageInvariantError, match="disabled.*contact|contact.*pristine"):
+        canonical_state_hash(state, tiles, configuration)
+
+
+def test_enabled_contact_hash_ignores_population_and_mapping_insertion_order():
+    state, configuration, tiles = enabled_contact_fixture()
+    extra_signal = Signal((7, 6))
+    state.people[3].language.comprehension[(extra_signal, Meaning.WOOD)] = (
+        LexicalAssociation(
+            meaning=Meaning.WOOD,
+            signal=extra_signal,
+            confidence=0.25,
+            observation_count=1,
+            last_used_tick=2,
+            origin=AssociationOrigin.LEARNED,
+            learned_from_id=1,
+        )
+    )
+    baseline = canonical_state_hash(state, tiles, configuration)
+    reordered = copy.deepcopy(state)
+    reordered.people.reverse()
+    reordered.coalitions.active_coalitions = dict(reversed(tuple(
+        reordered.coalitions.active_coalitions.items())))
+    reordered.coalitions.member_to_coalition = dict(reversed(tuple(
+        reordered.coalitions.member_to_coalition.items())))
+    for inhabitant in reordered.people:
+        inhabitant.language.production = dict(reversed(tuple(
+            inhabitant.language.production.items())))
+        inhabitant.language.comprehension = dict(reversed(tuple(
+            inhabitant.language.comprehension.items())))
+
+    assert canonical_state_hash(reordered, tiles, configuration) == baseline
+
+
+def run_contact_hash_subprocess(hash_seed: str) -> str:
+    script = textwrap.dedent(
+        """
+        from thalren_vale.coalitions import (
+            CoalitionRuntimeState, InformalCoalition,
+            build_coalition_membership_snapshot,
+        )
+        from thalren_vale.config import (
+            CoalitionConfig, LanguageContactConfig,
+            LanguageEvolutionConfig, SimulationConfig,
+        )
+        from thalren_vale.inhabitants import Inhabitant
+        from thalren_vale.language import (
+            CommunicationContext, Meaning, communicate,
+            initialize_language_contact_runtime, initialize_language_runtime,
+        )
+        from thalren_vale.reproducibility import canonical_state_hash
+        from thalren_vale.state import SimulationState
+
+        people = [Inhabitant(f"P{index}", 0, 0) for index in range(1, 7)]
+        for index, inhabitant in enumerate(people, start=1):
+            inhabitant.inhabitant_id = index
+            inhabitant.faction = None
+        state = SimulationState(people=people, next_inhabitant_id=7)
+        state.coalitions = CoalitionRuntimeState(
+            active_coalitions={
+                1: InformalCoalition(1, 1, (4, 5, 6)),
+                0: InformalCoalition(0, 1, (1, 2, 3)),
+            },
+            member_to_coalition={6: 1, 5: 1, 4: 1, 3: 0, 2: 0, 1: 0},
+            next_coalition_id=2,
+            candidate_formation_count=2,
+            last_observation_tick=1,
+            last_active_inhabitant_ids=(1, 2, 3, 4, 5, 6),
+        )
+        language = LanguageEvolutionConfig(True, 32, 3, 0.20, 0.10, 5, True)
+        coalitions = CoalitionConfig(True, 3, 0.24, 0.40, 0.20, 5, 32)
+        contact = LanguageContactConfig(True, 1.50, 3, 0.50)
+        initialize_language_runtime(
+            state.language, 505, language_contact_enabled=True)
+        initialize_language_contact_runtime(state.language_contact, contact)
+        snapshot = build_coalition_membership_snapshot(
+            state.coalitions, snapshot_tick=2,
+            active_inhabitant_ids=(6, 5, 4, 3, 2, 1), config=coalitions)
+        for _occurrence in range(3):
+            communicate(
+                people[0], people[3], Meaning.FOOD,
+                context=CommunicationContext.AID_TRANSFER,
+                tick=2, active_ids=frozenset({6, 5, 4, 3, 2, 1}),
+                config=language, runtime=state.language,
+                contact_config=contact, contact_runtime=state.language_contact,
+                coalition_membership_snapshot=snapshot)
+        configuration = SimulationConfig(
+            social_memory_enabled=True,
+            language_evolution_enabled=True,
+            language_forgetting_interval=5,
+            coalition_emergence_enabled=True,
+            language_contact_enabled=True,
+        ).manifest_dict()
+        world = [[{
+            "biome": "plains", "habitable": True,
+            "resources": {
+                "food": 1, "wood": 0, "ore": 0, "stone": 0, "water": 0,
+            },
+        }]]
+        print(canonical_state_hash(state, world, configuration))
+        """
+    )
+    env = os.environ.copy()
+    env["PYTHONHASHSEED"] = hash_seed
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_enabled_contact_hash_ignores_pythonhashseed_across_processes():
+    first = run_contact_hash_subprocess("1")
+    second = run_contact_hash_subprocess("987654")
+
+    assert first == second
+    assert len(first) == 64

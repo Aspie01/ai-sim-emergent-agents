@@ -13,11 +13,15 @@ from thalren_vale.language import (
     AgentLanguageState,
     AssociationOrigin,
     CoalitionDialectRuntimeState,
+    ContactExposure,
+    LanguageContactRuntimeState,
     LanguageInvariantError,
     LanguageRuntimeState,
     LexicalAssociation,
     Meaning,
     Signal,
+    contact_runtime_is_pristine,
+    initialize_language_contact_runtime,
     initialize_language_runtime,
     dialect_runtime_is_pristine,
     language_runtime_is_pristine,
@@ -52,6 +56,7 @@ def seed_failed_reset_state(
         ),
         "language_runtime": copy.deepcopy(sim.state.language),
         "dialect_runtime": copy.deepcopy(sim.state.dialect),
+        "contact_runtime": copy.deepcopy(sim.state.language_contact),
     }
 
 
@@ -65,6 +70,7 @@ def assert_failed_reset_state_unchanged(before: dict[str, object]) -> None:
     )
     assert sim.state.language == before["language_runtime"]
     assert sim.state.dialect == before["dialect_runtime"]
+    assert sim.state.language_contact == before["contact_runtime"]
 
 
 def test_domain_modules_share_state_owned_collections():
@@ -146,6 +152,7 @@ def test_reset_runtime_state_clears_core_and_domain_stores():
     assert deceased.language.next_invention_index == 0
     assert language_runtime_is_pristine(sim.state.language)
     assert dialect_runtime_is_pristine(sim.state.dialect)
+    assert contact_runtime_is_pristine(sim.state.language_contact)
 
 
 def test_reset_accepts_valid_enabled_dialect_runtime_and_restores_pristine():
@@ -166,6 +173,56 @@ def test_reset_accepts_valid_enabled_dialect_runtime_and_restores_pristine():
 
     assert language_runtime_is_pristine(sim.state.language)
     assert dialect_runtime_is_pristine(sim.state.dialect)
+
+
+def test_malformed_contact_metadata_blocks_reset_before_mutation():
+    sim.reset_runtime_state()
+    inhabitant = reset_inhabitant("Malformed Contact", 1)
+    signal = Signal((1, 3))
+    inhabitant.language.comprehension[(signal, Meaning.FOOD)] = (
+        LexicalAssociation(
+            meaning=Meaning.FOOD,
+            signal=signal,
+            confidence=0.50,
+            observation_count=1,
+            last_used_tick=1,
+            origin=AssociationOrigin.LEARNED,
+            learned_from_id=2,
+            contact_exposure=ContactExposure(1, 2, 99, 2, 0),
+        )
+    )
+    sim.people.append(inhabitant)
+    list.append(sim.event_log, "reset sentinel")
+    initialize_language_runtime(
+        sim.state.language,
+        88,
+        language_contact_enabled=True,
+    )
+    contact_config = sim.config.LanguageContactConfig(True, 1.50, 3, 0.50)
+    initialize_language_contact_runtime(
+        sim.state.language_contact,
+        contact_config,
+    )
+    before = copy.deepcopy((
+        inhabitant.language,
+        sim.state.language,
+        sim.state.language_contact,
+        tuple(sim.event_log),
+    ))
+
+    try:
+        with pytest.raises(LanguageInvariantError, match="exposures exceed"):
+            sim.reset_runtime_state()
+
+        assert (
+            inhabitant.language,
+            sim.state.language,
+            sim.state.language_contact,
+            tuple(sim.event_log),
+        ) == before
+    finally:
+        inhabitant.language = AgentLanguageState()
+        sim.reset_runtime_state()
 
 
 def test_reset_rejects_hidden_disabled_dialect_state_before_mutation():

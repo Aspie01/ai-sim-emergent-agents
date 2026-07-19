@@ -59,10 +59,10 @@ does not authorize execution.
 | condition `extra_args` | string or list of strings | String form is parsed by `shlex.split`; passed after runner-owned child arguments. |
 | condition `timeout_seconds` | integer-like or `null` | Overrides the plan timeout. |
 
-The loader rejects the complete social-memory, coalition, language, and
-coalition-dialect option families—including recognized proper prefixes and
-`--flag=value` forms—before root creation. These controls are engineering-only
-and not contracted for research-runner use.
+The loader rejects the complete social-memory, coalition, language,
+coalition-dialect, and language-contact option families—including recognized
+proper prefixes and `--flag=value` forms—before root creation. These controls
+are engineering-only and not contracted for research-runner use.
 
 ## Cell construction and command
 
@@ -156,9 +156,9 @@ The simulator creates a validated effective `SimulationConfig` from CLI
 arguments. The run manifest records this effective configuration, including
 normalization notices. Strict validation rejects malformed or contradictory
 present controls. Readiness applies an additional temporary veto: social
-memory, informal coalitions, endogenous language, and coalition dialects must
-all remain at exact disabled defaults. Enabled language milestones are
-engineering-only and valid-but-nonready.
+memory, informal coalitions, endogenous language, coalition dialects, and
+language contact must all remain at exact disabled defaults. Enabled language
+milestones are engineering-only and valid-but-nonready.
 
 The runner currently has no canonical A/C/R condition generator and does not
 enforce `metrics_only`, exact anti-stagnation/combat/raid controls, budgets, or
@@ -198,4 +198,3 @@ research tier has been authorized or run.
 - Related operations: [Operating Thalren Vale safely](../getting-started/operations.md)
 - Drafting verification: current source and tests inspected; no plan, child, or
   experiment was executed.
-

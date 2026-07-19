@@ -39,6 +39,8 @@ from thalren_vale.config import (
     COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY,
     DIALECT_NOTICE_WITHOUT_COALITIONS,
     DIALECT_NOTICE_WITHOUT_LANGUAGE,
+    LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
+    LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
     SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY,
 )
 from thalren_vale.metrics import MetricsLogger
@@ -274,6 +276,12 @@ def make_artifacts(
         "same_coalition_reinforcement_multiplier": 1.25,
         "dialect_controls_status": "disabled",
         "dialect_control_notices": [],
+        "language_contact_enabled": False,
+        "cross_group_learning_multiplier": 1.50,
+        "borrowing_exposure_threshold": 3,
+        "borrowing_confidence_threshold": 0.50,
+        "language_contact_controls_status": "disabled",
+        "language_contact_control_notices": [],
     })
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return run_dir, manifest_path
@@ -1231,6 +1239,229 @@ def test_exact_normalized_dialect_notices_remain_valid_but_not_ready(tmp_path):
 
     assert report.valid and not report.v2_ready
     assert "dialect_controls_not_v2_ready" in readiness_codes(report)
+
+
+LANGUAGE_CONTACT_CONFIGURATION_FIELDS = {
+    "language_contact_enabled",
+    "cross_group_learning_multiplier",
+    "borrowing_exposure_threshold",
+    "borrowing_confidence_threshold",
+    "language_contact_controls_status",
+    "language_contact_control_notices",
+}
+
+
+def inspect_language_contact_configuration(tmp_path, updates):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    manifest["configuration"].update(updates)
+    write_manifest(manifest_path, manifest)
+    return inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "cross_group_learning_multiplier": 1.75,
+            "language_contact_controls_status": (
+                "engineering_only_uncontracted"
+            ),
+        },
+        {
+            "borrowing_exposure_threshold": 4,
+            "language_contact_controls_status": (
+                "engineering_only_uncontracted"
+            ),
+        },
+        {
+            "borrowing_confidence_threshold": 0.60,
+            "language_contact_controls_status": (
+                "engineering_only_uncontracted"
+            ),
+        },
+        {
+            "social_memory_enabled": True,
+            "social_controls_status": "engineering_only_uncontracted",
+            "language_evolution_enabled": True,
+            "language_controls_status": "engineering_only_uncontracted",
+            "coalition_emergence_enabled": True,
+            "coalition_controls_status": "engineering_only_uncontracted",
+            "language_contact_enabled": True,
+            "language_contact_controls_status": (
+                "engineering_only_uncontracted"
+            ),
+        },
+    ],
+)
+def test_enabled_or_nondefault_contact_controls_block_v2_ready(
+    tmp_path,
+    updates,
+):
+    report = inspect_language_contact_configuration(tmp_path, updates)
+
+    assert report.valid and not report.v2_ready
+    assert "language_contact_controls_not_v2_ready" in readiness_codes(report)
+
+
+def test_enabled_contact_without_dialect_is_valid_but_not_ready(tmp_path):
+    report = inspect_language_contact_configuration(tmp_path, {
+        "social_memory_enabled": True,
+        "social_controls_status": "engineering_only_uncontracted",
+        "language_evolution_enabled": True,
+        "language_controls_status": "engineering_only_uncontracted",
+        "coalition_emergence_enabled": True,
+        "coalition_controls_status": "engineering_only_uncontracted",
+        "language_contact_enabled": True,
+        "language_contact_controls_status": "engineering_only_uncontracted",
+    })
+
+    assert report.valid and not report.v2_ready
+    assert report.manifest["configuration"][
+        "coalition_dialect_influence_enabled"
+    ] is False
+    assert "language_contact_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    sorted(LANGUAGE_CONTACT_CONFIGURATION_FIELDS),
+)
+def test_missing_historical_contact_field_is_valid_but_never_ready(
+    tmp_path,
+    missing,
+):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    del manifest["configuration"][missing]
+    write_manifest(manifest_path, manifest)
+
+    report = inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+    assert report.valid and not report.v2_ready
+    assert "language_contact_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("language_contact_enabled", 1),
+        ("cross_group_learning_multiplier", 1),
+        ("cross_group_learning_multiplier", 2.1),
+        ("borrowing_exposure_threshold", True),
+        ("borrowing_exposure_threshold", 33),
+        ("borrowing_confidence_threshold", 1),
+        ("borrowing_confidence_threshold", float("nan")),
+        ("language_contact_controls_status", "unknown"),
+        ("language_contact_control_notices", "normalized"),
+        ("language_contact_control_notices", ["invented_notice"]),
+        (
+            "language_contact_control_notices",
+            [
+                LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
+                LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
+            ],
+        ),
+        (
+            "language_contact_control_notices",
+            [
+                LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
+                LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
+            ],
+        ),
+    ],
+)
+def test_malformed_contact_field_invalidates_artifact(tmp_path, field, value):
+    report = inspect_language_contact_configuration(tmp_path, {field: value})
+
+    assert not report.valid and not report.v2_ready
+    assert "invalid_language_contact_configuration" in issue_codes(report)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"language_contact_enabled": True},
+        {
+            "language_contact_controls_status": "disabled",
+            "cross_group_learning_multiplier": 1.75,
+        },
+        {
+            "language_contact_controls_status": "normalized_uncontracted",
+            "language_contact_enabled": False,
+            "language_contact_control_notices": [],
+        },
+        {
+            "language_contact_controls_status": "normalized_uncontracted",
+            "language_contact_enabled": False,
+            "language_contact_control_notices": [
+                LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE
+            ],
+        },
+        {
+            "language_evolution_enabled": False,
+            "coalition_emergence_enabled": False,
+            "language_contact_enabled": False,
+            "language_contact_controls_status": "normalized_uncontracted",
+            "language_contact_control_notices": [
+                LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE
+            ],
+        },
+        {
+            "language_contact_controls_status": (
+                "engineering_only_uncontracted"
+            ),
+            "language_contact_enabled": False,
+        },
+        {
+            "language_contact_controls_status": (
+                "engineering_only_uncontracted"
+            ),
+            "borrowing_exposure_threshold": 4,
+            "language_contact_control_notices": [
+                LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS
+            ],
+        },
+    ],
+)
+def test_contact_requested_effective_contradictions_invalidate_artifact(
+    tmp_path,
+    updates,
+):
+    report = inspect_language_contact_configuration(tmp_path, updates)
+
+    assert not report.valid and not report.v2_ready
+    assert "invalid_language_contact_configuration" in issue_codes(report)
+
+
+def test_exact_normalized_contact_notices_are_valid_but_not_ready(tmp_path):
+    report = inspect_language_contact_configuration(tmp_path, {
+        "language_contact_enabled": False,
+        "language_contact_controls_status": "normalized_uncontracted",
+        "language_contact_control_notices": sorted([
+            LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
+            LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
+        ]),
+    })
+
+    assert report.valid and not report.v2_ready
+    assert "language_contact_controls_not_v2_ready" in readiness_codes(report)
 
 
 @pytest.mark.parametrize(

@@ -58,6 +58,10 @@ DEFAULT_MAXIMUM_ACTIVE_COALITIONS = 32
 DEFAULT_COALITION_DIALECT_INFLUENCE_ENABLED = False
 DEFAULT_SAME_COALITION_LEARNING_MULTIPLIER = 1.50
 DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER = 1.25
+DEFAULT_LANGUAGE_CONTACT_ENABLED = False
+DEFAULT_CROSS_GROUP_LEARNING_MULTIPLIER = 1.50
+DEFAULT_BORROWING_EXPOSURE_THRESHOLD = 3
+DEFAULT_BORROWING_CONFIDENCE_THRESHOLD = 0.50
 FACTION_TRUST_THRESHOLD = DEFAULT_FACTION_TRUST_THRESHOLD
 WAR_TENSION_THRESHOLD = DEFAULT_WAR_TENSION_THRESHOLD
 BELIEF_SHARING_PROBABILITY = DEFAULT_BELIEF_SHARING_PROBABILITY
@@ -133,6 +137,22 @@ VALID_DIALECT_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE = (
+    'language_contact_requested_without_language'
+)
+LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS = (
+    'language_contact_requested_without_coalitions'
+)
+VALID_LANGUAGE_CONTACT_CONTROL_NOTICES = frozenset({
+    LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
+    LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
+})
+VALID_LANGUAGE_CONTACT_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
 
 @dataclass(frozen=True)
 class SocialMemoryConfig:
@@ -177,6 +197,16 @@ class CoalitionDialectConfig:
     coalition_dialect_influence_enabled: bool
     same_coalition_learning_multiplier: float
     same_coalition_reinforcement_multiplier: float
+
+
+@dataclass(frozen=True)
+class LanguageContactConfig:
+    """Effective engineering-only cross-coalition language controls."""
+
+    language_contact_enabled: bool
+    cross_group_learning_multiplier: float
+    borrowing_exposure_threshold: int
+    borrowing_confidence_threshold: float
 
 
 @dataclass(frozen=True)
@@ -225,6 +255,16 @@ class SimulationConfig:
     same_coalition_reinforcement_multiplier: float = (
         DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER
     )
+    language_contact_enabled: bool = DEFAULT_LANGUAGE_CONTACT_ENABLED
+    cross_group_learning_multiplier: float = (
+        DEFAULT_CROSS_GROUP_LEARNING_MULTIPLIER
+    )
+    borrowing_exposure_threshold: int = (
+        DEFAULT_BORROWING_EXPOSURE_THRESHOLD
+    )
+    borrowing_confidence_threshold: float = (
+        DEFAULT_BORROWING_CONFIDENCE_THRESHOLD
+    )
     social_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     language_control_notices: tuple[str, ...] = field(
@@ -232,6 +272,8 @@ class SimulationConfig:
     coalition_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     dialect_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    language_contact_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -271,6 +313,22 @@ class SimulationConfig:
             self,
             'dialect_control_notices',
             tuple(sorted(dialect_notices)),
+        )
+
+        contact_notices: list[str] = []
+        if self.language_contact_enabled is True:
+            if self.language_evolution_enabled is False:
+                contact_notices.append(
+                    LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE)
+            if self.coalition_emergence_enabled is False:
+                contact_notices.append(
+                    LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS)
+            if contact_notices:
+                object.__setattr__(self, 'language_contact_enabled', False)
+        object.__setattr__(
+            self,
+            'language_contact_control_notices',
+            tuple(sorted(contact_notices)),
         )
 
     @classmethod
@@ -426,6 +484,28 @@ class SimulationConfig:
                 ) is None
                 else args.same_coalition_reinforcement_multiplier
             ),
+            language_contact_enabled=(
+                bool(getattr(args, 'enable_language_contact', False))
+                and not bool(getattr(args, 'disable_language_contact', False))
+            ),
+            cross_group_learning_multiplier=(
+                DEFAULT_CROSS_GROUP_LEARNING_MULTIPLIER
+                if getattr(
+                    args, 'cross_group_learning_multiplier', None) is None
+                else args.cross_group_learning_multiplier
+            ),
+            borrowing_exposure_threshold=(
+                DEFAULT_BORROWING_EXPOSURE_THRESHOLD
+                if getattr(
+                    args, 'borrowing_exposure_threshold', None) is None
+                else args.borrowing_exposure_threshold
+            ),
+            borrowing_confidence_threshold=(
+                DEFAULT_BORROWING_CONFIDENCE_THRESHOLD
+                if getattr(
+                    args, 'borrowing_confidence_threshold', None) is None
+                else args.borrowing_confidence_threshold
+            ),
         )
         instance.validate()
         return instance
@@ -580,6 +660,49 @@ class SimulationConfig:
         ):
             raise ValueError(
                 'dialect normalization notices require disabled influence')
+        if type(self.language_contact_enabled) is not bool:
+            raise ValueError('language contact setting must be boolean')
+        if self.language_contact_enabled and (
+            not self.language_evolution_enabled
+            or not self.coalition_emergence_enabled
+        ):
+            raise ValueError(
+                'language contact requires language evolution and coalition '
+                'emergence')
+        if (
+            type(self.cross_group_learning_multiplier) is not float
+            or not math.isfinite(self.cross_group_learning_multiplier)
+            or not 1.0 <= self.cross_group_learning_multiplier <= 2.0
+        ):
+            raise ValueError(
+                'cross-group learning multiplier must be a finite float from '
+                '1.0 to 2.0')
+        if (
+            type(self.borrowing_exposure_threshold) is not int
+            or not 2 <= self.borrowing_exposure_threshold <= 32
+        ):
+            raise ValueError(
+                'borrowing exposure threshold must be an integer from 2 to 32')
+        if (
+            type(self.borrowing_confidence_threshold) is not float
+            or not math.isfinite(self.borrowing_confidence_threshold)
+            or not 0.10 <= self.borrowing_confidence_threshold <= 1.0
+        ):
+            raise ValueError(
+                'borrowing confidence threshold must be a finite float from '
+                '0.10 to 1.0')
+        if any(
+            notice not in VALID_LANGUAGE_CONTACT_CONTROL_NOTICES
+            for notice in self.language_contact_control_notices
+        ):
+            raise ValueError(
+                'unknown language contact control normalization notice')
+        if (
+            self.language_contact_control_notices
+            and self.language_contact_enabled
+        ):
+            raise ValueError(
+                'language contact normalization notices require disabled contact')
 
     def apply_legacy_globals(self) -> None:
         """Keep modules using legacy constants synchronized during migration."""
@@ -606,6 +729,7 @@ class SimulationConfig:
         result.pop('language_control_notices', None)
         result.pop('coalition_control_notices', None)
         result.pop('dialect_control_notices', None)
+        result.pop('language_contact_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
@@ -619,6 +743,10 @@ class SimulationConfig:
         result['dialect_control_notices'] = list(
             self.dialect_control_notices)
         result['dialect_controls_status'] = self.dialect_controls_status
+        result['language_contact_control_notices'] = list(
+            self.language_contact_control_notices)
+        result['language_contact_controls_status'] = (
+            self.language_contact_controls_status)
         return result
 
     @property
@@ -742,4 +870,33 @@ class SimulationConfig:
             same_coalition_reinforcement_multiplier=(
                 self.same_coalition_reinforcement_multiplier
             ),
+        )
+
+    @property
+    def language_contact_controls_status(self) -> str:
+        """Return provenance status for uncontracted contact controls."""
+        if self.language_contact_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.language_contact_enabled
+            or self.cross_group_learning_multiplier
+            != DEFAULT_CROSS_GROUP_LEARNING_MULTIPLIER
+            or self.borrowing_exposure_threshold
+            != DEFAULT_BORROWING_EXPOSURE_THRESHOLD
+            or self.borrowing_confidence_threshold
+            != DEFAULT_BORROWING_CONFIDENCE_THRESHOLD
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def language_contact_config(self) -> LanguageContactConfig:
+        """Return immutable effective language-contact controls."""
+        return LanguageContactConfig(
+            language_contact_enabled=self.language_contact_enabled,
+            cross_group_learning_multiplier=(
+                self.cross_group_learning_multiplier),
+            borrowing_exposure_threshold=self.borrowing_exposure_threshold,
+            borrowing_confidence_threshold=(
+                self.borrowing_confidence_threshold),
         )

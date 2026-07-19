@@ -8,10 +8,15 @@ flowchart LR
     GRAPH[Reciprocal qualifying graph]
     COAL[Informal coalition transition]
     SNAP[Frozen prior-observation membership]
+    CLASS[Shared coalition communication context]
     COMM[Authentic communication]
     INTERP[Pre-learning interpretation]
     UPDATE[Individual language update]
-    SUMMARY[On-demand dialect summary]
+    ACQUIRE[Stronger positive receiver acquisition]
+    EXPOSURE[Bounded cross-boundary exposure]
+    BORROW[Contact-qualified borrowing promotion]
+    MIXED[Mixed individual vocabulary]
+    SUMMARY[On-demand dialect/contact summaries]
     NOCOAL[No language feedback to coalition lifecycle]
     NOTRANSFER[No language feedback to transfer success]
 
@@ -21,11 +26,18 @@ flowchart LR
     REL --> GRAPH
     GRAPH --> COAL
     COAL --> SNAP
+    SNAP --> CLASS
     TRANSFER --> COMM
-    SNAP -->|same-coalition rates only| COMM
+    CLASS -->|same coalition: optional dialect rates| COMM
     COMM --> INTERP
     INTERP --> UPDATE
+    CLASS -->|different active coalitions only| ACQUIRE
+    INTERP --> ACQUIRE
+    ACQUIRE --> EXPOSURE
+    EXPOSURE --> BORROW
+    BORROW --> MIXED
     UPDATE -. frequency observation .-> SUMMARY
+    MIXED -. contact observation .-> SUMMARY
 
     UPDATE -. intentional isolation .-> NOCOAL
     UPDATE -. intentional isolation .-> NOTRANSFER
@@ -34,4 +46,5 @@ flowchart LR
 The dotted isolation edges document that vocabulary and interpretation do not
 affect coalition lifecycle or transfer success. Layer-1 swaps, raids,
 proximity alone, timers, and maintenance passes do not create authentic
-language communication.
+language communication. Assigned/unassigned and both-unassigned communication
+do not enter the contact chain; they retain base Language v1 behavior.

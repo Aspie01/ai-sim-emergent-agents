@@ -47,6 +47,8 @@ from .artifact_contract import (
 from .config import (
     DEFAULT_COALITION_EMERGENCE_ENABLED,
     DEFAULT_COALITION_DIALECT_INFLUENCE_ENABLED,
+    DEFAULT_BORROWING_CONFIDENCE_THRESHOLD,
+    DEFAULT_BORROWING_EXPOSURE_THRESHOLD,
     DEFAULT_COALITION_FAMILIARITY_THRESHOLD,
     DEFAULT_COALITION_MAXIMUM_GRIEVANCE,
     DEFAULT_COALITION_MINIMUM_SIZE,
@@ -54,6 +56,7 @@ from .config import (
     DEFAULT_COALITION_TRUST_THRESHOLD,
     DEFAULT_MAXIMUM_ACTIVE_COALITIONS,
     DEFAULT_LANGUAGE_EVOLUTION_ENABLED,
+    DEFAULT_LANGUAGE_CONTACT_ENABLED,
     DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
     DEFAULT_LANGUAGE_INVENTION_ENABLED,
     DEFAULT_LANGUAGE_LEARNING_RATE,
@@ -62,10 +65,13 @@ from .config import (
     DEFAULT_MAXIMUM_SIGNAL_LENGTH,
     DEFAULT_MAXIMUM_SOCIAL_TIES,
     DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
+    DEFAULT_CROSS_GROUP_LEARNING_MULTIPLIER,
     DEFAULT_SAME_COALITION_LEARNING_MULTIPLIER,
     DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER,
     DIALECT_NOTICE_WITHOUT_COALITIONS,
     DIALECT_NOTICE_WITHOUT_LANGUAGE,
+    LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
+    LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
     VALID_COALITION_CONTROL_NOTICES,
     VALID_COALITION_CONTROL_STATUSES,
     VALID_DISABLE_LAYERS,
@@ -73,6 +79,8 @@ from .config import (
     VALID_DIALECT_CONTROL_STATUSES,
     VALID_LANGUAGE_CONTROL_NOTICES,
     VALID_LANGUAGE_CONTROL_STATUSES,
+    VALID_LANGUAGE_CONTACT_CONTROL_NOTICES,
+    VALID_LANGUAGE_CONTACT_CONTROL_STATUSES,
     VALID_LOG_MODES,
     VALID_SOCIAL_CONTROL_NOTICES,
     VALID_SOCIAL_CONTROL_STATUSES,
@@ -971,6 +979,176 @@ def _validate_dialect_configuration(
         _add(
             issues,
             "invalid_dialect_configuration",
+            message,
+            "manifest",
+        )
+
+
+def _validate_language_contact_configuration(
+    config: dict,
+    issues: _IssueCollector,
+) -> None:
+    """Validate present language-contact controls and dependency provenance."""
+
+    def finite_multiplier(value: object) -> bool:
+        return (
+            type(value) is float
+            and math.isfinite(value)
+            and 1.0 <= value <= 2.0
+        )
+
+    def finite_confidence(value: object) -> bool:
+        return (
+            type(value) is float
+            and math.isfinite(value)
+            and 0.10 <= value <= 1.0
+        )
+
+    validators = {
+        "language_contact_enabled": _is_bool,
+        "cross_group_learning_multiplier": finite_multiplier,
+        "borrowing_exposure_threshold": (
+            lambda value: _is_int(value) and 2 <= value <= 32
+        ),
+        "borrowing_confidence_threshold": finite_confidence,
+        "language_contact_controls_status": (
+            lambda value: _is_str(value)
+            and value in VALID_LANGUAGE_CONTACT_CONTROL_STATUSES
+        ),
+        "language_contact_control_notices": (
+            lambda value: _is_list(value)
+            and all(
+                _is_str(item)
+                and item in VALID_LANGUAGE_CONTACT_CONTROL_NOTICES
+                for item in value
+            )
+            and len(value) == len(set(value))
+            and value == sorted(value)
+        ),
+    }
+    valid_present: set[str] = set()
+    for name, validator in validators.items():
+        if name not in config:
+            continue
+        if not validator(config[name]):
+            _add(
+                issues,
+                "invalid_language_contact_configuration",
+                f"{name} is malformed",
+                "manifest",
+            )
+        else:
+            valid_present.add(name)
+
+    contact_present = "language_contact_enabled" in valid_present
+    status_present = "language_contact_controls_status" in valid_present
+    notices_present = "language_contact_control_notices" in valid_present
+    language_present = (
+        "language_evolution_enabled" in config
+        and _is_bool(config.get("language_evolution_enabled"))
+    )
+    coalitions_present = (
+        "coalition_emergence_enabled" in config
+        and _is_bool(config.get("coalition_emergence_enabled"))
+    )
+    contact_enabled = (
+        config["language_contact_enabled"] if contact_present else None
+    )
+    status = (
+        config["language_contact_controls_status"]
+        if status_present else None
+    )
+    notices = (
+        config["language_contact_control_notices"]
+        if notices_present else None
+    )
+    errors: list[str] = []
+
+    def add_error(message: str) -> None:
+        if message not in errors:
+            errors.append(message)
+
+    if contact_enabled is True:
+        if language_present and not config["language_evolution_enabled"]:
+            add_error("enabled language contact requires language evolution")
+        if coalitions_present and not config["coalition_emergence_enabled"]:
+            add_error("enabled language contact requires coalition emergence")
+        if notices_present and notices:
+            add_error("enabled language contact conflicts with normalization notices")
+
+    if notices_present:
+        assert type(notices) is list
+        language_notice = LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE in notices
+        coalition_notice = LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS in notices
+        if contact_enabled is True and notices:
+            add_error("normalization notices require disabled language contact")
+        if language_present:
+            if config["language_evolution_enabled"] and language_notice:
+                add_error(
+                    "language contact dependency notice conflicts with effective language")
+            if (
+                notices
+                and not config["language_evolution_enabled"]
+                and not language_notice
+            ):
+                add_error(
+                    "normalized language contact lacks the language dependency notice")
+        if coalitions_present:
+            if config["coalition_emergence_enabled"] and coalition_notice:
+                add_error(
+                    "language contact dependency notice conflicts with effective coalitions")
+            if (
+                notices
+                and not config["coalition_emergence_enabled"]
+                and not coalition_notice
+            ):
+                add_error(
+                    "normalized language contact lacks the coalition dependency notice")
+
+    defaults = {
+        "language_contact_enabled": DEFAULT_LANGUAGE_CONTACT_ENABLED,
+        "cross_group_learning_multiplier": (
+            DEFAULT_CROSS_GROUP_LEARNING_MULTIPLIER
+        ),
+        "borrowing_exposure_threshold": DEFAULT_BORROWING_EXPOSURE_THRESHOLD,
+        "borrowing_confidence_threshold": (
+            DEFAULT_BORROWING_CONFIDENCE_THRESHOLD
+        ),
+    }
+    present_controls = set(defaults).intersection(valid_present)
+    controls_complete = set(defaults) <= valid_present
+    any_nondefault = any(
+        not _exact_equal(config[name], defaults[name])
+        for name in present_controls
+    )
+
+    if status == "disabled":
+        if any_nondefault:
+            add_error("disabled language contact status conflicts with present controls")
+        if notices_present and notices:
+            add_error("disabled language contact status requires exact empty notices")
+    elif status == "normalized_uncontracted":
+        if contact_enabled is True:
+            add_error("normalized language contact status requires disabled contact")
+        if not notices_present or not notices:
+            add_error("normalized language contact status requires a dependency notice")
+    elif status == "engineering_only_uncontracted":
+        if notices_present and notices:
+            add_error(
+                "engineering language contact status conflicts with normalization notices")
+        if controls_complete and not any_nondefault:
+            add_error(
+                "engineering language contact status requires a nondefault control")
+
+    if notices_present and notices and status_present and (
+        status != "normalized_uncontracted"
+    ):
+        add_error("language contact status conflicts with normalization notices")
+
+    for message in errors:
+        _add(
+            issues,
+            "invalid_language_contact_configuration",
             message,
             "manifest",
         )
@@ -2065,6 +2243,28 @@ def _readiness_issues(
                 f"found {actual!r}",
                 "manifest",
             )
+    safe_language_contact_controls = {
+        "language_contact_enabled": DEFAULT_LANGUAGE_CONTACT_ENABLED,
+        "cross_group_learning_multiplier": (
+            DEFAULT_CROSS_GROUP_LEARNING_MULTIPLIER
+        ),
+        "borrowing_exposure_threshold": DEFAULT_BORROWING_EXPOSURE_THRESHOLD,
+        "borrowing_confidence_threshold": (
+            DEFAULT_BORROWING_CONFIDENCE_THRESHOLD
+        ),
+        "language_contact_controls_status": "disabled",
+        "language_contact_control_notices": [],
+    }
+    for name, expected in safe_language_contact_controls.items():
+        actual = config.get(name)
+        if not _exact_equal(actual, expected):
+            _add(
+                issues,
+                "language_contact_controls_not_v2_ready",
+                f"configuration.{name}: expected {expected!r}, "
+                f"found {actual!r}",
+                "manifest",
+            )
     if contract is None:
         _add(issues, "missing_expected_run_contract", "no complete external expected-run contract was supplied", "manifest")
         return issues.materialize()
@@ -2237,6 +2437,7 @@ def _validate_strict(
         _validate_language_configuration(config, issues)
         _validate_coalition_configuration(config, issues)
         _validate_dialect_configuration(config, issues)
+        _validate_language_contact_configuration(config, issues)
     execution_mode = manifest.get("execution_mode")
     if not _is_str(execution_mode) or execution_mode not in {"serial", "threaded"}:
         _add(issues, "invalid_execution_mode", repr(manifest.get("execution_mode")), "manifest")

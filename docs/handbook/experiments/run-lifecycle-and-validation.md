@@ -119,9 +119,9 @@ fingerprint. Consequently current real runner output is at most
 `schema2_valid`, not `v2_ready`.
 
 Readiness additionally vetoes nondefault social-memory, coalition, language,
-and dialect controls. Missing historical controls may remain valid but cannot
-become ready; malformed or contradictory present fields make the artifact
-invalid.
+dialect, and language-contact controls. Missing historical controls may remain
+valid but cannot become ready; malformed or contradictory present fields make
+the artifact invalid.
 
 ## Batch result persistence
 

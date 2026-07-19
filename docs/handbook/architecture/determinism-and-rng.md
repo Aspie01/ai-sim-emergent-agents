@@ -20,6 +20,7 @@ directly and also needs the environment variable set explicitly.
 | Endogenous language | SHA-256 counter derivation, no RNG object | Per-agent signal invention |
 | Social/coalition maintenance | No RNG | Stable-ID canonical transitions |
 | Dialect classification/summary | No RNG | Snapshot lookup and frequency arithmetic |
+| Language contact/summary | No RNG | Positive learning arithmetic, bounded metadata, aggregate frequencies |
 | Events/metrics/hash/validation | No intended RNG | Observation only |
 | Plugins | Arbitrary Python | May consume global RNG, time, network, or other entropy |
 | Mythology | External local-model request | Optional nondeterministic prose, outside canonical hash |
@@ -32,11 +33,11 @@ The invention domain is:
 thalren-vale:endogenous-language-v1|seed=<seed>
 ```
 
-Signal derivation additionally uses inventor stable ID, meaning, and that agent’s next invention index. One inhabitant’s invention does not advance another’s stream, and enabling language/dialects does not consume simulation RNG.
+Signal derivation additionally uses inventor stable ID, meaning, and that agent’s next invention index. One inhabitant’s invention does not advance another’s stream, and enabling language/dialects/contact does not consume simulation RNG.
 
 ## Canonical ordering
 
-The selected-state hash and newer summaries explicitly sort or canonically traverse identities, mappings, relationships, coalition records, meanings, and signals. JSON uses sorted keys before SHA-256. Coalition algorithms use stable IDs and quantized edge strength; dialect summaries aggregate commutatively and sort only bounded result keys.
+The selected-state hash and newer summaries explicitly sort or canonically traverse identities, mappings, relationships, coalition records, meanings, and signals. JSON uses sorted keys before SHA-256. Coalition algorithms use stable IDs and quantized edge strength; dialect/contact summaries aggregate commutatively and sort only bounded result keys. Contact summaries consume the population once and use frequency-square arithmetic rather than pair enumeration.
 
 ## What the final hash proves
 
@@ -54,7 +55,7 @@ Important omitted categories include plugin inventory/internal state, RNG state,
 
 ## Reset behavior
 
-Repeated in-process runs call `reset_runtime_state()`. It validates all unique living/dead agent language states and language/dialect runtimes before clearing core state. Normal `run()` then reseeds and regenerates the world. Dashboard reputation history is not cleared by this reset, but it is diagnostic and excluded from the hash.
+Repeated in-process runs call `reset_runtime_state()`. It validates all unique living/dead agent language states and language/dialect/contact runtimes before clearing core state. Hidden disabled contact metadata fails before mutation. Normal `run()` then reseeds and regenerates the world. Dashboard reputation history is not cleared by this reset, but it is diagnostic and excluded from the hash.
 
 ## Pinned compatibility values
 

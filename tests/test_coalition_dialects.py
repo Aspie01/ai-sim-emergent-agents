@@ -1291,15 +1291,21 @@ def test_dialect_summary_population_and_association_work_is_linear(
             "sorted_sizes": [],
         }
 
-        def counted_state_validation(state, *, config):
+        def counted_state_validation(state, *, config, **kwargs):
             counts["state_validations"] += 1
-            return real_validate_state(state, config=config)
+            return real_validate_state(state, config=config, **kwargs)
 
-        def counted_association_validation(association, *, maximum_signal_length):
+        def counted_association_validation(
+            association,
+            *,
+            maximum_signal_length,
+            **kwargs,
+        ):
             counts["association_validations"] += 1
             return real_validate_association(
                 association,
                 maximum_signal_length=maximum_signal_length,
+                **kwargs,
             )
 
         def counted_selection(state, meaning):

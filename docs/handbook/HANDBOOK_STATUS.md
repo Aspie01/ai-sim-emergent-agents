@@ -3,13 +3,19 @@
 ## Recorded revision
 
 - Handbook: Living Technical Handbook v0.1
-- Documented branch: `docs/technical-handbook-v0.1`
-- Documented commit: `23ef5dad78a86cbcf699dc0192373a3416eafc06`
-- Source feature equivalence: `feature/coalition-dialects-v1` points to the same commit
-- Generation date: 2026-07-12 (Canada/Eastern)
-- Working-tree caveat: the source tree was clean at reconnaissance start. Handbook files are intentionally uncommitted documentation additions, so the final working tree is expected to show `docs/handbook/` as untracked until the owner chooses a later Git action.
+- Documented branch: `feature/language-contact-v1`
+- Base `HEAD` commit: `83df90247b1226f0535df1a5c71a4ddb60b3bc45`
+- Documented implementation state: approved Language Contact v1 source and
+  tests in the uncommitted branch working tree
+- Update date: 2026-07-18 (Canada/Eastern)
+- Working-tree caveat: the commit identifies the base revision and does not by
+  itself contain Language Contact v1. The feature implementation, tests, and
+  handbook updates remain uncommitted branch work until the final feature
+  commit. Existing non-handbook changes are intentionally preserved.
 
-This handbook is authoritative for the recorded source revision. It remains explicitly versioned and must be refreshed when current behavior changes.
+This handbook is authoritative for the recorded branch working-tree state and
+base commit described above. It remains explicitly versioned and must be
+refreshed when current behavior changes.
 
 ## Source-of-truth hierarchy
 
@@ -36,6 +42,7 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | Informal coalitions | Implemented but experimental; Disabled by default; Engineering-only |
 | Endogenous Language v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Coalition Dialects v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Language Contact v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Combat, technology, diplomacy and religion | Implemented but experimental |
 | Structured events, metrics, manifests and deep validation | Stable and verified engineering infrastructure |
 | Dashboard, RA tracker and mythology | Optional/diagnostic; mythology and RA disabled by default |
@@ -51,7 +58,6 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | Checkpoint, PRNG restoration or event replay | Planned, not implemented |
 | Immutable experiment attempts, ledger, selection and safe resume | Planned, not implemented |
 | Clean-tag/environment/plugin preflight and V2 matrix orchestration | Planned, not implemented |
-| `feature/language-contact-v1` | Planned, not implemented |
 | `feature/intergenerational-language-v1` | Planned, not implemented |
 | `feature/lexical-evolution-v1` | Planned, not implemented |
 | `feature/compositional-protolanguage-v1` | Planned, not implemented |
@@ -61,9 +67,30 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 
 No final language research hypotheses, estimands, metrics, evidence contracts, or readiness claims are defined here.
 
+## Language roadmap
+
+Completed engineering implementations:
+
+- `feature/endogenous-language-v1`
+- `feature/coalition-dialects-v1`
+- `feature/language-contact-v1`
+
+Planned, not implemented:
+
+- `feature/intergenerational-language-v1` — **Planned, not implemented**
+- `feature/lexical-evolution-v1` — **Planned, not implemented**
+- `feature/compositional-protolanguage-v1` — **Planned, not implemented**
+- `feature/grammar-evolution-v1` — **Planned, not implemented**
+- `feature/language-coevolution-v1` — **Planned, not implemented**
+- `feature/language-research-readiness-v1` — **Planned, not implemented**
+
 ## Current branch work
 
-The production commit already contains Endogenous Language v1 and Coalition Dialects v1. Current uncommitted work is documentation and the bounded documentation validator only; no simulation behavior, configuration, artifact schema, runner behavior, or research output is intentionally changed.
+The branch working tree contains the approved Language Contact v1 implementation
+and tests. This handbook pass changes only `docs/handbook/`; it does not change
+simulation behavior, configuration, artifact schemas, runner behavior, or
+research output. The handbook files are themselves uncommitted branch work
+until the final feature commit.
 
 ## Unresolved questions
 
@@ -93,7 +120,7 @@ Final result:
   cadence, dashboard symbol, and structured-event terminology.
 - Scoped auditor rechecks passed after correction.
 
-## Verification commands and results
+## Initial v0.1 verification record
 
 ```bash
 python docs/handbook/validate_handbook.py
@@ -122,7 +149,24 @@ Results at completion:
 
 No plan, experiment matrix, research tier, benchmark, historical evidence scan,
 or canonical repository evidence root was executed or created by this
-documentation run.
+initial documentation run.
+
+## Language Contact v1 handbook refresh verification
+
+```bash
+python docs/handbook/validate_handbook.py
+python -m compileall -q docs/handbook
+git diff --check
+```
+
+Results on 2026-07-18:
+
+- Handbook validator: passed, 40 Markdown pages; all required links and
+  repository references resolved.
+- Handbook Python compilation: passed.
+- `git diff --check`: passed.
+- No simulator, experiment, matrix, benchmark, historical scan, research tier,
+  or canonical-output command was run. No research output was created.
 
 ## Known documentation limitations
 

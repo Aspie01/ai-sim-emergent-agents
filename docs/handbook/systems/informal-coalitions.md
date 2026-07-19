@@ -120,8 +120,9 @@ object. Its summaries are on-demand engineering observations.
 
 Coalition transition runs once per enabled tick in the end-of-tick emergent-state
 pass. Relationship maintenance runs first, coalition transition second, and
-language maintenance third. Consequently the next tick's dialect snapshot sees
-the last fully committed coalition observation. See
+language maintenance third. Consequently the next tick's shared
+coalition-language snapshot sees the last fully committed coalition
+observation whenever dialect or contact classification needs it. See
 [Causal chains](../architecture/causal-chains.md).
 
 ## 10. Connections to other systems
@@ -132,7 +133,8 @@ the last fully committed coalition observation. See
 | Population/death | Population → coalition | Active stable IDs | End of tick | Removes dead members and can split/dissolve |
 | Formal factions | Intentionally isolated | None | All times | Memberships may overlap arbitrarily |
 | Coalition dialects | Coalition → dialect | Frozen IDs and membership | Next tick before economy | Classifies authentic communication |
-| Language | Intentionally one-way | Coalition membership may adjust learning | Economy communication | Language never changes coalition lifecycle |
+| Language contact | Coalition → language context | Frozen different-coalition classification | Next tick economy communication | May strengthen acquisition and record borrowing only |
+| Language | Intentionally one-way | Coalition membership may adjust or qualify language learning | Economy communication | Language never changes coalition lifecycle |
 | Hashing | Coalition → manifest hash | Canonical runtime | Finalization | Detects enabled state changes |
 
 ## 11. Configuration
@@ -202,7 +204,8 @@ topologies, overlap priority, joining, simultaneous joins, splitting,
 dissolution, death, decay, capacity overflow, rollback, IDs, bounded state, and
 RNG/faction isolation. `tests/test_language_interaction_hooks.py` verifies the
 social → coalition → language maintenance order. `tests/test_coalition_dialects.py`
-proves language results cannot affect the next coalition transition. See
+and `tests/test_language_contact.py` prove language results cannot affect the
+next coalition transition. See
 [Test reference](../reference/test-reference.md).
 
 ## 17. Worked example
@@ -255,6 +258,7 @@ research-ready.
 - `tests/test_informal_coalitions.py`
 - `tests/test_language_interaction_hooks.py`
 - `tests/test_coalition_dialects.py`
+- `tests/test_language_contact.py`
 - `tests/test_reproducibility.py`
 - `tests/test_config.py`
 - `tests/test_artifact_validation.py`

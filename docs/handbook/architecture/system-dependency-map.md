@@ -13,6 +13,7 @@
 | Informal coalitions | Reciprocal relationship topology | Prior-membership dialect context and enabled hash |
 | Endogenous language | Committed transfer opportunities, per-agent lexicons | Per-agent vocabulary and enabled hash only |
 | Coalition dialects | Prior committed coalition snapshot | Language learning/reinforcement rates only |
+| Language contact | Authentic different-coalition communication, prior committed coalition snapshot | Positive receiver acquisition, bounded exposure/borrowing metadata, enabled hash only |
 | Combat | Formal factions, rivalry, treaties, technology, religion | Deaths, faction/territory/reputation/tribute state |
 | Technology | Factions, beliefs, pooled resources, war state | Resources, health, movement, combat/raid modifiers, diplomacy |
 | Diplomacy | Factions, beliefs, rivalry, wars, reputation | Treaties, reputation, surrender/membership state |
@@ -32,15 +33,17 @@ Legend: `C` direct causal call/mutation; `R` reads shared state; `E` event/obser
 | Formal factions | C | C | C | C | - | - | - | C | E/H |
 | Economy | C | C | C | C | C | - | C opportunity | C rivalry/treaty | E/H |
 | Relationships | - | C | - | C partner bias | C | C | - | - | H |
-| Informal coalitions | - | - | - | - | R | C | C context only | - | H |
-| Language/dialects | - | - | - | - | - | - | C | - | H |
+| Informal coalitions | - | - | - | - | R | C | C dialect/contact context only | - | H |
+| Language/dialects/contact | - | - | - | - | - | - | C | - | H |
 | Combat/civics | C | C | C | C | - | - | - | C | E/H |
 | Plugins | C | C | R snapshot | - | - | - | - | - | E/H |
 | Observation | E | E | E | E | H | H | H | E | C artifacts |
 
 ## Intentionally absent paths
 
-- Language -> transfer success, partner choice, relationships, formal factions, coalitions, combat, health, reproduction, movement, survival, population.
+- Language, dialect, or contact state -> transfer success, partner choice,
+  relationships, formal factions, coalitions, combat, health, reproduction,
+  movement, survival, population.
 - Informal coalition -> economy eligibility/success, relationship update, formal-faction lifecycle, combat, resources, survival.
 - Metrics/logging/dashboard -> authoritative simulation decisions.
 - Formal-faction identity -> informal-coalition eligibility.
@@ -50,11 +53,14 @@ Legend: `C` direct causal call/mutation; `R` reads shared state; `E` event/obser
 
 - Economy precedes combat/diplomacy, so current-tick war and treaty changes generally affect economy next tick.
 - Social maintenance precedes coalition transition, so death cleanup/decay applies before graph detection.
-- Current coalition transition happens after economy, while dialect communication uses the frozen prior observation.
+- Current coalition transition happens after economy, while dialect/contact
+  communication uses the frozen prior observation.
 - Observation happens after anti-stagnation and emergent maintenance.
 
 ## Implementation evidence
 
 - Exact calls: `src/thalren_vale/sim.py`.
 - Authentic hooks: `src/thalren_vale/economy.py`.
-- Isolation tests: `tests/test_language_interaction_hooks.py`, `tests/test_coalition_dialects.py`, `tests/test_informal_coalitions.py`.
+- Isolation tests: `tests/test_language_interaction_hooks.py`,
+  `tests/test_coalition_dialects.py`, `tests/test_language_contact.py`,
+  `tests/test_informal_coalitions.py`.

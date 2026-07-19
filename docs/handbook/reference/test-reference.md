@@ -44,7 +44,8 @@ git diff --check
 | `tests/test_social_interaction_hooks.py` | Exact committed aid/trade relationship hooks and rollback isolation | Every possible future interaction hook |
 | `tests/test_social_partner_choice.py` | Bounded relationship-biased partner ordering and disabled behavior | Long-run network effects |
 | `tests/test_informal_coalitions.py` | Coalition graph inputs, persistence/lifecycle, hashing, reset, complexity regressions | Language-driven coalition feedback, which is intentionally absent |
-| `tests/test_coalition_dialects.py` | Snapshot provenance/freshness, exact contexts/counters/rates, transactional isolation, summaries, one-pass complexity, lifecycle vocabulary persistence | Language contact, inheritance, grammar, or research-ready dialect metrics |
+| `tests/test_coalition_dialects.py` | Snapshot provenance/freshness, exact contexts/counters/rates, transactional isolation, summaries, one-pass complexity, lifecycle vocabulary persistence | Inheritance, grammar, or research-ready dialect metrics |
+| `tests/test_language_contact.py` | Different-coalition qualification, positive acquisition, bounded exposure/provenance, promotion precedence, rollback, summaries, one-pass complexity and causal isolation | Population-level contact effects or research-ready convergence endpoints |
 | `tests/test_language_evolution.py` | Language states, signals, learning, reinforcement, forgetting, pruning, transactionality | Scientific claims about language emergence |
 | `tests/test_language_interaction_hooks.py` | Exact authentic committed-transfer communication hooks | Proximity/background conversation, which is intentionally absent |
 | `tests/test_language_reproducibility.py` | Language determinism, hashing, RNG/state isolation | General reproducibility across unrecorded environments/plugins |
@@ -64,6 +65,7 @@ Use focused tests before the full suite when changing one subsystem:
 
 ```bash
 python -m pytest -q tests/test_coalition_dialects.py
+python -m pytest -q tests/test_language_contact.py
 python -m pytest -q tests/test_language_evolution.py tests/test_language_interaction_hooks.py
 python -m pytest -q tests/test_artifact_validation.py tests/test_experiment_runner.py
 python -m pytest -q tests/test_run_termination.py tests/test_reproducibility.py
@@ -76,8 +78,8 @@ Full tiers and must not be reported as experimental evidence.
 
 The suite uses deterministic seeds, subprocess isolation, canonical state
 hashes, reset tests, and pinned disabled-path hashes. It also checks that
-language/coalition instrumentation does not consume unrelated RNG or alter
-disabled baselines.
+language/coalition/dialect/contact instrumentation does not consume unrelated
+RNG or alter disabled baselines.
 
 This supports implementation reproducibility under the tested environment and
 contracts. It does not seal:
@@ -114,7 +116,8 @@ Current tests do not establish:
 - mythology/network-provider reproducibility;
 - plugin process isolation;
 - performance claims without an authorized controlled benchmark;
-- final language research contracts or planned future language milestones.
+- final language research contracts or planned future language milestones such
+  as inheritance, lexical evolution, composition, grammar, and coevolution.
 
 ## Evidence standard for documentation
 

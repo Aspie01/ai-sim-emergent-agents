@@ -348,13 +348,26 @@ Suppose rivalry between factions A and B reaches 200. If A has no threshold-chan
 
 ## 19. Future extensions
 
-Language-driven combat, diplomacy, religion, partner choice, formal faction identity, or coevolution are **Planned, not implemented**. The future milestones `feature/language-contact-v1`, `feature/intergenerational-language-v1`, `feature/lexical-evolution-v1`, `feature/compositional-protolanguage-v1`, `feature/grammar-evolution-v1`, `feature/language-coevolution-v1`, and `feature/language-research-readiness-v1` are all **Planned, not implemented**.
+Language-driven combat, diplomacy, religion, partner choice, formal faction
+identity, or coevolution are **Planned, not implemented**. Language Contact v1
+is implemented, but is causally isolated from every system on this page. The
+future milestones are:
+
+- `feature/intergenerational-language-v1` — **Planned, not implemented**;
+- `feature/lexical-evolution-v1` — **Planned, not implemented**;
+- `feature/compositional-protolanguage-v1` — **Planned, not implemented**;
+- `feature/grammar-evolution-v1` — **Planned, not implemented**;
+- `feature/language-coevolution-v1` — **Planned, not implemented**;
+- `feature/language-research-readiness-v1` — **Planned, not implemented**.
 
 No final research contract, hypothesis, or research-ready claim is established for the systems on this page.
 
 ## 20. Implementation evidence
 
-**Implementation status:** Mixed statuses listed above at branch `docs/technical-handbook-v0.1`, documented commit `23ef5dad78a86cbcf699dc0192373a3416eafc06`.
+**Implementation status:** Mixed statuses listed above in the documented
+Language Contact v1 working tree; contact adds no causal path into these
+systems. See [Handbook status](../HANDBOOK_STATUS.md) for branch and base-commit
+metadata.
 
 **Primary source**
 

@@ -4,16 +4,20 @@
 | --- | --- |
 | Active inhabitant | Living object admitted to `SimulationState.people` with a stable run-scoped ID |
 | Authentic communication | Language call produced exactly once by a successfully committed Layer-4 individual or faction-mediated transfer |
+| Borrowing provenance | Immutable first-contact and adoption facts attached only to a contact-promoted learned production association |
 | Coalition | Informal stable-ID social group derived from reciprocal `Relationship` topology; not a formal faction |
 | Condition | Filename-safe run label recorded in artifacts; not itself a behavioral hash input |
 | Context | Either transfer context (`AID_TRANSFER`, `PAID_TRADE`, `FACTION_TRADE`) or one of four coalition communication classifications |
+| Contact exposure | Bounded first-source, exposure-count, and successful-comprehension metadata on one comprehension association |
 | Dialect | Engineering observation/rate effect associated with current coalition membership; not an official or coalition-owned language |
 | Directed relationship | Optional bounded stable-ID record with trust, affinity, grievance, obligation, familiarity and interaction history |
 | Formal faction | Older named causal institution driven by beliefs, legacy trust and proximity |
 | Generation | Lineage depth (`0` initially, parent maximum plus one at birth), not biological age |
 | Legacy trust | Name-keyed integer trust used by older survival/faction/reproduction mechanics |
+| Language contact | Positive language-only extension for authentic `DIFFERENT_ACTIVE_COALITIONS` communication; assigned/unassigned communication is not contact in v1 |
 | Manifest | JSON termination, configuration, writer-health, inventory, provenance and state-fingerprint envelope |
 | Meaning | One of the four closed language concepts: food, wood, ore, stone |
+| Mixed production carrier | Inhabitant with usable borrowed and nonborrowed production for at least one same meaning; not a stored identity label |
 | Pristine | Exact default/empty validated runtime state required when a feature is disabled or before initialization |
 | Research-ready | Artifact valid under a complete exact `ExpectedRunContract`; current runner output does not attain this |
 | Run root | Working directory for one direct run, or batch root containing condition/seed child directories |

@@ -19,6 +19,9 @@ flowchart LR
     ECO -->|authentic communication| LANG[Individual language]
     COAL -->|frozen prior membership| DIA[Dialect rate context]
     DIA -->|language-only adjustment| LANG
+    ECO -->|authentic communicator pair| CONTACT[Language contact context]
+    COAL -->|frozen different membership| CONTACT
+    CONTACT -->|positive acquisition and provenance| LANG
     FAC --> COMBAT[Combat]
     ECO --> COMBAT
     COMBAT --> TECH[Technology]
@@ -40,7 +43,7 @@ Solid arrows indicate configuration, state reads, or causal mutation. Dotted arr
 
 ## State model
 
-`SimulationState` directly owns living/dead populations, formal factions, event history, war/diplomacy/economy/religion stores, the stable-ID allocator, informal-coalition runtime, language runtime, and dialect runtime. World tiles and several legacy caches remain module-owned. Reset clears core stores in place so imported aliases keep their identity.
+`SimulationState` directly owns living/dead populations, formal factions, event history, war/diplomacy/economy/religion stores, the stable-ID allocator, informal-coalition runtime, language runtime, dialect runtime, and language-contact runtime. World tiles and several legacy caches remain module-owned. Reset clears core stores in place so imported aliases keep their identity.
 
 This is not an event-sourced architecture. Events observe changes; they are not the authoritative state and cannot replay a run. The run manifest holds provenance and a final selected-state fingerprint, not a checkpoint.
 
@@ -72,10 +75,14 @@ An inhabitant can belong to one of each; neither membership derives from the oth
 
 ## Isolation boundaries
 
-- Metrics, event observation, hashing, dialect summaries, and artifact validation consume no simulation RNG.
+- Metrics, event observation, hashing, dialect/contact summaries, and artifact validation consume no simulation RNG.
 - Language interpretation cannot change transfer success or any biological, economic, faction, coalition, combat, or movement outcome.
 - Informal coalitions do not own resources, territory, policy, vocabulary, or official languages.
 - Coalition Dialects v1 is one-way: prior committed membership can change learning rates; language never changes coalition lifecycle.
+- Language Contact v1 is also one-way: only authentic
+  different-active-coalitions communication can strengthen positive receiver
+  acquisition and record borrowing provenance. Assigned/unassigned
+  communication stays at base rates.
 - Plugins are an exception to the observer pattern: their bridge is immutable, but accepted commands causally spawn inhabitants or adjust resources, and plugin Python is not sandboxed.
 - Mythology is a disabled-by-default narrative observer with external I/O; its prose is not fed back into the simulation.
 
@@ -85,7 +92,8 @@ Focused transactions exist for:
 
 - stable inhabitant admission across ID, grid, population, and optional membership;
 - informal-coalition transitions, which propose and fully validate a new runtime;
-- language communication across sender/receiver language state and language/dialect runtimes.
+- language communication across sender/receiver language state and
+  language/dialect/contact runtimes.
 
 The complete tick and economy-to-language chain are not atomic. A committed transfer precedes optional relationship and language hooks; a later hook exception does not roll back the transfer.
 
@@ -94,5 +102,7 @@ The complete tick and economy-to-language chain are not atomic. A committed tran
 - Orchestration: `src/thalren_vale/sim.py`.
 - State ownership: `src/thalren_vale/state.py` and module aliases near the top of `sim.py`.
 - Reset: `sim.reset_runtime_state`, `SimulationState.reset`.
-- Isolation tests: `tests/test_language_interaction_hooks.py`, `tests/test_coalition_dialects.py`, `tests/test_social_partner_choice.py`.
+- Isolation tests: `tests/test_language_interaction_hooks.py`,
+  `tests/test_coalition_dialects.py`, `tests/test_language_contact.py`,
+  `tests/test_social_partner_choice.py`.
 - Lifecycle tests: `tests/test_run_termination.py`, `tests/test_simulation_state.py`.

@@ -12,7 +12,10 @@ language confidence, learning, reinforcement, and counters.
 Language never determines whether the transfer succeeds and does not alter
 inventory, currency, relationships, factions, coalitions, combat, health,
 movement, reproduction, survival, or population state. See
-[Causal chains](../architecture/causal-chains.md).
+[Causal chains](../architecture/causal-chains.md). The independent
+[Language Contact v1](language-contact.md) extension can strengthen positive
+receiver acquisition and record borrowing only for authentic communication
+between different active coalitions; it preserves this isolation boundary.
 
 ## 2. Why it exists
 
@@ -57,12 +60,15 @@ Every inhabitant owns a distinct `AgentLanguageState`:
 
 Each immutable `LexicalAssociation` records meaning, signal, confidence,
 successful and failed uses, observation count, last-used tick, origin
-(`invented` or `learned`), and optional source inhabitant ID.
+(`invented` or `learned`), optional source inhabitant ID, and—when Language
+Contact v1 is effective—optional bounded comprehension exposure or production
+borrowing provenance.
 
 `SimulationState.language` owns `LanguageRuntimeState`: the seed-domain identity,
 attempt/result counters, invention/learning/loss counters, last communication and
-forgetting ticks, and the dialect gate. No lexicon is shared by a faction or
-coalition.
+forgetting ticks, and the dialect and contact gates. Dedicated dialect and
+contact runtimes carry their own bounded counters. No lexicon is shared by a
+faction or coalition.
 
 ## 6. Inputs
 
@@ -85,8 +91,9 @@ transfers, and the legacy layer-one swap do not create communication.
 1. Validate config, runtime, tick, active IDs, distinct identities, state caps,
    nonaliased ownership, and monotonic time.
 2. Copy sender state, receiver state, and language runtime into a proposal. If
-   dialect influence is active, validate and copy dialect runtime and classify
-   the frozen coalition context before learning.
+   dialect influence or contact is active, classify one frozen coalition
+   context; validate and copy the enabled dialect/contact runtimes before
+   learning.
 3. Select the sender's strongest usable production association. If none exists
    and invention is enabled, derive one signal from SHA-256 over the run seed
    domain, inventor stable ID, meaning, and that inventor's next index.
@@ -101,13 +108,15 @@ transfers, and the legacy layer-one swap do not create communication.
    - success reinforces sender production and receiver comprehension;
    - an existing matching receiver production association receives half the
      learning rate;
-   - promotion can create receiver production after confidence reaches `0.50`
-     and comprehension has at least three successful uses;
+   - generic promotion can create receiver production after confidence reaches
+     `0.50` and comprehension has at least three successful uses;
+   - enabled contact can apply stronger positive correct learning, retain
+     bounded cross-coalition exposure, and promote a borrowed production form;
    - competing synonyms and meanings are weakened deterministically.
 6. Apply canonical retention and pruning, count every lost association, and
    validate all proposed owners and counters.
-7. Commit sender, receiver, runtime, and optional dialect runtime together. Any
-   exception restores the original owners.
+7. Commit sender, receiver, runtime, and optional dialect/contact runtimes
+   together. Any exception restores the original language-owned owners.
 
 An unknown signal remains `UNKNOWN_SIGNAL` in the event that teaches it. A
 misunderstanding remains `MISUNDERSTANDING` in the event that corrects it.
@@ -139,7 +148,8 @@ See [Tick lifecycle](../architecture/tick-lifecycle.md).
 | Aid/trade | Economy → language | Actual sender, receiver, resource meaning | After transfer commit | Creates one communication |
 | Inventory/currency | Intentionally isolated | Language reads only grounded meaning | Layer 4 | Interpretation cannot alter transfer |
 | Social relationships | Intentionally isolated | None from language | All times | No trust or partner-choice feedback |
-| Informal coalitions | Coalition → optional dialect context | Frozen stable-ID membership | Same economy tick | Can adjust learning only |
+| Informal coalitions | Coalition → optional dialect/contact context | Frozen stable-ID membership | Same economy tick | Can adjust language learning or qualify contact only |
+| Language contact | Different-coalition context → language | Positive receiver learning and bounded exposure/provenance | After interpretation | Changes individual language state only |
 | Death | Population → language maintenance | Newly dead owners | End of tick | Clears lexical associations |
 | Hashing | Language → hash | Canonical lexicons/runtime | Finalization | Fingerprints enabled state |
 
@@ -202,8 +212,8 @@ not change the core PRNG position. See
 - Due maintenance validates and visits each active/dead owner, weakens inactive
   associations by half the base reinforcement rate, prunes canonically, and
   clears dead owners' associations while retaining their invention indices.
-- Reset validates all living/dead language states and language/dialect runtimes
-  before clearing authoritative state.
+- Reset validates all living/dead language states and
+  language/dialect/contact runtimes before clearing authoritative state.
 
 ## 16. Tests and validation
 
@@ -215,7 +225,9 @@ death cleanup, convergence, RNG absence, and canonical ordering.
 hooks, zero failed hooks, role ordering, causal isolation, maintenance order, and
 RNG preservation. `tests/test_language_reproducibility.py` covers hash-seed
 independence, per-agent invention isolation, enabled hashing, insertion order,
-and disabled fail-closed behavior. See
+and disabled fail-closed behavior. `tests/test_language_contact.py` covers the
+approved different-coalition acquisition, exposure, borrowing, summary, and
+isolation extension. See
 [Test reference](../reference/test-reference.md).
 
 ## 17. Worked example
@@ -233,18 +245,25 @@ the teaching occurrence cannot.
 - Meanings cover only food, wood, ore, and stone.
 - Signals are abstract bounded phoneme tuples, not text or speech.
 - No background conversation or vocabulary synchronization exists.
-- No inherited vocabulary, migration identity, bilingual label, grammar,
-  syntax, mutation, shortening, recombination, composition, teaching
-  institution, prestige, or faction language exists.
+- Mixed borrowed and nonborrowed individual vocabularies can now arise under
+  Language Contact v1, but no inherited vocabulary, migration identity,
+  permanent bilingual label, grammar, syntax, mutation, shortening,
+  recombination, composition, teaching institution, prestige, or faction
+  language exists.
 - Comprehension has no effect on material transfer outcomes.
 - Standard artifacts expose hashes and controls but no dedicated language event
   stream or research-ready metric contract.
 
-## 19. Future extensions
+## 19. Language roadmap
 
-All later language milestones are **Planned, not implemented**:
+Completed engineering implementations:
 
-- `feature/language-contact-v1` — **Planned, not implemented**
+- `feature/endogenous-language-v1`
+- `feature/coalition-dialects-v1`
+- `feature/language-contact-v1`
+
+Planned, not implemented:
+
 - `feature/intergenerational-language-v1` — **Planned, not implemented**
 - `feature/lexical-evolution-v1` — **Planned, not implemented**
 - `feature/compositional-protolanguage-v1` — **Planned, not implemented**
@@ -274,6 +293,7 @@ research-ready.
 
 - `tests/test_language_evolution.py`
 - `tests/test_language_interaction_hooks.py`
+- `tests/test_language_contact.py`
 - `tests/test_language_reproducibility.py`
 - `tests/test_simulation_state.py`
 - `tests/test_reproducibility.py`

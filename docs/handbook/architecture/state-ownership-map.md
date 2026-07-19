@@ -18,10 +18,11 @@ The simulator is midway between legacy module globals and explicit run-scoped st
 | Prices/currencies/routes | Economy stores aliased partly into `SimulationState` | Economy | Economy, metrics/technology in places | In-memory run only | Routes selected in hash; prices/currency definitions omitted |
 | Legacy trust | Each `Inhabitant.trust` | Layer 1, factions, transfers, religion/tech | Reproduction, beliefs, factions, metrics | Agent lifetime | Selected trust values in hash; mean of stored values in metrics |
 | Directed relationships | Each `Inhabitant.relationships` | Committed Layer-4 hooks; maintenance | Partner bias, informal coalitions, summaries/hash | Agent lifetime; cleared at death maintenance | Enabled final hash only; no standard metric |
-| Informal coalitions | `SimulationState.coalitions` | Transactional end-of-tick transition | Hash, on-demand summary, next-tick dialect snapshot | In-memory run only | Enabled final hash only |
-| Per-agent language | `Inhabitant.language` | Transactional communication; maintenance | Communication, summaries, hash | Retained on living/dead agent until death cleanup | Enabled final hash only |
+| Informal coalitions | `SimulationState.coalitions` | Transactional end-of-tick transition | Hash, on-demand summary, next-tick dialect/contact snapshot | In-memory run only | Enabled final hash only |
+| Per-agent language | `Inhabitant.language` | Transactional communication; maintenance | Communication, language/dialect/contact summaries, hash | Retained on living/dead agent until death cleanup | Enabled final hash, including contact metadata when enabled |
 | Language runtime | `SimulationState.language` | Initialization, communication, maintenance | Validation, summaries, hash | In-memory run only | Enabled final hash and manifest controls |
 | Dialect runtime | `SimulationState.dialect` | Dialect-classified communication | Validation, summary, hash | In-memory run only | Enabled final hash; no standard artifact |
+| Language-contact runtime | `SimulationState.language_contact` | Different-coalition communication | Validation, on-demand summary, hash | In-memory run only | Enabled final hash; controls in manifest; no standard contact artifact |
 | Event journal | `SimulationState.event_log` (`StructuredEventLog`) | All emitters | Observation, display, mythology | Narrative history pruned; journal drained per tick | Typed subset in event CSV |
 | Metrics writer state | `MetricsLogger` | Observation/finalization | Manifest writer health | File-backed during run | Required CSVs and manifest health |
 | Religion/holy wars | Religion module stores aliased partly into `SimulationState` | Religion | Combat/tech/religion | In-memory run only | Largely omitted from final hash |
@@ -33,6 +34,9 @@ The simulator is midway between legacy module globals and explicit run-scoped st
 
 - `Faction.members` and `Inhabitant.faction` duplicate formal membership authority and lack a general invariant validator.
 - Informal-coalition membership is more strictly centralized: active member tuples are authoritative and `member_to_coalition` must be an exact derived index.
+- Contact exposure and borrowing provenance are association-owned bounded
+  metadata, not coalition-owned registries. Historical source coalition IDs may
+  outlive active coalition state.
 - The canonical state hash covers a documented projection, not all future-affecting state shown above.
 - Events and metrics observe state; they do not own it.
 - Required CSVs are overwritten or appended by direct-run writers according to file type; they are not in-memory persistence or a resume checkpoint.

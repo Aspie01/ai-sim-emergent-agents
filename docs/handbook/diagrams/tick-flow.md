@@ -7,7 +7,7 @@ flowchart TD
     INH --> BEL[Beliefs if enabled]
     BEL --> FAC[Formal factions if enabled]
     FAC --> BIRTH[Procreation]
-    BIRTH --> SNAP{Dialect influence enabled?}
+    BIRTH --> SNAP{Dialect or contact enabled?}
     SNAP -->|yes| FROZEN[Build one prior-coalition snapshot]
     SNAP -->|no| ECO[Economy]
     FROZEN --> ECO

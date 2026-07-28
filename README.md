@@ -9,6 +9,11 @@
 
 ---
 
+#NOTICE - JULY 28TH, 2026
+I will be stopping development on this project and focusing on more achievable and realistic projects and the goals that go along with them.
+
+The project scope is simply far too great for this project, which is unfortunate...
+
 ## What Is This?
 ![Live Dashboard showing World Map and Reputation Graph](docs/dashboard.png)
 *Figure 1: The Streamlit dashboard visualizing a 1,000-tick run on an Intel N95.*

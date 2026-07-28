@@ -71,12 +71,17 @@ from .language import (
     MAX_SIGNAL_LENGTH,
     contact_runtime_is_pristine,
     dialect_runtime_is_pristine,
+    initialize_intergenerational_language_runtime,
     initialize_language_contact_runtime,
     initialize_language_runtime,
+    intergenerational_runtime_is_pristine,
     language_runtime_is_pristine,
     maintain_language_state,
+    transmit_intergenerational_language,
     validate_agent_language_state,
     validate_coalition_dialect_runtime,
+    validate_intergenerational_language_runtime,
+    validate_intergenerational_parent_references,
     validate_language_contact_runtime,
     validate_language_runtime,
 )
@@ -142,6 +147,8 @@ _admission_lock = threading.Lock()
 
 def _validated_reset_language_owners(
     contact_config: config.LanguageContactConfig | None,
+    *,
+    intergenerational_enabled: bool,
 ) -> list[tuple[object, AgentLanguageState]]:
     """Validate every unique authoritative language owner before reset mutates."""
     validated: list[tuple[object, AgentLanguageState]] = []
@@ -163,13 +170,18 @@ def _validated_reset_language_owners(
                 language_state,
                 config=_RESET_LANGUAGE_VALIDATION_CONFIG,
                 contact_config=contact_config,
+                intergenerational_enabled=intergenerational_enabled,
+                owner_id=getattr(inhabitant, "inhabitant_id", None),
             )
             validated.append((inhabitant, validated_state))
     return validated
 
 
 def _validate_reset_language_runtimes(
-) -> config.LanguageContactConfig | None:
+) -> tuple[
+    config.LanguageContactConfig | None,
+    config.IntergenerationalLanguageConfig | None,
+]:
     """Validate all language runtimes and return active contact controls."""
     if language_runtime_is_pristine(state.language):
         if not dialect_runtime_is_pristine(state.dialect):
@@ -182,7 +194,14 @@ def _validate_reset_language_runtimes(
                 "nonpristine_language_contact_runtime",
                 "disabled language runtime cannot conceal contact state",
             )
-        return None
+        if not intergenerational_runtime_is_pristine(
+            state.intergenerational_language
+        ):
+            raise LanguageInvariantError(
+                "nonpristine_intergenerational_language_runtime",
+                "disabled language runtime cannot conceal parental state",
+            )
+        return None, None
 
     validate_language_runtime(state.language, initialized=True)
     if state.language.coalition_dialect_influence_enabled:
@@ -217,21 +236,64 @@ def _validate_reset_language_runtimes(
                 if state.language.coalition_dialect_influence_enabled else None
             ),
         )
-        return contact_config
-    if not contact_runtime_is_pristine(state.language_contact):
-        raise LanguageInvariantError(
-            "nonpristine_language_contact_runtime",
-            "disabled language contact cannot retain runtime state",
+    else:
+        contact_config = None
+        if not contact_runtime_is_pristine(state.language_contact):
+            raise LanguageInvariantError(
+                "nonpristine_language_contact_runtime",
+                "disabled language contact cannot retain runtime state",
+            )
+    if state.language.intergenerational_language_enabled:
+        intergenerational_config = config.IntergenerationalLanguageConfig(
+            intergenerational_language_enabled=True,
+            maximum_parental_meanings_per_parent=(
+                state.intergenerational_language
+                .maximum_parental_meanings_per_parent
+            ),
+            intergenerational_learning_strength=(
+                state.intergenerational_language
+                .intergenerational_learning_strength
+            ),
         )
-    return None
+        validate_intergenerational_language_runtime(
+            state.intergenerational_language,
+            config=intergenerational_config,
+            language_runtime=state.language,
+        )
+    else:
+        intergenerational_config = None
+        if not intergenerational_runtime_is_pristine(
+            state.intergenerational_language
+        ):
+            raise LanguageInvariantError(
+                "nonpristine_intergenerational_language_runtime",
+                "disabled intergenerational language cannot retain runtime state",
+            )
+    return contact_config, intergenerational_config
 
 
 def reset_runtime_state() -> None:
     """Reset all mutable stores that can leak across in-process runs."""
     global _last_dynamic_t
 
-    contact_config = _validate_reset_language_runtimes()
-    language_owners = _validated_reset_language_owners(contact_config)
+    contact_config, intergenerational_config = (
+        _validate_reset_language_runtimes())
+    intergenerational_enabled = intergenerational_config is not None
+    language_owners = _validated_reset_language_owners(
+        contact_config,
+        intergenerational_enabled=intergenerational_enabled,
+    )
+    validate_intergenerational_parent_references(
+        people,
+        all_dead,
+        language_config=_RESET_LANGUAGE_VALIDATION_CONFIG,
+        contact_config=contact_config,
+        intergenerational_enabled=intergenerational_enabled,
+        intergenerational_runtime=(
+            state.intergenerational_language
+            if intergenerational_enabled else None
+        ),
+    )
 
     for plugin in _loaded_plugins:
         try:
@@ -748,6 +810,12 @@ def maintain_emergent_state(
                     if run_config.coalition_dialect_influence_enabled else None
                 ),
             )
+        if run_config.intergenerational_language_enabled:
+            validate_intergenerational_language_runtime(
+                state.intergenerational_language,
+                config=run_config.intergenerational_language_config,
+                language_runtime=state.language,
+            )
         maintain_language_state(
             people,
             newly_dead,
@@ -1052,7 +1120,14 @@ POP_CAP = config.POP_CAP   # defined in config.py — hard population ceiling
 
 MAX_BIRTHS_PER_TICK = 3   # upper limit on new births in a single tick
 
-def procreation_layer(t: int) -> None:
+def procreation_layer(
+    t: int,
+    language_config: config.LanguageEvolutionConfig | None = None,
+    intergenerational_config: (
+        config.IntergenerationalLanguageConfig | None
+    ) = None,
+    contact_config: config.LanguageContactConfig | None = None,
+) -> None:
     """Generational logic: trust-based births, belief inheritance, faction assignment.
 
     Runs up to MAX_BIRTHS_PER_TICK birth attempts per tick.  Each iteration
@@ -1070,6 +1145,15 @@ def procreation_layer(t: int) -> None:
 
     A try/finally guarantees is_procreating is always cleared, even on exceptions.
     """
+    if intergenerational_config is None:
+        intergenerational_config = config.IntergenerationalLanguageConfig(
+            intergenerational_language_enabled=False,
+            maximum_parental_meanings_per_parent=(
+                config.DEFAULT_MAXIMUM_PARENTAL_MEANINGS_PER_PARENT),
+            intergenerational_learning_strength=(
+                config.DEFAULT_INTERGENERATIONAL_LEARNING_STRENGTH),
+        )
+
     # Fast-path guards — read-only, no lock needed
     if len(people) >= POP_CAP or is_winter(t):
         return
@@ -1152,6 +1236,28 @@ def procreation_layer(t: int) -> None:
                     else ()
                 )
                 _spawn(child, memberships=memberships)
+
+                if (
+                    intergenerational_config
+                    .intergenerational_language_enabled
+                ):
+                    if language_config is None:
+                        raise LanguageInvariantError(
+                            "missing_intergenerational_language_inputs",
+                            "enabled birth transmission requires base language "
+                            "controls",
+                        )
+                    transmit_intergenerational_language(
+                        child,
+                        (pa, pb),
+                        tick=t,
+                        language_config=language_config,
+                        intergenerational_config=intergenerational_config,
+                        language_runtime=state.language,
+                        intergenerational_runtime=(
+                            state.intergenerational_language),
+                        contact_config=contact_config,
+                    )
 
                 # Religion inheritance: 95 % chance when the birth tile is
                 # within temple range of the parent faction's temple.
@@ -2082,6 +2188,19 @@ def run() -> None:
     _parser.add_argument(
         '--borrowing-confidence-threshold', type=float, default=None,
         help='Successful-contact promotion confidence threshold (engineering only)')
+    _intergenerational_language = _parser.add_mutually_exclusive_group()
+    _intergenerational_language.add_argument(
+        '--enable-intergenerational-language', action='store_true',
+        help='Enable engineering-only parental comprehension exposure')
+    _intergenerational_language.add_argument(
+        '--disable-intergenerational-language', action='store_true',
+        help='Explicitly retain births without parental language exposure')
+    _parser.add_argument(
+        '--maximum-parental-meanings-per-parent', type=int, default=None,
+        help='Maximum selected meanings transmitted by each parent')
+    _parser.add_argument(
+        '--intergenerational-learning-strength', type=float, default=None,
+        help='Confidence delta for each parental comprehension exposure')
     _args = _parser.parse_args()
 
     # ── Validate and apply effective configuration ──────────────────────────
@@ -2126,6 +2245,15 @@ def run() -> None:
                 'warning: language contact was requested without effective '
                 'coalition emergence; contact normalized to false and the run '
                 'is not V2-ready\n')
+    for _notice in _run_config.intergenerational_language_control_notices:
+        if (
+            _notice
+            == config.INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE
+        ):
+            sys.stderr.write(
+                'warning: intergenerational language was requested without '
+                'effective language evolution; parental transmission '
+                'normalized to false and the run is not V2-ready\n')
     _run_config.apply_legacy_globals()
     TICKS = _run_config.ticks
     POP_CAP = _run_config.population_cap
@@ -2150,11 +2278,18 @@ def run() -> None:
                 _run_config.coalition_dialect_influence_enabled
             ),
             language_contact_enabled=_run_config.language_contact_enabled,
+            intergenerational_language_enabled=(
+                _run_config.intergenerational_language_enabled),
         )
         if _run_config.language_contact_enabled:
             initialize_language_contact_runtime(
                 state.language_contact,
                 _run_config.language_contact_config,
+            )
+        if _run_config.intergenerational_language_enabled:
+            initialize_intergenerational_language_runtime(
+                state.intergenerational_language,
+                _run_config.intergenerational_language_config,
             )
     # Serial mode: guarantees reproducibility by eliminating thread PRNG interleaving
     _serial_mode = (_args.seed is not None)
@@ -2267,7 +2402,15 @@ def run() -> None:
 
             # ── Procreation ─────────────────────────────────────────────────
             _t_proc_start = time.perf_counter()
-            procreation_layer(t)
+            procreation_layer(
+                t,
+                _run_config.language_evolution_config,
+                _run_config.intergenerational_language_config,
+                (
+                    _run_config.language_contact_config
+                    if _run_config.language_contact_enabled else None
+                ),
+            )
             _t_proc = (time.perf_counter() - _t_proc_start) * 1000
 
             # ── Layer 4: Economy ────────────────────────────────────────────

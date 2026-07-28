@@ -1,8 +1,9 @@
 # Simulation and tick lifecycle
 
-This page records the executable order in the approved, uncommitted Language
-Contact v1 working tree on branch `feature/language-contact-v1`, based at commit
-`83df90247b1226f0535df1a5c71a4ddb60b3bc45`. Layer-number comments in older
+This page records the executable order in the approved, uncommitted
+Intergenerational Language v1 working tree on branch
+`feature/intergenerational-language-v1`, based at commit
+`f9647958e35114540ab681cc7ed816991f506f43`. Layer-number comments in older
 prose are not authoritative when they differ from this sequence.
 
 ## Initialization
@@ -10,11 +11,11 @@ prose are not authoritative when they differ from this sequence.
 1. Parse CLI with abbreviations disabled.
 2. Build, normalize, and validate `SimulationConfig`.
 3. Apply compatibility globals.
-4. Validate all existing language owners plus language/dialect/contact runtimes, then reset run state. Validation happens before clearing so malformed hidden state cannot cause a partial reset.
+4. Validate all existing language owners plus language/dialect/contact/intergenerational runtimes and historical parent IDs, then reset run state. Validation happens before clearing so malformed hidden state cannot cause a partial reset.
 5. Choose the explicit seed, or draw and record one for an unseeded run.
 6. Seed the process-global `random` generator.
 7. Initialize the deterministic language seed domain and enabled
-   dialect/contact runtimes when language is enabled.
+   dialect/contact/intergenerational runtimes when language is enabled.
 8. Select serial Layer 1 for an explicit seed; otherwise select threaded Layer 1.
 9. `reseed_world()` regenerates world and spatial indexes in place.
 10. Construct `MetricsLogger`, which creates and headers required CSVs.
@@ -33,7 +34,7 @@ For tick `t`:
 | 3 | Inhabitant layer | Shuffle; hunger, health, consumption, movement, gathering, legacy trust/swaps; commit deaths |
 | 4 | Belief layer, unless disabled | Experience-derived beliefs and directed sharing |
 | 5 | Formal-faction layer, unless disabled | Formation, reserves, recruitment, territory/settlements, rivalry, schism/merge; then remove same-tick dead members |
-| 6 | Procreation | Up to three births, cap/winter/housing permitting |
+| 6 | Procreation | Up to three births, cap/winter/housing permitting; optional exact-once parental comprehension exposure after each successful `_spawn(child)` |
 | 7 | Economy, unless disabled | Build one coalition-language snapshot first when dialect or contact is enabled; currency, prices, scarcity, Layer-4 transfers, faction trade, raids |
 | 8 | Formal combat, unless disabled | War declaration, battle, resolution, tribute |
 | 9 | Technology, unless disabled | Research progress/completion and passive effects |
@@ -57,7 +58,8 @@ For tick `t`:
 ## Timing consequences
 
 - Layer-1 deaths are observed during agent work and committed after the complete serial/worker pass.
-- A child born at stage 6 does not act, receive normal belief/faction processing, or move in that tick. It is visible to economy and all later stages.
+- A child born at stage 6 does not act, receive normal belief/faction processing, or move in that tick. It is visible to economy and all later stages. When intergenerational language is enabled, the exact child and parents enter one deterministic comprehension-only hook after admission and before religion inheritance or birth-event emission.
+- A transmission exception fails the tick/run closed and rolls back child/base/intergenerational language owners, but the child remains admitted, its stable ID remains consumed, and parental food remains deducted. This is not birth-language atomicity.
 - Economy reads combat/diplomacy state from the prior tick because those layers run afterward.
 - Same-tick successful Layer-4 transfers can update relationships, and those relationships can affect the coalition transition at stage 21.
 - Dialect/contact classification at stage 7 uses one frozen snapshot of the
@@ -104,11 +106,18 @@ Suppose tick 12 contains a paid individual transfer between two inhabitants:
 7. Tick-12 metrics observe the resulting state.
 8. Tick-13 dialect/contact classification can use the newly committed coalition membership.
 
+For a successful birth in tick 12, `_spawn(child)` first commits the child to
+the grid, population, optional inherited faction, and stable-ID allocator. Only
+then can the enabled intergenerational helper read the exact two parents and
+propose bounded child comprehension. Founders, travelers, disruption arrivals,
+plugins, and other `_spawn()` callers never enter that hook.
+
 ## Implementation evidence
 
 - Source: `src/thalren_vale/sim.py::run`, `economy_layer`, `maintain_emergent_state`.
 - Population staging: `src/thalren_vale/inhabitants.py`, `src/thalren_vale/state.py`.
 - Tests: `tests/test_language_interaction_hooks.py`,
   `tests/test_language_contact.py`, `tests/test_run_termination.py`,
-  `tests/test_simulation_state.py`, `tests/test_coalition_dialects.py`.
+  `tests/test_simulation_state.py`, `tests/test_coalition_dialects.py`,
+  `tests/test_intergenerational_language.py`.
 - Tests establish focused ordering and completion semantics; the complete order above is source-verified.

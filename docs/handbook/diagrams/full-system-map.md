@@ -14,6 +14,7 @@ flowchart TB
     LANG[Endogenous language]
     DIALECT[Coalition dialect context]
     CONTACT[Language contact context]
+    INTERGEN[Intergenerational language]
     COMBAT[Formal combat]
     TECH[Technology]
     DIPLO[Diplomacy]
@@ -45,6 +46,8 @@ flowchart TB
     ECON -->|authentic communicator pair| CONTACT
     COAL -->|frozen different membership| CONTACT
     CONTACT -->|positive acquisition and provenance| LANG
+    AGENT -->|committed birth + exact parents| INTERGEN
+    INTERGEN -->|bounded child comprehension only| LANG
     FACTION --> COMBAT
     ECON --> COMBAT
     COMBAT --> TECH
@@ -90,6 +93,9 @@ flowchart TB
   hashed controls; required CSV contents do not produce it.
 - The `COAL -> DIALECT -> LANG` and `COAL/ECON -> CONTACT -> LANG` paths are
   one-way; no language-to-coalition, social, or material edge exists.
+- The `AGENT -> INTERGEN -> LANG` path begins only after successful child
+  admission. It has no reverse edge into reproduction, population, health,
+  resources, factions, or relationships.
 - Plugins are causal even though their advertised bridge snapshots are immutable.
 
 See [architecture overview](../architecture/architecture-overview.md) and [system dependency map](../architecture/system-dependency-map.md).

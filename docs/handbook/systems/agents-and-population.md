@@ -4,7 +4,11 @@
 
 The simulated population consists of `Inhabitant` objects. An inhabitant is a stateful individual with a run-scoped stable integer ID, display name, position, health, hunger, resource inventory, beliefs, two distinct social-memory representations, optional faction/religion roles, and optional language state. Each living inhabitant acts once in the Layer-1 population pass, unless a later layer creates or removes it during the same tick.
 
-The implementation has birth and death, but no age clock, sex categories, fixed lifespan, genetic inheritance, childhood stage, or intergenerational language transmission. Generation depth is recorded as an integer lineage counter only.
+The implementation has birth and death plus bounded, optional
+intergenerational language acquisition. It still has no age clock, sex
+categories, fixed lifespan, genetic inheritance, childhood stage, genealogy,
+or recurring childhood teaching. Generation depth is recorded as an integer
+lineage counter only.
 
 See [Tick lifecycle](../architecture/tick-lifecycle.md) for execution order and [Causal chains](../architecture/causal-chains.md) for the survival and reproduction paths.
 
@@ -27,7 +31,7 @@ It is an **inference**, not a formal research claim, that individual state is in
 
 ## 4. Current status
 
-**Implemented but experimental.** Stable identity admission, social-memory behavior, deterministic seeded execution, termination, and artifact accounting have focused tests. The older hunger, movement, reproduction, inheritance, and legacy-trust lifecycle has little direct unit coverage and contains important edge cases documented below.
+**Implemented but experimental.** Stable identity admission, social-memory behavior, deterministic seeded execution, termination, artifact accounting, and the exact post-admission intergenerational-language boundary have focused tests. The older hunger, movement, reproduction, belief/faction inheritance, and legacy-trust lifecycle has less direct unit coverage and contains important edge cases documented below.
 
 ## 5. State owned
 
@@ -46,7 +50,7 @@ It is an **inference**, not a formal research claim, that individual state is in
 | Lifecycle | `is_procreating`, `generation` | birth lock flag and lineage depth |
 | Technology effects | `_medicine_buffer`, `_plague_resist`, `_prev_hp_medicine` | lazily attached passive-effect state |
 
-Every new inhabitant begins with health 100, hunger 0, three food, zero of the other four inventory resources, zero currency, empty beliefs/trust/relationships/memory, an empty language state, no faction or religion, and generation 0.
+Every newly constructed inhabitant begins with health 100, hunger 0, three food, zero of the other four inventory resources, zero currency, empty beliefs/trust/relationships/memory, an empty language state, no faction or religion, and generation 0. A successfully admitted child may receive bounded comprehension immediately afterward when Intergenerational Language v1 is enabled; non-birth admissions remain empty unless another later authentic mechanism teaches them.
 
 ### Population-level state
 
@@ -106,13 +110,26 @@ Belief assignment and formal faction processing occur after Layer 1. `procreatio
 5. `make_child()` chooses a unique name, sets generation to the maximum parent generation plus one, and randomly selects half of the ordered union of parent beliefs (at least one if the union is nonempty).
 6. The child receives legacy trust 30 toward each parent and 10 food. Each parent loses up to five food through `max(0, food - 5)`.
 7. A shared parental faction is inherited; otherwise parent A's faction is inherited when present. Admission inserts the child into both the living population and that faction's members list transactionally.
-8. Near a parent-faction temple, religion is inherited with probability 0.95.
-9. Busy flags are cleared in `finally`; a successful birth emits a typed `birth` event.
+8. If Intergenerational Language v1 is enabled, the exact admitted child and
+   exact two parent objects enter one deterministic, bounded
+   comprehension-only exposure transaction. No production is created, parents
+   remain read-only, and no RNG is consumed.
+9. Near a parent-faction temple, religion is inherited with probability 0.95.
+10. Busy flags are cleared in `finally`; a successful birth emits a typed `birth` event.
+
+The language hook is after `_spawn(child)` and before steps 9–10. If it raises,
+the exception propagates; child/base/intergenerational language owners roll
+back, but the admitted child, consumed stable ID, faction insertion, and
+parental food deductions remain committed. Religion inheritance and the birth
+event do not run. See
+[Intergenerational language](intergenerational-language.md).
 
 ### Other creation and removal paths
 
-- Anti-stagnation traveler waves can admit generation-0 outsiders with 30 food and a biome belief.
-- Plugin commands can request validated admissions.
+- Anti-stagnation traveler waves can admit generation-0 outsiders with 30 food
+  and a biome belief. They receive no birth transmission.
+- Plugin commands can request validated admissions. They receive no birth
+  transmission.
 - Combat removes casualties from the grid, population, and faction, then adds them to `all_dead`.
 - Late solo-faction fragility can reduce health and remove an isolated member.
 - Ordinary starvation removal occurs before beliefs and factions; the faction layer removes the dead names from member lists later in the same tick.
@@ -139,7 +156,7 @@ Population construction follows world initialization. The inhabitant pass is Lay
 | Beliefs | bidirectional | lived conditions and bounded belief list | Layer 2/later layers | interpretation of experience and institutional choices |
 | Formal factions | bidirectional | name-based membership, reserves, territory | Layer 3 onward | food, trust, movement, conflict, inheritance |
 | Economy/social memory | bidirectional | inventories, committed transfers, stable IDs, relationships | Layer 4/end maintenance | material exchange and directed ties |
-| Language | bidirectional but causally isolated | independent lexicons and authentic communication | economy/maintenance | language state only; no survival effect |
+| Language | Population/birth → language only; otherwise causally isolated | individual lexicons, exact birth parents, authentic later communication | post-admission birth hook/economy/maintenance | bounded child comprehension and later language state only; no reproduction or survival effect |
 | Combat | mutation | faction membership, death, beliefs | Layer 5 | casualties and post-war changes |
 | Technology | mutation | gather, health buffers, sailing | Layer 6 | survival and movement advantages |
 | Religion | mutation | roles, movement, trust, beliefs, inherited religion | religion/procreation | institutional identity and priest behavior |
@@ -159,6 +176,12 @@ See [Configuration reference](../reference/configuration-reference.md) for the c
 | `--disable-layer` | comma-separated names | empty | names from fixed allowlist | can disable beliefs/factions/economy/combat/etc.; there is no inhabitant-layer disable name |
 
 Core constants not exposed through validated configuration include five gatherers per tile, 500-tick trust pruning, hunger thresholds 30/40, three births per tick, and mutual procreation trust 5.
+
+The optional birth-language controls are
+`intergenerational_language_enabled = False`,
+`maximum_parental_meanings_per_parent = 2`, and
+`intergenerational_learning_strength = 0.20`. They affect only language after a
+birth commits and depend only on effective base language evolution.
 
 ## 12. Events
 
@@ -188,13 +211,16 @@ Initial names/positions/beliefs, population shuffling, non-food gathering, legac
 Stable IDs are deterministic monotonic integers within a run and consume no RNG. Admission is protected by `_admission_lock`, while births use `procreation_lock`, world mutation uses `_world_lock`, swaps use `_trade_lock`, and narrative writes use `_log_lock`.
 
 Language owns a deterministic seed-domain identity and per-agent invention
-counters, not an RNG object or RNG state. Population and inheritance mechanics
-do not use those counters, and language is not inherited in the current
-revision.
+counters, not an RNG object or RNG state. Birth transmission also consumes no
+RNG: it uses the exact already-selected parents, stable-ID ordering, and
+canonical production salience. It is acquisition of bounded parental forms,
+not genetic inheritance.
 
 ## 15. Failure and edge cases
 
 - Admission rejects an already assigned ID, duplicate object, reused next ID, or population overflow and attempts full rollback.
+- A language failure after successful child admission does not roll the birth
+  back; this partial-commit boundary is intentional and directly tested.
 - Display names can repeat across history, but living names are made unique; stable IDs remain the authoritative newer-system identity.
 - Procreation eligibility requires only one food each, while construction removes at most five each and gives the child ten. Parents with fewer than five therefore create net food.
 - The eligible-pair construction is quadratic in current population and repeats up to three times per tick.
@@ -212,6 +238,10 @@ revision.
 - `tests/test_run_termination.py` exercises short subprocess runs, extinction, terminal accounting, final metrics, and state hashes.
 - `tests/test_events.py` verifies typed birth/death accounting infrastructure, not complete biological semantics.
 - `tests/test_antistagnation.py` verifies traveler cadence and disabling.
+- `tests/test_intergenerational_language.py` verifies that only the
+  post-successful-`_spawn(child)` birth path transmits, that non-birth/failed
+  spawns do not, and that a late language failure preserves the admitted birth
+  while rolling back language owners.
 - Social, coalition, and language suites use `Inhabitant` fixtures to verify
   focused isolation boundaries—for example, language communication preserves
   tested health/inventory/faction snapshots and coalition transitions preserve
@@ -222,25 +252,35 @@ The suite does **not** directly prove exact hunger/eating sequences, birth eligi
 
 ## 17. Worked example
 
-Two inhabitants share a tile. Each has mutual legacy trust 5, hunger 20, and one food. They are eligible because the checks are `trust >= 5`, `hunger < 30`, and `food > 0`. If selected, each parent's food becomes zero because `max(0, 1 - 5)` is zero, while the child begins with ten food. The child gets a new stable ID and generation one. If both parents share a faction, the child is inserted into that faction; its language production and comprehension maps still begin empty.
+Two inhabitants share a tile. Each has mutual legacy trust 5, hunger 20, and one food. They are eligible because the checks are `trust >= 5`, `hunger < 30`, and `food > 0`. If selected, each parent's food becomes zero because `max(0, 1 - 5)` is zero, while the child begins with ten food. The child gets a new stable ID and generation one. If both parents share a faction, the child is inserted into that faction. Its language constructor state is empty; when intergenerational language is enabled, the post-admission hook may then add at most the configured bounded usable parental forms to comprehension only.
 
 ## 18. Current limitations
 
 - The individual lifecycle has no aging and no age-related death.
 - Reproduction does not model sex, pair bonds, gestation, or parent availability beyond a same-call busy flag.
-- Beliefs are sampled at birth, but language is not inherited.
+- Beliefs are sampled at birth. Language is not genetically inherited or
+  copied wholesale; the optional language hook seeds bounded comprehension
+  from the exact parents after admission.
 - Legacy Layer-1 swaps are separate from the authenticated economy communication hooks and are not typed events.
 - Reproduction can create food and performs population-wide pair enumeration.
-- Direct focused tests for hunger, gathering, movement, birth, and inheritance are absent.
+- Direct focused tests for hunger, gathering, movement, broad reproduction
+  semantics, and belief/faction inheritance remain limited; the
+  post-admission language boundary itself has focused coverage.
 - Historical README thresholds and birth descriptions are stale where they differ from the executable rules above.
 
 ## 19. Future extensions
 
-`feature/intergenerational-language-v1` and any inherited-vocabulary behavior are **Planned, not implemented**. Age, demographic roles, migration identity, or genetic inheritance are also **Planned, not implemented** unless a future authorized milestone adds and tests them.
+`feature/intergenerational-language-v1` is implemented but experimental,
+disabled by default, and engineering-only. Signal mutation belongs to the next
+milestone, `feature/lexical-evolution-v1`: **Planned, not implemented**. Age,
+demographic roles, migration identity, and genetic inheritance remain absent.
 
 ## 20. Implementation evidence
 
-**Implementation status:** Implemented but experimental at branch `docs/technical-handbook-v0.1`, documented commit `23ef5dad78a86cbcf699dc0192373a3416eafc06`.
+**Implementation status:** Implemented but experimental on
+`feature/intergenerational-language-v1`, based at
+`f9647958e35114540ab681cc7ed816991f506f43` with the accepted feature working
+tree.
 
 **Primary source**
 
@@ -259,6 +299,7 @@ Two inhabitants share a tile. Each has mutual legacy trust 5, hunger 20, and one
 - `tests/test_run_termination.py`
 - `tests/test_events.py`
 - `tests/test_antistagnation.py`
+- `tests/test_intergenerational_language.py`
 
 **Bounded verification commands used for this handbook revision**
 
@@ -268,4 +309,6 @@ No population-specific test or simulation command was run by this page's draftin
 
 - Combat casualties rely on legacy-message classification rather than direct `emit_event()` calls.
 - Reproduction's food precondition and child endowment do not conserve inventory.
-- Historical prose describing age, one birth per tick, different hunger thresholds, or inherited language is not current source truth.
+- Historical prose describing age, one birth per tick, different hunger
+  thresholds, or complete/genetic language inheritance is not current source
+  truth.

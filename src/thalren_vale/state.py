@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from .coalitions import CoalitionRuntimeState
 from .language import (
     CoalitionDialectRuntimeState,
+    IntergenerationalLanguageRuntimeState,
     LanguageContactRuntimeState,
     LanguageRuntimeState,
 )
@@ -50,6 +51,8 @@ class SimulationState:
         default_factory=CoalitionDialectRuntimeState)
     language_contact: LanguageContactRuntimeState = field(
         default_factory=LanguageContactRuntimeState)
+    intergenerational_language: IntergenerationalLanguageRuntimeState = field(
+        default_factory=IntergenerationalLanguageRuntimeState)
 
     def stage_inhabitant_id(self, inhabitant, candidate: int) -> None:
         """Assign, but do not yet consume, the next authoritative run ID."""
@@ -105,3 +108,4 @@ class SimulationState:
         self.language = LanguageRuntimeState()
         self.dialect = CoalitionDialectRuntimeState()
         self.language_contact = LanguageContactRuntimeState()
+        self.intergenerational_language = IntergenerationalLanguageRuntimeState()

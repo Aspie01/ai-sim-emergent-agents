@@ -39,6 +39,7 @@ from thalren_vale.config import (
     COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY,
     DIALECT_NOTICE_WITHOUT_COALITIONS,
     DIALECT_NOTICE_WITHOUT_LANGUAGE,
+    INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE,
     LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
     LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
     SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY,
@@ -282,6 +283,11 @@ def make_artifacts(
         "borrowing_confidence_threshold": 0.50,
         "language_contact_controls_status": "disabled",
         "language_contact_control_notices": [],
+        "intergenerational_language_enabled": False,
+        "maximum_parental_meanings_per_parent": 2,
+        "intergenerational_learning_strength": 0.20,
+        "intergenerational_language_controls_status": "disabled",
+        "intergenerational_language_control_notices": [],
     })
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return run_dir, manifest_path
@@ -1462,6 +1468,208 @@ def test_exact_normalized_contact_notices_are_valid_but_not_ready(tmp_path):
 
     assert report.valid and not report.v2_ready
     assert "language_contact_controls_not_v2_ready" in readiness_codes(report)
+
+
+INTERGENERATIONAL_LANGUAGE_CONFIGURATION_FIELDS = {
+    "intergenerational_language_enabled",
+    "maximum_parental_meanings_per_parent",
+    "intergenerational_learning_strength",
+    "intergenerational_language_controls_status",
+    "intergenerational_language_control_notices",
+}
+
+
+def inspect_intergenerational_language_configuration(tmp_path, updates):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    manifest["configuration"].update(updates)
+    write_manifest(manifest_path, manifest)
+    return inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "language_evolution_enabled": True,
+            "language_controls_status": "engineering_only_uncontracted",
+            "intergenerational_language_enabled": True,
+            "intergenerational_language_controls_status": (
+                "engineering_only_uncontracted"
+            ),
+        },
+        {
+            "maximum_parental_meanings_per_parent": 3,
+            "intergenerational_language_controls_status": (
+                "engineering_only_uncontracted"
+            ),
+        },
+        {
+            "intergenerational_learning_strength": 0.30,
+            "intergenerational_language_controls_status": (
+                "engineering_only_uncontracted"
+            ),
+        },
+    ],
+)
+def test_enabled_or_nondefault_intergenerational_controls_block_v2_ready(
+    tmp_path,
+    updates,
+):
+    report = inspect_intergenerational_language_configuration(
+        tmp_path, updates)
+
+    assert report.valid and not report.v2_ready
+    assert (
+        "intergenerational_language_controls_not_v2_ready"
+        in readiness_codes(report)
+    )
+
+
+@pytest.mark.parametrize(
+    "missing",
+    sorted(INTERGENERATIONAL_LANGUAGE_CONFIGURATION_FIELDS),
+)
+def test_missing_historical_intergenerational_field_is_valid_but_never_ready(
+    tmp_path,
+    missing,
+):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    del manifest["configuration"][missing]
+    write_manifest(manifest_path, manifest)
+
+    report = inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+    assert report.valid and not report.v2_ready
+    assert (
+        "intergenerational_language_controls_not_v2_ready"
+        in readiness_codes(report)
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("intergenerational_language_enabled", 1),
+        ("maximum_parental_meanings_per_parent", True),
+        ("maximum_parental_meanings_per_parent", 0),
+        ("maximum_parental_meanings_per_parent", 5),
+        ("intergenerational_learning_strength", 1),
+        ("intergenerational_learning_strength", 0.0),
+        ("intergenerational_learning_strength", float("nan")),
+        ("intergenerational_language_controls_status", "unknown"),
+        ("intergenerational_language_control_notices", "normalized"),
+        ("intergenerational_language_control_notices", ["invented_notice"]),
+        (
+            "intergenerational_language_control_notices",
+            [
+                INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE,
+                INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE,
+            ],
+        ),
+    ],
+)
+def test_malformed_intergenerational_field_invalidates_artifact(
+    tmp_path,
+    field,
+    value,
+):
+    report = inspect_intergenerational_language_configuration(
+        tmp_path, {field: value})
+
+    assert not report.valid and not report.v2_ready
+    assert (
+        "invalid_intergenerational_language_configuration"
+        in issue_codes(report)
+    )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"intergenerational_language_enabled": True},
+        {
+            "intergenerational_language_controls_status": "disabled",
+            "maximum_parental_meanings_per_parent": 3,
+        },
+        {
+            "intergenerational_language_controls_status": (
+                "normalized_uncontracted"
+            ),
+            "intergenerational_language_enabled": False,
+            "intergenerational_language_control_notices": [],
+        },
+        {
+            "language_evolution_enabled": True,
+            "language_controls_status": "engineering_only_uncontracted",
+            "intergenerational_language_enabled": False,
+            "intergenerational_language_controls_status": (
+                "normalized_uncontracted"
+            ),
+            "intergenerational_language_control_notices": [
+                INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE
+            ],
+        },
+        {
+            "intergenerational_language_controls_status": (
+                "engineering_only_uncontracted"
+            ),
+            "intergenerational_language_control_notices": [
+                INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE
+            ],
+        },
+    ],
+)
+def test_intergenerational_contradictions_invalidate_artifact(
+    tmp_path,
+    updates,
+):
+    report = inspect_intergenerational_language_configuration(
+        tmp_path, updates)
+
+    assert not report.valid and not report.v2_ready
+    assert (
+        "invalid_intergenerational_language_configuration"
+        in issue_codes(report)
+    )
+
+
+def test_exact_normalized_intergenerational_notice_is_valid_but_not_ready(
+    tmp_path,
+):
+    report = inspect_intergenerational_language_configuration(tmp_path, {
+        "language_evolution_enabled": False,
+        "intergenerational_language_enabled": False,
+        "intergenerational_language_controls_status": (
+            "normalized_uncontracted"
+        ),
+        "intergenerational_language_control_notices": [
+            INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE
+        ],
+    })
+
+    assert report.valid and not report.v2_ready
+    assert (
+        "intergenerational_language_controls_not_v2_ready"
+        in readiness_codes(report)
+    )
 
 
 @pytest.mark.parametrize(

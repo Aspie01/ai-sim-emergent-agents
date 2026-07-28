@@ -1,6 +1,6 @@
 # Configuration reference
 
-`SimulationConfig` is a frozen effective configuration. The simulator parses with `allow_abbrev=False`, normalizes feature dependencies, validates values, updates a small set of compatibility globals, and passes explicit frozen subconfigurations to the newer social, coalition, language, dialect, and contact systems.
+`SimulationConfig` is a frozen effective configuration. The simulator parses with `allow_abbrev=False`, normalizes feature dependencies, validates values, updates a small set of compatibility globals, and passes explicit frozen subconfigurations to the newer social, coalition, language, dialect, contact, and intergenerational-language systems.
 
 ## Core fields
 
@@ -108,6 +108,27 @@ Only authentic `DIFFERENT_ACTIVE_COALITIONS` communication uses these controls.
 Assigned/unassigned and both-unassigned communication stays at base Language v1
 rates.
 
+## Intergenerational-language controls
+
+| Field | Default | Valid range / dependency |
+| --- | ---: | --- |
+| `intergenerational_language_enabled` | `False` | Exact Boolean; requires only effective base language evolution |
+| `maximum_parental_meanings_per_parent` | `2` | Exact non-Boolean integer `1..len(Meaning)`; currently `1..4` |
+| `intergenerational_learning_strength` | exact float `0.20` | Exact finite float `0.0 < x <= 1.0` |
+
+CLI forms are `--enable-intergenerational-language`,
+`--disable-intergenerational-language`,
+`--maximum-parental-meanings-per-parent`, and
+`--intergenerational-learning-strength`.
+
+Requesting transmission without effective base language normalizes only the
+intergenerational gate off and records:
+
+- `intergenerational_language_requested_without_language`
+
+The feature does not depend on coalitions, dialect influence, language contact,
+formal factions, or settlements.
+
 ## Provenance status
 
 Each newer feature family records one of:
@@ -116,7 +137,12 @@ Each newer feature family records one of:
 - `normalized_uncontracted`: an invalid dependency request was normalized off and notices record why;
 - `engineering_only_uncontracted`: a feature is enabled or any control is nondefault, without normalization notices.
 
-These are provenance classifications, not alternate runtime switches. The generic experiment runner rejects all social, coalition, language, dialect, and contact option families before root creation or child launch.
+These are provenance classifications, not alternate runtime switches. The generic experiment runner rejects all social, coalition, language, dialect, contact, and intergenerational option families—including exact, equals, unambiguous-prefix, and ambiguous-prefix forms—before output-root creation or mutation, command construction, verification mutation, or child launch.
+
+Present contradictions are artifact-invalid. Historically missing
+intergenerational fields remain schema-valid, but missing, enabled, normalized,
+or nondefault intergenerational controls veto V2 readiness. An
+`ExpectedRunContract` cannot override that veto.
 
 ## Seed and entry-point caveats
 
@@ -132,6 +158,7 @@ example from the repository directory.
 
 - Source: `src/thalren_vale/config.py`, `src/thalren_vale/sim.py::run`, `src/thalren_vale/__main__.py`.
 - Tests: `tests/test_config.py`, `tests/test_language_contact.py`,
+  `tests/test_intergenerational_language.py`,
   `tests/test_language_reproducibility.py`, `tests/test_reproducibility.py`,
   `tests/test_artifact_validation.py`, `tests/test_experiment_runner.py`.
 - Verified help: `python -m thalren_vale --help`.

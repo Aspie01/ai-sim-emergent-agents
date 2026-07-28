@@ -87,6 +87,25 @@ and language cannot change transfers, relationships, partner choice, coalition
 lifecycle, factions, combat, survival, or population state. See
 [Language contact](../systems/language-contact.md).
 
+## Intergenerational language
+
+```text
+successful make_child() and committed _spawn(child)
+-> exact two parent objects sorted by stable ID
+-> bounded deterministic usable parental production selection
+-> child comprehension-only exposure
+-> canonical retention
+-> later ordinary reinforcement, forgetting, pruning, or production promotion
+```
+
+This is a one-way post-birth extension. It copies no complete vocabulary,
+creates no production at birth, consumes no RNG, and cannot change whether the
+birth occurred or any parent, material, social, faction, coalition, combat,
+health, survival, or population outcome. A failed transmission leaves the
+already admitted child and consumed stable ID committed while rolling back the
+three language-owned mutable owners. See
+[Intergenerational language](../systems/intergenerational-language.md).
+
 ## Formal civilization chain
 
 ```text
@@ -127,6 +146,7 @@ The generic runner currently records only part of the complete provenance shown.
 | Transfer -> language opportunity | Observational with language-only mutation |
 | Coalition membership -> same-group language rates | Causal one-way |
 | Different active coalitions -> positive contact acquisition/borrowing | Causal one-way within language |
+| Committed birth + exact parents -> child comprehension | Causal one-way within language after birth admission |
 | Language -> economy/coalitions/survival | Intentionally isolated |
 | State -> metrics/events/dashboard | Diagnostic/observational |
 | Plan -> child process/artifacts | Operational causal chain |
@@ -135,4 +155,6 @@ The generic runner currently records only part of the complete provenance shown.
 ## Implementation evidence
 
 - Sources: `inhabitants.py`, `economy.py`, `social.py`, `coalitions.py`, `language.py`, `sim.py`, `run_experiments.py`.
-- Tests: social, coalition, language, dialect, contact, termination, and artifact suites listed in [test reference](../reference/test-reference.md).
+- Tests: social, coalition, language, dialect, contact, intergenerational,
+  termination, and artifact suites listed in
+  [test reference](../reference/test-reference.md).

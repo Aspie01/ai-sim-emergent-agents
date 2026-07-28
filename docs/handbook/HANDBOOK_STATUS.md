@@ -3,13 +3,13 @@
 ## Recorded revision
 
 - Handbook: Living Technical Handbook v0.1
-- Documented branch: `feature/language-contact-v1`
-- Base `HEAD` commit: `83df90247b1226f0535df1a5c71a4ddb60b3bc45`
-- Documented implementation state: approved Language Contact v1 source and
+- Documented branch: `feature/intergenerational-language-v1`
+- Base `HEAD` commit: `f9647958e35114540ab681cc7ed816991f506f43`
+- Documented implementation state: approved Intergenerational Language v1 source and
   tests in the uncommitted branch working tree
-- Update date: 2026-07-18 (Canada/Eastern)
+- Update date: 2026-07-28 (Canada/Eastern)
 - Working-tree caveat: the commit identifies the base revision and does not by
-  itself contain Language Contact v1. The feature implementation, tests, and
+  itself contain Intergenerational Language v1. The feature implementation, tests, and
   handbook updates remain uncommitted branch work until the final feature
   commit. Existing non-handbook changes are intentionally preserved.
 
@@ -43,6 +43,7 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | Endogenous Language v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Coalition Dialects v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Language Contact v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Intergenerational Language v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Combat, technology, diplomacy and religion | Implemented but experimental |
 | Structured events, metrics, manifests and deep validation | Stable and verified engineering infrastructure |
 | Dashboard, RA tracker and mythology | Optional/diagnostic; mythology and RA disabled by default |
@@ -58,7 +59,6 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | Checkpoint, PRNG restoration or event replay | Planned, not implemented |
 | Immutable experiment attempts, ledger, selection and safe resume | Planned, not implemented |
 | Clean-tag/environment/plugin preflight and V2 matrix orchestration | Planned, not implemented |
-| `feature/intergenerational-language-v1` | Planned, not implemented |
 | `feature/lexical-evolution-v1` | Planned, not implemented |
 | `feature/compositional-protolanguage-v1` | Planned, not implemented |
 | `feature/grammar-evolution-v1` | Planned, not implemented |
@@ -74,19 +74,21 @@ Completed engineering implementations:
 - `feature/endogenous-language-v1`
 - `feature/coalition-dialects-v1`
 - `feature/language-contact-v1`
+- `feature/intergenerational-language-v1`
 
 Planned, not implemented:
 
-- `feature/intergenerational-language-v1` — **Planned, not implemented**
 - `feature/lexical-evolution-v1` — **Planned, not implemented**
 - `feature/compositional-protolanguage-v1` — **Planned, not implemented**
 - `feature/grammar-evolution-v1` — **Planned, not implemented**
 - `feature/language-coevolution-v1` — **Planned, not implemented**
 - `feature/language-research-readiness-v1` — **Planned, not implemented**
 
+The next milestone is `feature/lexical-evolution-v1`: **Planned, not implemented**.
+
 ## Current branch work
 
-The branch working tree contains the approved Language Contact v1 implementation
+The branch working tree contains the approved Intergenerational Language v1 implementation
 and tests. This handbook pass changes only `docs/handbook/`; it does not change
 simulation behavior, configuration, artifact schemas, runner behavior, or
 research output. The handbook files are themselves uncommitted branch work
@@ -167,6 +169,24 @@ Results on 2026-07-18:
 - `git diff --check`: passed.
 - No simulator, experiment, matrix, benchmark, historical scan, research tier,
   or canonical-output command was run. No research output was created.
+
+## Intergenerational Language v1 acceptance and handbook refresh
+
+The implementation completed focused verification, full-suite verification,
+and final read-only acceptance before this documentation pass. The approved
+full-suite result was **1,310 passed**; this is engineering verification, not a
+scientific result.
+
+This handbook refresh is verified with:
+
+```bash
+python docs/handbook/validate_handbook.py
+python -m compileall -q docs/handbook
+git diff --check
+```
+
+No simulator, experiment, matrix, benchmark, historical scan, research tier, or
+canonical-output command is part of this refresh.
 
 ## Known documentation limitations
 

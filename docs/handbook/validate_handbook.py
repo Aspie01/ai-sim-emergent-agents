@@ -11,7 +11,7 @@ from urllib.parse import unquote
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 HANDBOOK_ROOT = Path(__file__).resolve().parent
-DOCUMENTED_COMMIT = "83df90247b1226f0535df1a5c71a4ddb60b3bc45"
+DOCUMENTED_COMMIT = "f9647958e35114540ab681cc7ed816991f506f43"
 
 REQUIRED_PAGES = {
     "README.md",
@@ -35,6 +35,7 @@ REQUIRED_PAGES = {
     "systems/endogenous-language.md",
     "systems/coalition-dialects.md",
     "systems/language-contact.md",
+    "systems/intergenerational-language.md",
     "systems/conflict-technology-diplomacy-religion.md",
     "systems/events-observers-and-plugins.md",
     "experiments/runner-and-configurations.md",
@@ -57,7 +58,6 @@ REQUIRED_PAGES = {
 }
 
 PLANNED_LANGUAGE_MILESTONES = (
-    "feature/intergenerational-language-v1",
     "feature/lexical-evolution-v1",
     "feature/compositional-protolanguage-v1",
     "feature/grammar-evolution-v1",

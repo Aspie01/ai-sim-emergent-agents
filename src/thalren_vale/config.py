@@ -62,6 +62,10 @@ DEFAULT_LANGUAGE_CONTACT_ENABLED = False
 DEFAULT_CROSS_GROUP_LEARNING_MULTIPLIER = 1.50
 DEFAULT_BORROWING_EXPOSURE_THRESHOLD = 3
 DEFAULT_BORROWING_CONFIDENCE_THRESHOLD = 0.50
+DEFAULT_INTERGENERATIONAL_LANGUAGE_ENABLED = False
+DEFAULT_MAXIMUM_PARENTAL_MEANINGS_PER_PARENT = 2
+DEFAULT_INTERGENERATIONAL_LEARNING_STRENGTH = 0.20
+MAXIMUM_INTERGENERATIONAL_MEANINGS = 4
 FACTION_TRUST_THRESHOLD = DEFAULT_FACTION_TRUST_THRESHOLD
 WAR_TENSION_THRESHOLD = DEFAULT_WAR_TENSION_THRESHOLD
 BELIEF_SHARING_PROBABILITY = DEFAULT_BELIEF_SHARING_PROBABILITY
@@ -153,6 +157,18 @@ VALID_LANGUAGE_CONTACT_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE = (
+    'intergenerational_language_requested_without_language'
+)
+VALID_INTERGENERATIONAL_LANGUAGE_CONTROL_NOTICES = frozenset({
+    INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE,
+})
+VALID_INTERGENERATIONAL_LANGUAGE_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
 
 @dataclass(frozen=True)
 class SocialMemoryConfig:
@@ -207,6 +223,15 @@ class LanguageContactConfig:
     cross_group_learning_multiplier: float
     borrowing_exposure_threshold: int
     borrowing_confidence_threshold: float
+
+
+@dataclass(frozen=True)
+class IntergenerationalLanguageConfig:
+    """Effective engineering-only parental-language controls."""
+
+    intergenerational_language_enabled: bool
+    maximum_parental_meanings_per_parent: int
+    intergenerational_learning_strength: float
 
 
 @dataclass(frozen=True)
@@ -265,6 +290,15 @@ class SimulationConfig:
     borrowing_confidence_threshold: float = (
         DEFAULT_BORROWING_CONFIDENCE_THRESHOLD
     )
+    intergenerational_language_enabled: bool = (
+        DEFAULT_INTERGENERATIONAL_LANGUAGE_ENABLED
+    )
+    maximum_parental_meanings_per_parent: int = (
+        DEFAULT_MAXIMUM_PARENTAL_MEANINGS_PER_PARENT
+    )
+    intergenerational_learning_strength: float = (
+        DEFAULT_INTERGENERATIONAL_LEARNING_STRENGTH
+    )
     social_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     language_control_notices: tuple[str, ...] = field(
@@ -274,6 +308,8 @@ class SimulationConfig:
     dialect_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     language_contact_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    intergenerational_language_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -329,6 +365,21 @@ class SimulationConfig:
             self,
             'language_contact_control_notices',
             tuple(sorted(contact_notices)),
+        )
+
+        intergenerational_notices: list[str] = []
+        if (
+            self.intergenerational_language_enabled is True
+            and self.language_evolution_enabled is False
+        ):
+            object.__setattr__(
+                self, 'intergenerational_language_enabled', False)
+            intergenerational_notices.append(
+                INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE)
+        object.__setattr__(
+            self,
+            'intergenerational_language_control_notices',
+            tuple(sorted(intergenerational_notices)),
         )
 
     @classmethod
@@ -505,6 +556,30 @@ class SimulationConfig:
                 if getattr(
                     args, 'borrowing_confidence_threshold', None) is None
                 else args.borrowing_confidence_threshold
+            ),
+            intergenerational_language_enabled=(
+                bool(getattr(
+                    args, 'enable_intergenerational_language', False))
+                and not bool(getattr(
+                    args, 'disable_intergenerational_language', False))
+            ),
+            maximum_parental_meanings_per_parent=(
+                DEFAULT_MAXIMUM_PARENTAL_MEANINGS_PER_PARENT
+                if getattr(
+                    args,
+                    'maximum_parental_meanings_per_parent',
+                    None,
+                ) is None
+                else args.maximum_parental_meanings_per_parent
+            ),
+            intergenerational_learning_strength=(
+                DEFAULT_INTERGENERATIONAL_LEARNING_STRENGTH
+                if getattr(
+                    args,
+                    'intergenerational_learning_strength',
+                    None,
+                ) is None
+                else args.intergenerational_learning_strength
             ),
         )
         instance.validate()
@@ -703,6 +778,45 @@ class SimulationConfig:
         ):
             raise ValueError(
                 'language contact normalization notices require disabled contact')
+        if type(self.intergenerational_language_enabled) is not bool:
+            raise ValueError(
+                'intergenerational language setting must be boolean')
+        if (
+            self.intergenerational_language_enabled
+            and not self.language_evolution_enabled
+        ):
+            raise ValueError(
+                'intergenerational language requires language evolution')
+        if (
+            type(self.maximum_parental_meanings_per_parent) is not int
+            or not 1
+            <= self.maximum_parental_meanings_per_parent
+            <= MAXIMUM_INTERGENERATIONAL_MEANINGS
+        ):
+            raise ValueError(
+                'maximum parental meanings per parent must be an integer '
+                f'from 1 to {MAXIMUM_INTERGENERATIONAL_MEANINGS}')
+        if (
+            type(self.intergenerational_learning_strength) is not float
+            or not math.isfinite(self.intergenerational_learning_strength)
+            or not 0.0 < self.intergenerational_learning_strength <= 1.0
+        ):
+            raise ValueError(
+                'intergenerational learning strength must be a finite float '
+                'in (0.0, 1.0]')
+        if any(
+            notice not in VALID_INTERGENERATIONAL_LANGUAGE_CONTROL_NOTICES
+            for notice in self.intergenerational_language_control_notices
+        ):
+            raise ValueError(
+                'unknown intergenerational language normalization notice')
+        if (
+            self.intergenerational_language_control_notices
+            and self.intergenerational_language_enabled
+        ):
+            raise ValueError(
+                'intergenerational language normalization notices require '
+                'disabled transmission')
 
     def apply_legacy_globals(self) -> None:
         """Keep modules using legacy constants synchronized during migration."""
@@ -730,6 +844,7 @@ class SimulationConfig:
         result.pop('coalition_control_notices', None)
         result.pop('dialect_control_notices', None)
         result.pop('language_contact_control_notices', None)
+        result.pop('intergenerational_language_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
@@ -747,6 +862,10 @@ class SimulationConfig:
             self.language_contact_control_notices)
         result['language_contact_controls_status'] = (
             self.language_contact_controls_status)
+        result['intergenerational_language_control_notices'] = list(
+            self.intergenerational_language_control_notices)
+        result['intergenerational_language_controls_status'] = (
+            self.intergenerational_language_controls_status)
         return result
 
     @property
@@ -899,4 +1018,33 @@ class SimulationConfig:
             borrowing_exposure_threshold=self.borrowing_exposure_threshold,
             borrowing_confidence_threshold=(
                 self.borrowing_confidence_threshold),
+        )
+
+    @property
+    def intergenerational_language_controls_status(self) -> str:
+        """Return provenance status for uncontracted parental transmission."""
+        if self.intergenerational_language_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.intergenerational_language_enabled
+            or self.maximum_parental_meanings_per_parent
+            != DEFAULT_MAXIMUM_PARENTAL_MEANINGS_PER_PARENT
+            or self.intergenerational_learning_strength
+            != DEFAULT_INTERGENERATIONAL_LEARNING_STRENGTH
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def intergenerational_language_config(
+        self,
+    ) -> IntergenerationalLanguageConfig:
+        """Return immutable effective parental-language controls."""
+        return IntergenerationalLanguageConfig(
+            intergenerational_language_enabled=(
+                self.intergenerational_language_enabled),
+            maximum_parental_meanings_per_parent=(
+                self.maximum_parental_meanings_per_parent),
+            intergenerational_learning_strength=(
+                self.intergenerational_learning_strength),
         )

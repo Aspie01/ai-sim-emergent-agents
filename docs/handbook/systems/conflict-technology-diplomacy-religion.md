@@ -350,10 +350,9 @@ Suppose rivalry between factions A and B reaches 200. If A has no threshold-chan
 
 Language-driven combat, diplomacy, religion, partner choice, formal faction
 identity, or coevolution are **Planned, not implemented**. Language Contact v1
-is implemented, but is causally isolated from every system on this page. The
-future milestones are:
+and Intergenerational Language v1 are implemented, but both are causally
+isolated from every system on this page. The future milestones are:
 
-- `feature/intergenerational-language-v1` — **Planned, not implemented**;
 - `feature/lexical-evolution-v1` — **Planned, not implemented**;
 - `feature/compositional-protolanguage-v1` — **Planned, not implemented**;
 - `feature/grammar-evolution-v1` — **Planned, not implemented**;

@@ -293,6 +293,36 @@ PROPER_PREFIX_CONTACT_ARGUMENTS = [
     })
 ]
 
+INTERGENERATIONAL_OPTION_NAMES = (
+    "--enable-intergenerational-language",
+    "--disable-intergenerational-language",
+    "--maximum-parental-meanings-per-parent",
+    "--intergenerational-learning-strength",
+)
+
+FULL_INTERGENERATIONAL_ARGUMENTS = [
+    ["--enable-intergenerational-language"],
+    ["--disable-intergenerational-language"],
+    ["--maximum-parental-meanings-per-parent", "2"],
+    ["--intergenerational-learning-strength", "0.2"],
+]
+
+EQUALS_INTERGENERATIONAL_ARGUMENTS = [
+    ["--enable-intergenerational-language=true"],
+    ["--disable-intergenerational-language=true"],
+    ["--maximum-parental-meanings-per-parent=2"],
+    ["--intergenerational-learning-strength=0.2"],
+]
+
+PROPER_PREFIX_INTERGENERATIONAL_ARGUMENTS = [
+    [prefix]
+    for prefix in sorted({
+        option[:length]
+        for option in INTERGENERATIONAL_OPTION_NAMES
+        for length in range(3, len(option))
+    })
+]
+
 
 @pytest.mark.parametrize(
     "extra_args",
@@ -453,6 +483,60 @@ def test_rejected_contact_control_preserves_existing_output_tree(
     )
 
     with pytest.raises(ValueError, match="uncontracted language contact control"):
+        runner._run_cells_in_fresh_root([cell], output)
+
+    assert child_calls == []
+    assert snapshot_tree(output) == before
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    PROPER_PREFIX_INTERGENERATIONAL_ARGUMENTS
+    + FULL_INTERGENERATIONAL_ARGUMENTS
+    + EQUALS_INTERGENERATIONAL_ARGUMENTS,
+)
+def test_runner_rejects_every_intergenerational_option_before_any_activity(
+    tmp_path,
+    monkeypatch,
+    extra_args,
+):
+    output = tmp_path / "outputs"
+    cell = fresh_cell_spec()[0]
+    cell["extra_args"] = extra_args
+    child_calls = []
+    monkeypatch.setattr(
+        runner,
+        "_simulation_command",
+        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+    )
+
+    with pytest.raises(ValueError):
+        runner._run_cells_in_fresh_root([cell], output)
+
+    assert child_calls == []
+    assert not output.exists()
+
+
+def test_rejected_intergenerational_control_preserves_existing_output_tree(
+    tmp_path,
+    monkeypatch,
+):
+    output = tmp_path / "outputs"
+    output.mkdir()
+    (output / "sentinel.bin").write_bytes(b"preserve transmission rejection\x00")
+    before = snapshot_tree(output)
+    cell = fresh_cell_spec()[0]
+    cell["extra_args"] = ["--maximum-parental"]
+    child_calls = []
+    monkeypatch.setattr(
+        runner,
+        "_simulation_command",
+        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+    )
+
+    with pytest.raises(
+        ValueError, match="uncontracted intergenerational language control"
+    ):
         runner._run_cells_in_fresh_root([cell], output)
 
     assert child_calls == []
@@ -787,6 +871,39 @@ def test_plan_loading_rejects_exact_equals_and_ambiguous_contact_flags(
         runner.load_plan(plan_path)
 
 
+@pytest.mark.parametrize(
+    "extra_args",
+    (
+        "--enable-intergenerational-language",
+        "--intergenerational-learning-strength=0.2",
+        "--maximum-parental",
+    ),
+)
+def test_plan_loading_rejects_intergenerational_option_family(
+    tmp_path,
+    extra_args,
+):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({
+            "schema_version": runner.PLAN_SCHEMA_VERSION,
+            "experiment_id": "transmission-not-contracted",
+            "conditions": [{
+                "name": "baseline",
+                "seeds": "1",
+                "ticks": 1,
+                "extra_args": extra_args,
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError, match="uncontracted intergenerational language control"
+    ):
+        runner.load_plan(plan_path)
+
+
 def test_verify_rejects_contact_plan_without_changing_existing_output(tmp_path):
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(
@@ -808,6 +925,38 @@ def test_verify_rejects_contact_plan_without_changing_existing_output(tmp_path):
     before = snapshot_tree(output)
 
     with pytest.raises(ValueError, match="uncontracted language contact control"):
+        verify_outputs(plan_path, output, validation_mode="strict")
+
+    assert snapshot_tree(output) == before
+
+
+def test_verify_rejects_intergenerational_plan_without_output_mutation(
+    tmp_path,
+):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({
+            "schema_version": runner.PLAN_SCHEMA_VERSION,
+            "experiment_id": "transmission-not-contracted",
+            "conditions": [{
+                "name": "baseline",
+                "seeds": "1",
+                "ticks": 1,
+                "extra_args": (
+                    "--maximum-parental-meanings-per-parent=2"
+                ),
+            }],
+        }),
+        encoding="utf-8",
+    )
+    output = tmp_path / "outputs"
+    output.mkdir()
+    (output / "sentinel").write_bytes(b"unchanged")
+    before = snapshot_tree(output)
+
+    with pytest.raises(
+        ValueError, match="uncontracted intergenerational language control"
+    ):
         verify_outputs(plan_path, output, validation_mode="strict")
 
     assert snapshot_tree(output) == before

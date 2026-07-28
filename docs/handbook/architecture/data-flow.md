@@ -20,7 +20,7 @@ The manifest stores the effective normalized configuration, not the original spe
 world tiles
 -> inhabitant needs, movement, inventory and death
 -> beliefs and formal factions
--> reproduction
+-> reproduction and optional post-admission parental comprehension exposure
 -> economy/resources/currency/relationships/language and contact exposure
 -> combat, technology, diplomacy, religion
 -> scheduled interventions and plugins
@@ -38,6 +38,14 @@ receiver learning, bounded `ContactExposure`, and contact-qualified
 remain on the base language path. Contact state flows only into individual
 language state, on-demand summaries, and the selected-state hash; it has no
 return path into social or material state.
+
+When Intergenerational Language v1 is effective, the sole reproduction hook
+runs after `_spawn(child)` has committed population, grid, optional faction,
+stable ID, and allocator state. It receives the exact child and two parent
+objects directly, selects a bounded deterministic subset of usable parental
+production, and proposes child comprehension only. No non-birth spawn enters
+this path. A proposal failure rolls back child/base/intergenerational language
+owners but not the already committed birth.
 
 ## Observation to artifacts
 
@@ -72,6 +80,13 @@ Disabled contact controls are omitted only when runtime and association state
 are pristine; hidden contact state fails closed. Contact adds no standard event
 or metrics artifact fields.
 
+Enabled intergenerational hashing similarly includes exact controls/status,
+the base-language gate, dedicated runtime, tick/child sentinel, and canonical
+comprehension provenance. Disabled transmission omits those behavioral fields
+only when every living/dead association and runtime is pristine. The on-demand
+summary is not a standard artifact and performs one `O(P x L)` population pass
+without parent lookup, pairing, sorting, mutation, or RNG.
+
 The current belief CSV header says `inhabitant_id`, but the producer writes the inhabitant display name. The deep validator verifies a nonempty unique string at each snapshot tick; it does not reinterpret it as the stable integer ID.
 
 ## Plan to batch result
@@ -99,5 +114,6 @@ Canonical analysis should begin with revalidation of the raw structured set. Der
 - `src/thalren_vale/artifact_validation.py`.
 - `run_experiments.py`.
 - Tests: `tests/test_events.py`, `tests/test_language_contact.py`,
+  `tests/test_intergenerational_language.py`,
   `tests/test_language_reproducibility.py`, `tests/test_artifact_validation.py`,
   `tests/test_experiment_runner.py`.

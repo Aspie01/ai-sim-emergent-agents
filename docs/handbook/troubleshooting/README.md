@@ -52,12 +52,14 @@ Dashboard JSON, raw logs, chronicles, and mythology are diagnostic and unvalidat
 
 ## A planned language feature is missing
 
-Endogenous Language v1, Coalition Dialects v1, and Language Contact v1 are
-implemented engineering features. Intergenerational transmission, lexical
+Endogenous Language v1, Coalition Dialects v1, Language Contact v1, and
+Intergenerational Language v1 are implemented engineering features. Lexical
 evolution, compositional protolanguage, grammar, coevolution, and
 research-readiness milestones are **Planned, not implemented**. Contact applies
 only to authentic different-active-coalitions communication; assigned/unassigned
-communication intentionally remains base Language v1 behavior.
+communication intentionally remains base Language v1 behavior. Birth
+transmission applies only after successful child admission and creates bounded
+comprehension, not production or a copied vocabulary.
 
 ## Documentation appears inconsistent with source
 

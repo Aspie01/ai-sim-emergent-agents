@@ -16,6 +16,10 @@ movement, reproduction, survival, or population state. See
 [Language Contact v1](language-contact.md) extension can strengthen positive
 receiver acquisition and record borrowing only for authentic communication
 between different active coalitions; it preserves this isolation boundary.
+The independent
+[Intergenerational Language v1](intergenerational-language.md) extension can
+seed bounded child comprehension from the exact parents after a successful
+birth admission. It also preserves the one-way isolation boundary.
 
 ## 2. Why it exists
 
@@ -62,13 +66,15 @@ Each immutable `LexicalAssociation` records meaning, signal, confidence,
 successful and failed uses, observation count, last-used tick, origin
 (`invented` or `learned`), optional source inhabitant ID, and—when Language
 Contact v1 is effective—optional bounded comprehension exposure or production
-borrowing provenance.
+borrowing provenance—and, when Intergenerational Language v1 is effective,
+optional bounded direct-parent provenance on comprehension.
 
 `SimulationState.language` owns `LanguageRuntimeState`: the seed-domain identity,
-attempt/result counters, invention/learning/loss counters, last communication and
-forgetting ticks, and the dialect and contact gates. Dedicated dialect and
-contact runtimes carry their own bounded counters. No lexicon is shared by a
-faction or coalition.
+attempt/result counters, invention/learning/loss counters, last communication
+and forgetting ticks, and the dialect, contact, and intergenerational gates.
+Dedicated dialect, contact, and intergenerational runtimes carry their own
+bounded counters. No lexicon is shared by a parent, family, generation,
+faction, or coalition.
 
 ## 6. Inputs
 
@@ -122,6 +128,12 @@ An unknown signal remains `UNKNOWN_SIGNAL` in the event that teaches it. A
 misunderstanding remains `MISUNDERSTANDING` in the event that corrects it.
 Learning cannot retroactively create same-event success.
 
+Intergenerational acquisition does not call this communication sequence. Its
+sole hook is after a successful `_spawn(child)` in reproduction, uses the exact
+two parents as read-only sources, creates or reinforces comprehension only, and
+does not increment ordinary communication, invention, or generic learning
+counters.
+
 ## 8. Outputs
 
 `communicate()` returns a `CommunicationOutcome` containing tick, communicator
@@ -137,6 +149,9 @@ runtime to remain pristine; hidden state causes hashing to fail closed.
 
 The run initializes the language seed domain immediately after seeding the core
 simulation. Communication occurs only after successful Layer-4 transfers.
+Optional intergenerational exposure occurs earlier in the tick, immediately
+after a birth admission commits and before religion inheritance or birth-event
+emission.
 `maintain_language_state()` runs once in the end-of-tick emergent pass, after
 relationship and coalition maintenance and before authoritative observation.
 See [Tick lifecycle](../architecture/tick-lifecycle.md).
@@ -150,6 +165,7 @@ See [Tick lifecycle](../architecture/tick-lifecycle.md).
 | Social relationships | Intentionally isolated | None from language | All times | No trust or partner-choice feedback |
 | Informal coalitions | Coalition → optional dialect/contact context | Frozen stable-ID membership | Same economy tick | Can adjust language learning or qualify contact only |
 | Language contact | Different-coalition context → language | Positive receiver learning and bounded exposure/provenance | After interpretation | Changes individual language state only |
+| Birth/population | Successful birth → language | Exact child/parents and usable parental production | After `_spawn(child)` | Bounded child comprehension only |
 | Death | Population → language maintenance | Newly dead owners | End of tick | Clears lexical associations |
 | Hashing | Language → hash | Canonical lexicons/runtime | Finalization | Fingerprints enabled state |
 
@@ -194,7 +210,8 @@ columns or approved research estimands.
 simulation PRNG. Per-inhabitant indices prevent one agent's invention from
 perturbing another's signal. Confidence values are clamped and rounded to six
 decimals, and selection/pruning use enum and signal ordering. Language hooks do
-not change the core PRNG position. See
+not change the core PRNG position. Birth transmission adds no RNG: parent order
+and parental-form salience are canonical. See
 [Determinism and RNG](../architecture/determinism-and-rng.md).
 
 ## 15. Failure and edge cases
@@ -213,7 +230,8 @@ not change the core PRNG position. See
   associations by half the base reinforcement rate, prunes canonically, and
   clears dead owners' associations while retaining their invention indices.
 - Reset validates all living/dead language states and
-  language/dialect/contact runtimes before clearing authoritative state.
+  language/dialect/contact/intergenerational runtimes plus historical parent
+  IDs before clearing authoritative state.
 
 ## 16. Tests and validation
 
@@ -227,7 +245,10 @@ RNG preservation. `tests/test_language_reproducibility.py` covers hash-seed
 independence, per-agent invention isolation, enabled hashing, insertion order,
 and disabled fail-closed behavior. `tests/test_language_contact.py` covers the
 approved different-coalition acquisition, exposure, borrowing, summary, and
-isolation extension. See
+isolation extension. `tests/test_intergenerational_language.py` covers the
+post-admission birth hook, partial comprehension, parent ordering, duplicate
+and competing forms, provenance, rollback, saturation, summary, hashing,
+reset, and causal isolation. See
 [Test reference](../reference/test-reference.md).
 
 ## 17. Worked example
@@ -246,10 +267,11 @@ the teaching occurrence cannot.
 - Signals are abstract bounded phoneme tuples, not text or speech.
 - No background conversation or vocabulary synchronization exists.
 - Mixed borrowed and nonborrowed individual vocabularies can now arise under
-  Language Contact v1, but no inherited vocabulary, migration identity,
-  permanent bilingual label, grammar, syntax, mutation, shortening,
-  recombination, composition, teaching institution, prestige, or faction
-  language exists.
+  Language Contact v1, and bounded parental comprehension can arise under
+  Intergenerational Language v1. There is still no complete vocabulary
+  inheritance, migration identity, permanent bilingual label, grammar, syntax,
+  mutation, shortening, recombination, composition, teaching institution,
+  prestige, or faction language.
 - Comprehension has no effect on material transfer outcomes.
 - Standard artifacts expose hashes and controls but no dedicated language event
   stream or research-ready metric contract.
@@ -261,16 +283,17 @@ Completed engineering implementations:
 - `feature/endogenous-language-v1`
 - `feature/coalition-dialects-v1`
 - `feature/language-contact-v1`
+- `feature/intergenerational-language-v1`
 
 Planned, not implemented:
 
-- `feature/intergenerational-language-v1` — **Planned, not implemented**
 - `feature/lexical-evolution-v1` — **Planned, not implemented**
 - `feature/compositional-protolanguage-v1` — **Planned, not implemented**
 - `feature/grammar-evolution-v1` — **Planned, not implemented**
 - `feature/language-coevolution-v1` — **Planned, not implemented**
 - `feature/language-research-readiness-v1` — **Planned, not implemented**
 
+The next milestone is `feature/lexical-evolution-v1`: **Planned, not implemented**.
 The research-readiness milestone will define a later evidence contract; it does
 not make the current engineering implementation research-ready.
 
@@ -294,6 +317,7 @@ research-ready.
 - `tests/test_language_evolution.py`
 - `tests/test_language_interaction_hooks.py`
 - `tests/test_language_contact.py`
+- `tests/test_intergenerational_language.py`
 - `tests/test_language_reproducibility.py`
 - `tests/test_simulation_state.py`
 - `tests/test_reproducibility.py`

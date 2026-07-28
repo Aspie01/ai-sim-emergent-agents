@@ -19,7 +19,11 @@ from .coalitions import (
     classify_coalition_communication,
     validate_coalition_membership_snapshot,
 )
-from .config import CoalitionDialectConfig, LanguageContactConfig
+from .config import (
+    CoalitionDialectConfig,
+    IntergenerationalLanguageConfig,
+    LanguageContactConfig,
+)
 
 
 LANGUAGE_DOMAIN = "thalren-vale:endogenous-language-v1"
@@ -63,6 +67,9 @@ class Meaning(str, Enum):
 
 
 MEANING_ORDER = {meaning: index for index, meaning in enumerate(Meaning)}
+MAX_INTERGENERATIONAL_ATTEMPTS = (
+    MAX_LANGUAGE_COUNTER // (2 * len(Meaning))
+)
 RESOURCE_MEANINGS = {
     "food": Meaning.FOOD,
     "wood": Meaning.WOOD,
@@ -154,6 +161,18 @@ class BorrowingProvenance:
 
 
 @dataclass(frozen=True, slots=True)
+class IntergenerationalProvenance:
+    """Bounded direct-parent facts for one comprehension association."""
+
+    first_transmission_tick: int
+    first_parent_id: int
+    first_parent_signal_origin: AssociationOrigin
+    first_parent_form_was_borrowed: bool
+    parent_count: int
+    borrowed_parent_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class LexicalAssociation:
     """One immutable production or comprehension association."""
 
@@ -168,6 +187,7 @@ class LexicalAssociation:
     learned_from_id: int | None = None
     contact_exposure: ContactExposure | None = None
     borrowing_provenance: BorrowingProvenance | None = None
+    intergenerational_provenance: IntergenerationalProvenance | None = None
 
 
 @dataclass(slots=True)
@@ -201,6 +221,7 @@ class LanguageRuntimeState:
     last_forgetting_tick: int | None = None
     coalition_dialect_influence_enabled: bool = False
     language_contact_enabled: bool = False
+    intergenerational_language_enabled: bool = False
 
 
 @dataclass(slots=True)
@@ -232,6 +253,25 @@ class LanguageContactRuntimeState:
     borrowing_promotion_count: int = 0
     borrowed_production_use_count: int = 0
     last_contact_tick: int | None = None
+
+
+@dataclass(slots=True)
+class IntergenerationalLanguageRuntimeState:
+    """Frozen controls, synchronized counters, and exact-once birth sentinel."""
+
+    maximum_parental_meanings_per_parent: int | None = None
+    intergenerational_learning_strength: float | None = None
+    successful_birth_transmission_attempt_count: int = 0
+    parental_source_count: int = 0
+    transmitted_signal_exposure_count: int = 0
+    comprehension_association_creation_count: int = 0
+    comprehension_association_reinforcement_count: int = 0
+    parental_source_without_usable_signal_count: int = 0
+    duplicate_parent_form_count: int = 0
+    competing_parent_form_count: int = 0
+    borrowed_parent_form_transmission_count: int = 0
+    last_transmission_tick: int | None = None
+    last_transmission_child_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,9 +318,9 @@ def _exact_nonnegative_int(value: object) -> bool:
     return type(value) is int and 0 <= value <= MAX_LANGUAGE_COUNTER
 
 
-def _language_state_identity(state: AgentLanguageState) -> int:
-    """Return identity used only to reject aliased per-agent language state."""
-    return id(state)
+def _language_state_identity(value: object) -> int:
+    """Return identity used only for owner deduplication and alias rejection."""
+    return id(value)
 
 
 def _increment(value: int, *, field_name: str) -> int:
@@ -390,6 +430,245 @@ def validate_language_contact_config(config: object) -> LanguageContactConfig:
             "borrowing confidence threshold must be a finite float from 0.10 to 1.0",
         )
     return config
+
+
+def validate_intergenerational_language_config(
+    config: object,
+    *,
+    require_enabled: bool = False,
+) -> IntergenerationalLanguageConfig:
+    """Validate exact effective controls for parental language exposure."""
+    if type(require_enabled) is not bool:
+        _raise(
+            "invalid_intergenerational_language_config",
+            "require-enabled policy must be boolean",
+        )
+    if type(config) is not IntergenerationalLanguageConfig:
+        _raise(
+            "invalid_intergenerational_language_config",
+            "intergenerational config has an invalid exact type",
+        )
+    if type(config.intergenerational_language_enabled) is not bool:
+        _raise(
+            "invalid_intergenerational_language_config",
+            "intergenerational language setting must be boolean",
+        )
+    if (
+        type(config.maximum_parental_meanings_per_parent) is not int
+        or not 1
+        <= config.maximum_parental_meanings_per_parent
+        <= len(Meaning)
+    ):
+        _raise(
+            "invalid_intergenerational_language_config",
+            f"parental meaning cap must be an integer from 1 to {len(Meaning)}",
+        )
+    if (
+        type(config.intergenerational_learning_strength) is not float
+        or not math.isfinite(config.intergenerational_learning_strength)
+        or not 0.0 < config.intergenerational_learning_strength <= 1.0
+    ):
+        _raise(
+            "invalid_intergenerational_language_config",
+            "intergenerational learning strength must be a finite float in "
+            "(0.0, 1.0]",
+        )
+    if require_enabled and not config.intergenerational_language_enabled:
+        _raise(
+            "intergenerational_language_processing_disabled",
+            "operation requires effective intergenerational language",
+        )
+    return config
+
+
+_INTERGENERATIONAL_COUNTER_FIELDS = (
+    "successful_birth_transmission_attempt_count",
+    "parental_source_count",
+    "transmitted_signal_exposure_count",
+    "comprehension_association_creation_count",
+    "comprehension_association_reinforcement_count",
+    "parental_source_without_usable_signal_count",
+    "duplicate_parent_form_count",
+    "competing_parent_form_count",
+    "borrowed_parent_form_transmission_count",
+)
+
+
+def intergenerational_runtime_is_pristine(runtime: object) -> bool:
+    """Return whether parental-language runtime is exactly disabled."""
+    return type(runtime) is IntergenerationalLanguageRuntimeState and (
+        runtime.maximum_parental_meanings_per_parent is None
+        and runtime.intergenerational_learning_strength is None
+        and all(
+            type(getattr(runtime, name)) is int
+            and getattr(runtime, name) == 0
+            for name in _INTERGENERATIONAL_COUNTER_FIELDS
+        )
+        and runtime.last_transmission_tick is None
+        and runtime.last_transmission_child_id is None
+    )
+
+
+def validate_intergenerational_language_runtime(
+    runtime: object,
+    *,
+    config: IntergenerationalLanguageConfig | None = None,
+    language_runtime: LanguageRuntimeState | None = None,
+) -> IntergenerationalLanguageRuntimeState:
+    """Fail closed unless controls, partitions, and birth sentinels agree."""
+    if type(runtime) is not IntergenerationalLanguageRuntimeState:
+        _raise(
+            "invalid_intergenerational_language_runtime",
+            "intergenerational runtime type is invalid",
+        )
+    for name in _INTERGENERATIONAL_COUNTER_FIELDS:
+        if not _exact_nonnegative_int(getattr(runtime, name)):
+            _raise(
+                "invalid_intergenerational_language_runtime",
+                f"{name} is invalid",
+            )
+    attempts = runtime.successful_birth_transmission_attempt_count
+    if attempts > MAX_INTERGENERATIONAL_ATTEMPTS:
+        _raise(
+            "invalid_intergenerational_language_runtime",
+            "birth transmission attempts exceed the synchronized cap",
+        )
+    sources = runtime.parental_source_count
+    exposures = runtime.transmitted_signal_exposure_count
+    creations = runtime.comprehension_association_creation_count
+    reinforcements = (
+        runtime.comprehension_association_reinforcement_count)
+    without_signal = runtime.parental_source_without_usable_signal_count
+    duplicates = runtime.duplicate_parent_form_count
+    competing = runtime.competing_parent_form_count
+    borrowed = runtime.borrowed_parent_form_transmission_count
+
+    controls = (
+        runtime.maximum_parental_meanings_per_parent,
+        runtime.intergenerational_learning_strength,
+    )
+    if all(value is None for value in controls):
+        if not intergenerational_runtime_is_pristine(runtime):
+            _raise(
+                "nonpristine_intergenerational_language_runtime",
+                "uninitialized intergenerational runtime retains state",
+            )
+    elif any(value is None for value in controls):
+        _raise(
+            "invalid_intergenerational_language_runtime",
+            "intergenerational controls are only partially initialized",
+        )
+    else:
+        runtime_config = IntergenerationalLanguageConfig(
+            intergenerational_language_enabled=True,
+            maximum_parental_meanings_per_parent=(
+                runtime.maximum_parental_meanings_per_parent),
+            intergenerational_learning_strength=(
+                runtime.intergenerational_learning_strength),
+        )
+        validate_intergenerational_language_config(runtime_config)
+        if config is not None:
+            validated_config = validate_intergenerational_language_config(
+                config)
+            if not validated_config.intergenerational_language_enabled:
+                _raise(
+                    "invalid_intergenerational_language_config",
+                    "initialized runtime requires enabled controls",
+                )
+            if runtime_config != validated_config:
+                _raise(
+                    "intergenerational_language_runtime_config_mismatch",
+                    "runtime controls disagree with effective configuration",
+                )
+
+        maximum_meanings = runtime.maximum_parental_meanings_per_parent
+        assert type(maximum_meanings) is int
+        if sources != 2 * attempts:
+            _raise(
+                "intergenerational_source_partition_mismatch",
+                "parental sources must equal twice the birth attempts",
+            )
+        if exposures != creations + reinforcements:
+            _raise(
+                "intergenerational_exposure_partition_mismatch",
+                "creations and reinforcements must partition exposures",
+            )
+        if without_signal > sources:
+            _raise(
+                "intergenerational_source_partition_mismatch",
+                "sources without signals exceed parental sources",
+            )
+        usable_sources = sources - without_signal
+        if not usable_sources <= exposures <= maximum_meanings * usable_sources:
+            _raise(
+                "intergenerational_exposure_bound_mismatch",
+                "exposures disagree with usable parental source bounds",
+            )
+        if borrowed > exposures:
+            _raise(
+                "intergenerational_borrowing_subset_mismatch",
+                "borrowed parental forms exceed transmitted exposures",
+            )
+        if duplicates + competing > exposures // 2:
+            _raise(
+                "intergenerational_parent_form_bound_mismatch",
+                "duplicate and competing forms exceed exposure pairs",
+            )
+
+        markers = (
+            runtime.last_transmission_tick,
+            runtime.last_transmission_child_id,
+        )
+        if attempts == 0:
+            if markers != (None, None):
+                _raise(
+                    "invalid_intergenerational_language_runtime",
+                    "empty transmission history has last markers",
+                )
+        elif (
+            type(runtime.last_transmission_tick) is not int
+            or runtime.last_transmission_tick < 0
+            or type(runtime.last_transmission_child_id) is not int
+            or runtime.last_transmission_child_id < 0
+        ):
+            _raise(
+                "invalid_intergenerational_language_runtime",
+                "transmission history lacks exact nonnegative last markers",
+            )
+
+    if language_runtime is not None:
+        validated_language = validate_language_runtime(
+            language_runtime, initialized=True)
+        initialized = (
+            runtime.maximum_parental_meanings_per_parent is not None)
+        if (
+            validated_language.intergenerational_language_enabled
+            is not initialized
+        ):
+            _raise(
+                "intergenerational_language_runtime_gate_mismatch",
+                "language gate disagrees with intergenerational runtime",
+            )
+    return runtime
+
+
+def initialize_intergenerational_language_runtime(
+    runtime: IntergenerationalLanguageRuntimeState,
+    config: IntergenerationalLanguageConfig,
+) -> None:
+    """Freeze effective parental-language controls without constructing entropy."""
+    validate_intergenerational_language_runtime(runtime)
+    validated = validate_intergenerational_language_config(config)
+    if not validated.intergenerational_language_enabled:
+        _raise(
+            "intergenerational_language_processing_disabled",
+            "runtime initialization requires enabled controls",
+        )
+    runtime.maximum_parental_meanings_per_parent = (
+        validated.maximum_parental_meanings_per_parent)
+    runtime.intergenerational_learning_strength = (
+        validated.intergenerational_learning_strength)
+    validate_intergenerational_language_runtime(runtime, config=validated)
 
 
 _CONTACT_RESULT_COUNTER_FIELDS = (
@@ -721,6 +1000,8 @@ def _validate_association(
     store: str,
     maximum_signal_length: int,
     contact_config: LanguageContactConfig | None,
+    intergenerational_enabled: bool,
+    owner_id: int | None,
 ) -> LexicalAssociation:
     if type(association) is not LexicalAssociation:
         _raise("invalid_language_association", "association record type is invalid")
@@ -772,7 +1053,23 @@ def _validate_association(
             "hidden_disabled_language_contact_metadata",
             "disabled contact processing cannot retain association metadata",
         )
+    if type(intergenerational_enabled) is not bool:
+        _raise(
+            "invalid_intergenerational_language_config",
+            "association validation gate must be boolean",
+        )
+    provenance = association.intergenerational_provenance
+    if not intergenerational_enabled and provenance is not None:
+        _raise(
+            "hidden_disabled_intergenerational_language_metadata",
+            "disabled intergenerational processing cannot retain metadata",
+        )
     if store == "production":
+        if provenance is not None:
+            _raise(
+                "invalid_intergenerational_language_metadata",
+                "production associations cannot retain parental provenance",
+            )
         if association.contact_exposure is not None:
             _raise(
                 "invalid_language_contact_metadata",
@@ -882,6 +1179,89 @@ def _validate_association(
                     "invalid_language_contact_metadata",
                     "first contact exceeds association history",
                 )
+        if provenance is not None:
+            if type(provenance) is not IntergenerationalProvenance:
+                _raise(
+                    "invalid_intergenerational_language_metadata",
+                    "intergenerational provenance type is invalid",
+                )
+            for name in (
+                "first_transmission_tick",
+                "first_parent_id",
+                "parent_count",
+                "borrowed_parent_count",
+            ):
+                if not _exact_nonnegative_int(getattr(provenance, name)):
+                    _raise(
+                        "invalid_intergenerational_language_metadata",
+                        f"intergenerational provenance {name} is invalid",
+                    )
+            if type(provenance.first_parent_signal_origin) is not (
+                AssociationOrigin
+            ):
+                _raise(
+                    "invalid_intergenerational_language_metadata",
+                    "first parent signal origin is invalid",
+                )
+            if type(provenance.first_parent_form_was_borrowed) is not bool:
+                _raise(
+                    "invalid_intergenerational_language_metadata",
+                    "first parent borrowed status must be boolean",
+                )
+            if provenance.parent_count not in (1, 2):
+                _raise(
+                    "invalid_intergenerational_language_metadata",
+                    "parent count must be one or two",
+                )
+            if not 0 <= provenance.borrowed_parent_count <= (
+                provenance.parent_count
+            ):
+                _raise(
+                    "invalid_intergenerational_language_metadata",
+                    "borrowed parent count exceeds parental sources",
+                )
+            if (
+                provenance.first_parent_form_was_borrowed
+                and provenance.borrowed_parent_count == 0
+            ):
+                _raise(
+                    "invalid_intergenerational_language_metadata",
+                    "borrowed first-parent facts require one borrowed source",
+                )
+            if (
+                provenance.parent_count == 1
+                and provenance.borrowed_parent_count
+                != int(provenance.first_parent_form_was_borrowed)
+            ):
+                _raise(
+                    "invalid_intergenerational_language_metadata",
+                    "single-parent borrowing count disagrees with first-parent "
+                    "facts",
+                )
+            if (
+                provenance.first_parent_form_was_borrowed
+                and provenance.first_parent_signal_origin
+                is not AssociationOrigin.LEARNED
+            ):
+                _raise(
+                    "invalid_intergenerational_language_metadata",
+                    "borrowed first-parent forms must be learned",
+                )
+            if provenance.first_transmission_tick > association.last_used_tick:
+                _raise(
+                    "invalid_intergenerational_language_metadata",
+                    "first transmission exceeds association history",
+                )
+            if not _exact_nonnegative_int(owner_id):
+                _raise(
+                    "invalid_intergenerational_language_metadata",
+                    "parental provenance requires an exact owning child ID",
+                )
+            if provenance.first_parent_id >= owner_id:
+                _raise(
+                    "invalid_intergenerational_language_metadata",
+                    "first parent ID must precede the owning child ID",
+                )
     else:
         _raise("invalid_language_store", "association store is invalid")
     return association
@@ -892,6 +1272,8 @@ def validate_agent_language_state(
     *,
     config: LanguageConfig,
     contact_config: LanguageContactConfig | None = None,
+    intergenerational_enabled: bool = False,
+    owner_id: int | None = None,
 ) -> AgentLanguageState:
     """Fail closed unless one agent state is canonical and within every cap."""
     _validate_config(config, require_enabled=False)
@@ -921,6 +1303,8 @@ def validate_agent_language_state(
             store="production",
             maximum_signal_length=config.maximum_signal_length,
             contact_config=contact_config,
+            intergenerational_enabled=intergenerational_enabled,
+            owner_id=owner_id,
         )
         if key != (validated.meaning, validated.signal):
             _raise("production_key_mismatch", "production key and record disagree")
@@ -941,6 +1325,8 @@ def validate_agent_language_state(
             store="comprehension",
             maximum_signal_length=config.maximum_signal_length,
             contact_config=contact_config,
+            intergenerational_enabled=intergenerational_enabled,
+            owner_id=owner_id,
         )
         if key != (validated.signal, validated.meaning):
             _raise("comprehension_key_mismatch", "comprehension key and record disagree")
@@ -1003,6 +1389,7 @@ def language_runtime_is_pristine(runtime: object) -> bool:
         and runtime.last_forgetting_tick is None
         and runtime.coalition_dialect_influence_enabled is False
         and runtime.language_contact_enabled is False
+        and runtime.intergenerational_language_enabled is False
     )
 
 
@@ -1035,6 +1422,11 @@ def validate_language_runtime(
         _raise(
             "invalid_language_runtime",
             "language contact runtime gate must be boolean",
+        )
+    if type(runtime.intergenerational_language_enabled) is not bool:
+        _raise(
+            "invalid_language_runtime",
+            "intergenerational language runtime gate must be boolean",
         )
     if runtime.communication_attempt_count != (
         runtime.successful_interpretation_count
@@ -1088,6 +1480,7 @@ def initialize_language_runtime(
     *,
     coalition_dialect_influence_enabled: bool = False,
     language_contact_enabled: bool = False,
+    intergenerational_language_enabled: bool = False,
 ) -> None:
     """Initialize only the canonical seed domain; no entropy is constructed."""
     validate_language_runtime(runtime, initialized=False)
@@ -1103,6 +1496,11 @@ def initialize_language_runtime(
             "invalid_language_contact_config",
             "language runtime contact gate must be boolean",
         )
+    if type(intergenerational_language_enabled) is not bool:
+        _raise(
+            "invalid_intergenerational_language_config",
+            "language runtime intergenerational gate must be boolean",
+        )
     seed_domain = f"{LANGUAGE_DOMAIN}|seed={run_seed}"
     runtime.seed_domain = seed_domain
     runtime.seed_domain_fingerprint = hashlib.sha256(
@@ -1112,6 +1510,8 @@ def initialize_language_runtime(
         coalition_dialect_influence_enabled
     )
     runtime.language_contact_enabled = language_contact_enabled
+    runtime.intergenerational_language_enabled = (
+        intergenerational_language_enabled)
     validate_language_runtime(runtime, initialized=True)
 
 
@@ -1379,6 +1779,383 @@ def _commit_contact_runtime(
         setattr(target, item.name, getattr(proposed, item.name))
 
 
+def _commit_intergenerational_runtime(
+    target: IntergenerationalLanguageRuntimeState,
+    proposed: IntergenerationalLanguageRuntimeState,
+) -> None:
+    for item in fields(IntergenerationalLanguageRuntimeState):
+        setattr(target, item.name, getattr(proposed, item.name))
+
+
+def _parental_candidate_sort_key(
+    association: LexicalAssociation,
+) -> tuple:
+    """Rank confidence/success/observation/recency descending.
+
+    Fewer failures win before observation count; canonical Meaning then Signal
+    break the remaining ties.
+    """
+    return (
+        -association.confidence,
+        -association.successful_uses,
+        association.failed_uses,
+        -association.observation_count,
+        -association.last_used_tick,
+        MEANING_ORDER[association.meaning],
+        association.signal.phoneme_ids,
+    )
+
+
+def _selected_parental_associations(
+    state: AgentLanguageState,
+    *,
+    maximum_meanings: int,
+) -> tuple[LexicalAssociation, ...]:
+    """Select one usable form per meaning, then apply the parental cap."""
+    selected = tuple(
+        association
+        for meaning in Meaning
+        if (association := _select_production(state, meaning)) is not None
+    )
+    return tuple(sorted(
+        selected,
+        key=_parental_candidate_sort_key,
+    )[:maximum_meanings])
+
+
+def transmit_intergenerational_language(
+    child: LanguageInhabitant,
+    parents: tuple[LanguageInhabitant, LanguageInhabitant],
+    *,
+    tick: int,
+    language_config: LanguageConfig,
+    intergenerational_config: IntergenerationalLanguageConfig,
+    language_runtime: LanguageRuntimeState,
+    intergenerational_runtime: IntergenerationalLanguageRuntimeState,
+    contact_config: LanguageContactConfig | None = None,
+) -> None:
+    """Commit one exact-once post-birth comprehension proposal transactionally."""
+    _validate_config(language_config, require_enabled=True)
+    validated_intergenerational_config = (
+        validate_intergenerational_language_config(
+            intergenerational_config))
+    if not validated_intergenerational_config.intergenerational_language_enabled:
+        _raise(
+            "intergenerational_language_processing_disabled",
+            "birth transmission requires enabled controls",
+        )
+    validated_tick = _validate_tick(tick)
+    validated_language_runtime = validate_language_runtime(
+        language_runtime, initialized=True)
+    if not validated_language_runtime.intergenerational_language_enabled:
+        _raise(
+            "intergenerational_language_runtime_gate_mismatch",
+            "birth transmission requires the authoritative language gate",
+        )
+    validate_intergenerational_language_runtime(
+        intergenerational_runtime,
+        config=validated_intergenerational_config,
+        language_runtime=validated_language_runtime,
+    )
+
+    if validated_language_runtime.language_contact_enabled:
+        validated_contact_config = validate_language_contact_config(
+            contact_config)
+        if not validated_contact_config.language_contact_enabled:
+            _raise(
+                "invalid_language_contact_config",
+                "contact-bearing parents require effective contact controls",
+            )
+    elif contact_config is not None:
+        _raise(
+            "unexpected_language_contact_transaction_inputs",
+            "contact-disabled birth transmission cannot receive contact controls",
+        )
+    else:
+        validated_contact_config = None
+
+    if type(parents) is not tuple or len(parents) != 2:
+        _raise(
+            "invalid_intergenerational_parent_sources",
+            "birth transmission requires exactly two parent objects",
+        )
+    first, second = parents
+    if first is second:
+        _raise(
+            "invalid_intergenerational_parent_sources",
+            "birth parents cannot alias",
+        )
+    child_id = getattr(child, "inhabitant_id", None)
+    parent_pairs = tuple(
+        (getattr(parent, "inhabitant_id", None), parent)
+        for parent in parents
+    )
+    if not _exact_nonnegative_int(child_id):
+        _raise(
+            "invalid_language_identity",
+            "birth transmission requires an assigned exact child ID",
+        )
+    if any(not _exact_nonnegative_int(parent_id) for parent_id, _ in parent_pairs):
+        _raise(
+            "invalid_language_identity",
+            "birth transmission requires exact parent IDs",
+        )
+    if child is first or child is second:
+        _raise(
+            "invalid_intergenerational_parent_sources",
+            "child must be distinct from both parents",
+        )
+    parent_ids = tuple(parent_id for parent_id, _ in parent_pairs)
+    if parent_ids[0] == parent_ids[1]:
+        _raise(
+            "invalid_language_identity",
+            "birth parents require distinct stable IDs",
+        )
+    if any(parent_id >= child_id for parent_id in parent_ids):
+        _raise(
+            "invalid_language_identity",
+            "each parent ID must precede the committed child ID",
+        )
+    ordered_parents = tuple(
+        parent for _parent_id, parent in sorted(parent_pairs))
+
+    child_state = validate_agent_language_state(
+        child.language,
+        config=language_config,
+        contact_config=validated_contact_config,
+        intergenerational_enabled=True,
+        owner_id=child_id,
+    )
+    parent_states: list[tuple[LanguageInhabitant, AgentLanguageState]] = []
+    state_identities = {_language_state_identity(child_state)}
+    for parent in ordered_parents:
+        parent_id = getattr(parent, "inhabitant_id", None)
+        parent_state = validate_agent_language_state(
+            parent.language,
+            config=language_config,
+            contact_config=validated_contact_config,
+            intergenerational_enabled=True,
+            owner_id=parent_id,
+        )
+        state_identity = _language_state_identity(parent_state)
+        if state_identity in state_identities:
+            _raise(
+                "aliased_agent_language_state",
+                "child and parents require distinct language states",
+            )
+        state_identities.add(state_identity)
+        parent_states.append((parent, parent_state))
+    _validate_state_tick(child_state, tick=validated_tick)
+    for _parent, parent_state in parent_states:
+        _validate_state_tick(parent_state, tick=validated_tick)
+    if any(
+        association.intergenerational_provenance is not None
+        for association in child_state.comprehension.values()
+    ):
+        _raise(
+            "duplicate_intergenerational_transmission",
+            "child already carries birth-transmission provenance",
+        )
+    if (
+        intergenerational_runtime.last_transmission_tick is not None
+        and validated_tick < intergenerational_runtime.last_transmission_tick
+    ):
+        _raise(
+            "nonmonotonic_language_tick",
+            "birth transmission tick moved backward",
+        )
+    prior_child_id = intergenerational_runtime.last_transmission_child_id
+    if prior_child_id is not None and child_id <= prior_child_id:
+        _raise(
+            "duplicate_intergenerational_transmission",
+            "committed child ID must strictly advance the transmission sentinel",
+        )
+
+    maximum_meanings = (
+        validated_intergenerational_config
+        .maximum_parental_meanings_per_parent
+    )
+    selected_by_parent = tuple(
+        _selected_parental_associations(
+            parent_state,
+            maximum_meanings=maximum_meanings,
+        )
+        for _parent, parent_state in parent_states
+    )
+    selected_maps = tuple(
+        {association.meaning: association for association in selected}
+        for selected in selected_by_parent
+    )
+    duplicate_count = 0
+    competing_count = 0
+    for meaning in Meaning:
+        left = selected_maps[0].get(meaning)
+        right = selected_maps[1].get(meaning)
+        if left is None or right is None:
+            continue
+        if left.signal == right.signal:
+            duplicate_count += 1
+        else:
+            competing_count += 1
+
+    proposed_child = _copy_agent_state(child_state)
+    proposed_language_runtime = replace(language_runtime)
+    proposed_intergenerational_runtime = replace(
+        intergenerational_runtime)
+    creation_count = 0
+    reinforcement_count = 0
+    exposure_count = 0
+    borrowed_count = 0
+    learning_strength = (
+        validated_intergenerational_config
+        .intergenerational_learning_strength
+    )
+
+    for (parent, _parent_state), selected in zip(
+        parent_states, selected_by_parent
+    ):
+        parent_id = getattr(parent, "inhabitant_id", None)
+        assert type(parent_id) is int
+        for parental_association in selected:
+            exposure_count += 1
+            parent_form_was_borrowed = (
+                parental_association.borrowing_provenance is not None)
+            if parent_form_was_borrowed:
+                borrowed_count += 1
+            key = (
+                parental_association.signal,
+                parental_association.meaning,
+            )
+            existing = proposed_child.comprehension.get(key)
+            if existing is None:
+                proposed_child.comprehension[key] = LexicalAssociation(
+                    meaning=parental_association.meaning,
+                    signal=parental_association.signal,
+                    confidence=_confidence(learning_strength),
+                    observation_count=1,
+                    last_used_tick=validated_tick,
+                    origin=AssociationOrigin.LEARNED,
+                    learned_from_id=parent_id,
+                    intergenerational_provenance=(
+                        IntergenerationalProvenance(
+                            first_transmission_tick=validated_tick,
+                            first_parent_id=parent_id,
+                            first_parent_signal_origin=(
+                                parental_association.origin),
+                            first_parent_form_was_borrowed=(
+                                parent_form_was_borrowed),
+                            parent_count=1,
+                            borrowed_parent_count=(
+                                1 if parent_form_was_borrowed else 0),
+                        )
+                    ),
+                )
+                creation_count += 1
+                continue
+
+            provenance = existing.intergenerational_provenance
+            if provenance is None:
+                provenance = IntergenerationalProvenance(
+                    first_transmission_tick=validated_tick,
+                    first_parent_id=parent_id,
+                    first_parent_signal_origin=parental_association.origin,
+                    first_parent_form_was_borrowed=(
+                        parent_form_was_borrowed),
+                    parent_count=1,
+                    borrowed_parent_count=(
+                        1 if parent_form_was_borrowed else 0),
+                )
+            else:
+                if provenance.parent_count != 1:
+                    _raise(
+                        "invalid_intergenerational_language_metadata",
+                        "one birth cannot expose an association from more than "
+                        "two parents",
+                    )
+                provenance = replace(
+                    provenance,
+                    parent_count=2,
+                    borrowed_parent_count=(
+                        provenance.borrowed_parent_count
+                        + (1 if parent_form_was_borrowed else 0)
+                    ),
+                )
+            proposed_child.comprehension[key] = replace(
+                _observed_without_use(
+                    existing,
+                    tick=validated_tick,
+                    confidence_delta=learning_strength,
+                ),
+                intergenerational_provenance=provenance,
+            )
+            reinforcement_count += 1
+
+    proposed_child, lost = _retain_canonical(
+        proposed_child, config=language_config)
+    for _ in range(lost):
+        _increment_runtime(
+            proposed_language_runtime, "lost_association_count")
+
+    counting = (
+        proposed_intergenerational_runtime
+        .successful_birth_transmission_attempt_count
+        < MAX_INTERGENERATIONAL_ATTEMPTS
+    )
+    if counting:
+        counters = proposed_intergenerational_runtime
+        counters.successful_birth_transmission_attempt_count += 1
+        counters.parental_source_count += 2
+        counters.transmitted_signal_exposure_count += (
+            exposure_count)
+        counters.comprehension_association_creation_count += creation_count
+        counters.comprehension_association_reinforcement_count += (
+            reinforcement_count)
+        counters.parental_source_without_usable_signal_count += sum(
+            1 for selected in selected_by_parent if not selected)
+        counters.duplicate_parent_form_count += duplicate_count
+        counters.competing_parent_form_count += (
+            competing_count)
+        counters.borrowed_parent_form_transmission_count += (
+            borrowed_count)
+    proposed_intergenerational_runtime.last_transmission_tick = validated_tick
+    proposed_intergenerational_runtime.last_transmission_child_id = child_id
+
+    validate_agent_language_state(
+        proposed_child,
+        config=language_config,
+        contact_config=validated_contact_config,
+        intergenerational_enabled=True,
+        owner_id=child_id,
+    )
+    validate_language_runtime(
+        proposed_language_runtime, initialized=True)
+    validate_intergenerational_language_runtime(
+        proposed_intergenerational_runtime,
+        config=validated_intergenerational_config,
+        language_runtime=proposed_language_runtime,
+    )
+
+    original_child = child.language
+    original_language_runtime = replace(language_runtime)
+    original_intergenerational_runtime = replace(
+        intergenerational_runtime)
+    try:
+        child.language = proposed_child
+        _commit_runtime(language_runtime, proposed_language_runtime)
+        _commit_intergenerational_runtime(
+            intergenerational_runtime,
+            proposed_intergenerational_runtime,
+        )
+    except BaseException:
+        child.language = original_child
+        _commit_runtime(language_runtime, original_language_runtime)
+        _commit_intergenerational_runtime(
+            intergenerational_runtime,
+            original_intergenerational_runtime,
+        )
+        raise
+
+
 def _effective_contact_rate(base_rate: float, multiplier: float) -> float:
     """Return one clamped six-decimal cross-coalition learning rate."""
     return _confidence(base_rate * multiplier)
@@ -1521,13 +2298,26 @@ def communicate(
         _raise("invalid_language_identity", "sender and receiver must be distinct")
     if sender_id not in active_ids or receiver_id not in active_ids:
         _raise("inactive_language_identity", "sender and receiver must both be active")
-    sender_state = validate_agent_language_state(sender.language, config=config)
-    receiver_state = validate_agent_language_state(receiver.language, config=config)
+    validated_runtime = validate_language_runtime(
+        runtime, initialized=True)
+    intergenerational_enabled = (
+        validated_runtime.intergenerational_language_enabled)
+    sender_state = validate_agent_language_state(
+        sender.language,
+        config=config,
+        intergenerational_enabled=intergenerational_enabled,
+        owner_id=sender_id,
+    )
+    receiver_state = validate_agent_language_state(
+        receiver.language,
+        config=config,
+        intergenerational_enabled=intergenerational_enabled,
+        owner_id=receiver_id,
+    )
     _validate_state_tick(sender_state, tick=validated_tick)
     _validate_state_tick(receiver_state, tick=validated_tick)
     if sender_state is receiver_state:
         _raise("aliased_agent_language_state", "agents cannot share language state")
-    validate_language_runtime(runtime, initialized=True)
     if any(
         last_tick is not None and validated_tick < last_tick
         for last_tick in (
@@ -1637,8 +2427,18 @@ def communicate(
     if selected_production is None:
         if attempt_incremented:
             _increment_runtime(proposed_runtime, "no_signal_count")
-        validate_agent_language_state(proposed_sender, config=config)
-        validate_agent_language_state(proposed_receiver, config=config)
+        validate_agent_language_state(
+            proposed_sender,
+            config=config,
+            intergenerational_enabled=intergenerational_enabled,
+            owner_id=sender_id,
+        )
+        validate_agent_language_state(
+            proposed_receiver,
+            config=config,
+            intergenerational_enabled=intergenerational_enabled,
+            owner_id=receiver_id,
+        )
         validate_language_runtime(proposed_runtime, initialized=True)
         if proposed_dialect is not None:
             validate_coalition_dialect_runtime(
@@ -1878,8 +2678,18 @@ def communicate(
     for _ in range(sender_lost + receiver_lost):
         _increment_runtime(proposed_runtime, "lost_association_count")
 
-    validate_agent_language_state(proposed_sender, config=config)
-    validate_agent_language_state(proposed_receiver, config=config)
+    validate_agent_language_state(
+        proposed_sender,
+        config=config,
+        intergenerational_enabled=intergenerational_enabled,
+        owner_id=sender_id,
+    )
+    validate_agent_language_state(
+        proposed_receiver,
+        config=config,
+        intergenerational_enabled=intergenerational_enabled,
+        owner_id=receiver_id,
+    )
     validate_language_runtime(proposed_runtime, initialized=True)
     if proposed_dialect is not None:
         validate_coalition_dialect_runtime(
@@ -2032,11 +2842,17 @@ def _communicate_with_contact(
         sender.language,
         config=config,
         contact_config=validated_contact_config,
+        intergenerational_enabled=(
+            validated_runtime.intergenerational_language_enabled),
+        owner_id=sender_id,
     )
     receiver_state = validate_agent_language_state(
         receiver.language,
         config=config,
         contact_config=validated_contact_config,
+        intergenerational_enabled=(
+            validated_runtime.intergenerational_language_enabled),
+        owner_id=receiver_id,
     )
     _validate_state_tick(sender_state, tick=validated_tick)
     _validate_state_tick(receiver_state, tick=validated_tick)
@@ -2129,6 +2945,8 @@ def _communicate_with_contact(
             proposed_contact,
             language_config=config,
             contact_config=validated_contact_config,
+            sender_id=sender_id,
+            receiver_id=receiver_id,
         )
         _commit_contact_proposal(
             sender,
@@ -2485,6 +3303,8 @@ def _communicate_with_contact(
         proposed_contact,
         language_config=config,
         contact_config=validated_contact_config,
+        sender_id=sender_id,
+        receiver_id=receiver_id,
     )
     _commit_contact_proposal(
         sender,
@@ -2522,17 +3342,25 @@ def _validate_contact_proposal(
     *,
     language_config: LanguageConfig,
     contact_config: LanguageContactConfig,
+    sender_id: int,
+    receiver_id: int,
 ) -> None:
     """Validate every owner and cross-runtime invariant before contact commit."""
     validate_agent_language_state(
         proposed_sender,
         config=language_config,
         contact_config=contact_config,
+        intergenerational_enabled=(
+            proposed_runtime.intergenerational_language_enabled),
+        owner_id=sender_id,
     )
     validate_agent_language_state(
         proposed_receiver,
         config=language_config,
         contact_config=contact_config,
+        intergenerational_enabled=(
+            proposed_runtime.intergenerational_language_enabled),
+        owner_id=receiver_id,
     )
     validate_language_runtime(proposed_runtime, initialized=True)
     if proposed_dialect is not None:
@@ -2601,6 +3429,8 @@ def maintain_language_state(
     _validate_config(config, require_enabled=True)
     validated_tick = _validate_tick(tick)
     validated_runtime = validate_language_runtime(runtime, initialized=True)
+    intergenerational_enabled = (
+        validated_runtime.intergenerational_language_enabled)
     if validated_runtime.language_contact_enabled:
         validated_contact_config = validate_language_contact_config(
             contact_config)
@@ -2652,6 +3482,8 @@ def maintain_language_state(
             inhabitant.language,
             config=config,
             contact_config=validated_contact_config,
+            intergenerational_enabled=intergenerational_enabled,
+            owner_id=inhabitant_id,
         )
         _validate_state_tick(validated_state, tick=validated_tick)
         state_identity = _language_state_identity(validated_state)
@@ -2674,6 +3506,8 @@ def maintain_language_state(
             inhabitant.language,
             config=config,
             contact_config=validated_contact_config,
+            intergenerational_enabled=intergenerational_enabled,
+            owner_id=inhabitant_id,
         )
         _validate_state_tick(validated_state, tick=validated_tick)
         state_identity = _language_state_identity(validated_state)
@@ -2716,6 +3550,8 @@ def maintain_language_state(
             proposed,
             config=config,
             contact_config=validated_contact_config,
+            intergenerational_enabled=intergenerational_enabled,
+            owner_id=getattr(inhabitant, "inhabitant_id", None),
         )
         proposed_states.append((inhabitant, current_state, proposed))
 
@@ -2777,10 +3613,27 @@ def _borrowing_provenance_record(
     }
 
 
+def _intergenerational_provenance_record(
+    provenance: IntergenerationalProvenance,
+) -> dict[str, object]:
+    """Return bounded parental facts using canonical JSON-safe primitives."""
+    return {
+        "first_transmission_tick": provenance.first_transmission_tick,
+        "first_parent_id": provenance.first_parent_id,
+        "first_parent_signal_origin": (
+            provenance.first_parent_signal_origin.value),
+        "first_parent_form_was_borrowed": (
+            provenance.first_parent_form_was_borrowed),
+        "parent_count": provenance.parent_count,
+        "borrowed_parent_count": provenance.borrowed_parent_count,
+    }
+
+
 def association_record(
     association: LexicalAssociation,
     *,
     include_contact: bool = False,
+    include_intergenerational: bool = False,
 ) -> dict[str, object]:
     """Return one association using only canonical JSON-safe primitives."""
     result: dict[str, object] = {
@@ -2803,6 +3656,12 @@ def association_record(
             _borrowing_provenance_record(association.borrowing_provenance)
             if association.borrowing_provenance is not None else None
         )
+    if include_intergenerational:
+        result["intergenerational_provenance"] = (
+            _intergenerational_provenance_record(
+                association.intergenerational_provenance)
+            if association.intergenerational_provenance is not None else None
+        )
     return result
 
 
@@ -2812,12 +3671,18 @@ def agent_language_record(
     config: LanguageConfig,
     include_contact: bool = False,
     contact_config: LanguageContactConfig | None = None,
+    include_intergenerational: bool = False,
 ) -> dict[str, object]:
     """Return one agent's complete language state in canonical order."""
     if type(include_contact) is not bool:
         _raise(
             "invalid_language_contact_config",
             "contact serialization gate must be boolean",
+        )
+    if type(include_intergenerational) is not bool:
+        _raise(
+            "invalid_intergenerational_language_config",
+            "intergenerational serialization gate must be boolean",
         )
     if include_contact:
         validated_contact = validate_language_contact_config(contact_config)
@@ -2838,12 +3703,18 @@ def agent_language_record(
         inhabitant.language,
         config=config,
         contact_config=contact_config if include_contact else None,
+        intergenerational_enabled=include_intergenerational,
+        owner_id=inhabitant_id,
     )
     return {
         "inhabitant_id": inhabitant_id,
         "next_invention_index": state.next_invention_index,
         "production": [
-            association_record(association, include_contact=include_contact)
+            association_record(
+                association,
+                include_contact=include_contact,
+                include_intergenerational=include_intergenerational,
+            )
             for _key, association in sorted(
                 state.production.items(),
                 key=lambda item: (
@@ -2851,7 +3722,11 @@ def agent_language_record(
             )
         ],
         "comprehension": [
-            association_record(association, include_contact=include_contact)
+            association_record(
+                association,
+                include_contact=include_contact,
+                include_intergenerational=include_intergenerational,
+            )
             for _key, association in sorted(
                 state.comprehension.items(),
                 key=lambda item: (
@@ -2865,9 +3740,17 @@ def canonical_language_snapshot(
     people: Iterable[LanguageInhabitant],
     *,
     config: LanguageConfig,
+    include_intergenerational: bool = False,
 ) -> list[dict[str, object]]:
     """Return canonical bounded language state for tests and inspection."""
-    records = [agent_language_record(inhabitant, config=config) for inhabitant in people]
+    records = [
+        agent_language_record(
+            inhabitant,
+            config=config,
+            include_intergenerational=include_intergenerational,
+        )
+        for inhabitant in people
+    ]
     identities = [record["inhabitant_id"] for record in records]
     if len(identities) != len(set(identities)):
         _raise("duplicate_language_identity", "snapshot inhabitant IDs must be unique")
@@ -2894,7 +3777,377 @@ def language_runtime_record(runtime: LanguageRuntimeState) -> dict[str, object]:
         result["coalition_dialect_influence_enabled"] = True
     if runtime.language_contact_enabled:
         result["language_contact_enabled"] = True
+    if runtime.intergenerational_language_enabled:
+        result["intergenerational_language_enabled"] = True
     return result
+
+
+def intergenerational_language_runtime_record(
+    runtime: IntergenerationalLanguageRuntimeState,
+    *,
+    config: IntergenerationalLanguageConfig,
+    language_runtime: LanguageRuntimeState,
+) -> dict[str, object]:
+    """Return canonical parental-language controls, counters, and sentinels."""
+    validate_intergenerational_language_runtime(
+        runtime,
+        config=config,
+        language_runtime=language_runtime,
+    )
+    return {
+        "maximum_parental_meanings_per_parent": (
+            runtime.maximum_parental_meanings_per_parent),
+        "intergenerational_learning_strength": (
+            runtime.intergenerational_learning_strength),
+        "successful_birth_transmission_attempt_count": (
+            runtime.successful_birth_transmission_attempt_count),
+        "parental_source_count": runtime.parental_source_count,
+        "transmitted_signal_exposure_count": (
+            runtime.transmitted_signal_exposure_count),
+        "comprehension_association_creation_count": (
+            runtime.comprehension_association_creation_count),
+        "comprehension_association_reinforcement_count": (
+            runtime.comprehension_association_reinforcement_count),
+        "parental_source_without_usable_signal_count": (
+            runtime.parental_source_without_usable_signal_count),
+        "duplicate_parent_form_count": runtime.duplicate_parent_form_count,
+        "competing_parent_form_count": runtime.competing_parent_form_count,
+        "borrowed_parent_form_transmission_count": (
+            runtime.borrowed_parent_form_transmission_count),
+        "last_transmission_tick": runtime.last_transmission_tick,
+        "last_transmission_child_id": runtime.last_transmission_child_id,
+    }
+
+
+def validate_intergenerational_parent_references(
+    living: Iterable[LanguageInhabitant],
+    dead: Iterable[LanguageInhabitant],
+    *,
+    language_config: LanguageConfig,
+    contact_config: LanguageContactConfig | None,
+    intergenerational_enabled: bool,
+    intergenerational_runtime: (
+        IntergenerationalLanguageRuntimeState | None
+    ) = None,
+) -> None:
+    """Validate all language owners and retained parent IDs before state boundaries."""
+    if type(intergenerational_enabled) is not bool:
+        _raise(
+            "invalid_intergenerational_language_config",
+            "whole-state intergenerational gate must be boolean",
+        )
+    owners = tuple(living) + tuple(dead)
+    owner_ids: set[int] = set()
+    owner_object_ids: set[int] = set()
+    state_identities: set[int] = set()
+    validated: list[tuple[int, AgentLanguageState]] = []
+    for inhabitant in owners:
+        object_id = _language_state_identity(inhabitant)
+        if object_id in owner_object_ids:
+            continue
+        owner_object_ids.add(object_id)
+        inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+        if not _exact_nonnegative_int(inhabitant_id):
+            _raise(
+                "invalid_language_identity",
+                "whole-state language validation requires assigned IDs",
+            )
+        if inhabitant_id in owner_ids:
+            _raise(
+                "duplicate_language_identity",
+                f"duplicate whole-state ID {inhabitant_id}",
+            )
+        owner_ids.add(inhabitant_id)
+        state = validate_agent_language_state(
+            inhabitant.language,
+            config=language_config,
+            contact_config=contact_config,
+            intergenerational_enabled=intergenerational_enabled,
+            owner_id=inhabitant_id,
+        )
+        identity = _language_state_identity(state)
+        if identity in state_identities:
+            _raise(
+                "aliased_agent_language_state",
+                "whole-state language owners cannot share state",
+            )
+        state_identities.add(identity)
+        validated.append((inhabitant_id, state))
+    if intergenerational_enabled:
+        last_child_id = (
+            intergenerational_runtime.last_transmission_child_id
+            if intergenerational_runtime is not None else None
+        )
+        if (
+            intergenerational_runtime is not None
+            and last_child_id is not None
+            and last_child_id not in owner_ids
+        ):
+            _raise(
+                "invalid_intergenerational_language_runtime",
+                "last transmitted child ID is absent from the complete "
+                "stable-ID cohort",
+            )
+        retained_parental_exposures = 0
+        for inhabitant_id, state in validated:
+            for association in state.comprehension.values():
+                provenance = association.intergenerational_provenance
+                if (
+                    provenance is not None
+                    and provenance.first_parent_id not in owner_ids
+                ):
+                    _raise(
+                        "invalid_intergenerational_language_metadata",
+                        "first parent ID is absent from the complete stable-ID "
+                        "cohort",
+                    )
+                if (
+                    provenance is not None
+                    and intergenerational_runtime is not None
+                    and last_child_id is None
+                ):
+                    _raise(
+                        "invalid_intergenerational_language_runtime",
+                        "retained parental provenance lacks a transmission "
+                        "sentinel",
+                    )
+                if (
+                    provenance is not None
+                    and last_child_id is not None
+                    and inhabitant_id > last_child_id
+                ):
+                    _raise(
+                        "invalid_intergenerational_language_runtime",
+                        "retained parental provenance belongs to a child beyond "
+                        "the transmission sentinel",
+                    )
+                if provenance is not None:
+                    retained_parental_exposures += provenance.parent_count
+        if (
+            intergenerational_runtime is not None
+            and intergenerational_runtime
+            .successful_birth_transmission_attempt_count
+            < MAX_INTERGENERATIONAL_ATTEMPTS
+            and retained_parental_exposures
+            > intergenerational_runtime.transmitted_signal_exposure_count
+        ):
+            _raise(
+                "intergenerational_exposure_partition_mismatch",
+                "retained parental exposures exceed cumulative transmitted "
+                "exposures",
+            )
+
+
+def intergenerational_language_summary(
+    people: Iterable[LanguageInhabitant],
+    *,
+    language_config: LanguageConfig,
+    intergenerational_config: IntergenerationalLanguageConfig,
+    language_runtime: LanguageRuntimeState,
+    intergenerational_runtime: IntergenerationalLanguageRuntimeState,
+    contact_config: LanguageContactConfig | None = None,
+) -> dict[str, object]:
+    """Aggregate retained parental comprehension in one O(P x L) pass."""
+    _validate_config(language_config, require_enabled=True)
+    validated_intergenerational_config = (
+        validate_intergenerational_language_config(
+            intergenerational_config))
+    if not validated_intergenerational_config.intergenerational_language_enabled:
+        _raise(
+            "intergenerational_language_processing_disabled",
+            "intergenerational summary requires enabled controls",
+        )
+    validated_language_runtime = validate_language_runtime(
+        language_runtime, initialized=True)
+    if not validated_language_runtime.intergenerational_language_enabled:
+        _raise(
+            "intergenerational_language_runtime_gate_mismatch",
+            "intergenerational summary requires the authoritative gate",
+        )
+    validate_intergenerational_language_runtime(
+        intergenerational_runtime,
+        config=validated_intergenerational_config,
+        language_runtime=validated_language_runtime,
+    )
+    if validated_language_runtime.language_contact_enabled:
+        validated_contact_config = validate_language_contact_config(
+            contact_config)
+        if not validated_contact_config.language_contact_enabled:
+            _raise(
+                "invalid_language_contact_config",
+                "contact-bearing summaries require enabled contact controls",
+            )
+    elif contact_config is not None:
+        _raise(
+            "unexpected_language_contact_transaction_inputs",
+            "contact-disabled summary cannot receive contact controls",
+        )
+    else:
+        validated_contact_config = None
+
+    population_count = 0
+    retained_carrier_count = 0
+    usable_carrier_count = 0
+    retained_association_count = 0
+    usable_association_count = 0
+    retained_source_exposure_count = 0
+    usable_source_exposure_count = 0
+    single_parent_association_count = 0
+    dual_parent_association_count = 0
+    borrowed_parent_source_exposure_count = 0
+    competing_slots = 0
+    seen_ids: set[int] = set()
+    meaning_counts = {
+        meaning: {"retained": 0, "usable": 0}
+        for meaning in Meaning
+    }
+    cohorts = {
+        "generation_0": {
+            "population_count": 0,
+            "carrier_count": 0,
+            "retained_association_count": 0,
+            "usable_association_count": 0,
+        },
+        "generation_1": {
+            "population_count": 0,
+            "carrier_count": 0,
+            "retained_association_count": 0,
+            "usable_association_count": 0,
+        },
+        "generation_2_plus": {
+            "population_count": 0,
+            "carrier_count": 0,
+            "retained_association_count": 0,
+            "usable_association_count": 0,
+        },
+    }
+
+    for inhabitant in people:
+        inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+        if not _exact_nonnegative_int(inhabitant_id):
+            _raise(
+                "invalid_language_identity",
+                "intergenerational summary requires assigned IDs",
+            )
+        if inhabitant_id in seen_ids:
+            _raise(
+                "duplicate_language_identity",
+                "intergenerational summary IDs must be unique",
+            )
+        seen_ids.add(inhabitant_id)
+        generation = getattr(inhabitant, "generation", None)
+        if not _exact_nonnegative_int(generation):
+            _raise(
+                "invalid_intergenerational_generation",
+                "lineage depth must be an exact nonnegative integer",
+            )
+        cohort_name = (
+            "generation_0"
+            if generation == 0
+            else "generation_1"
+            if generation == 1
+            else "generation_2_plus"
+        )
+        cohort = cohorts[cohort_name]
+        cohort["population_count"] += 1
+        population_count += 1
+        state = validate_agent_language_state(
+            inhabitant.language,
+            config=language_config,
+            contact_config=validated_contact_config,
+            intergenerational_enabled=True,
+            owner_id=inhabitant_id,
+        )
+        carrier = False
+        usable_carrier = False
+        per_meaning_signals = {meaning: 0 for meaning in Meaning}
+        for association in state.comprehension.values():
+            provenance = association.intergenerational_provenance
+            if provenance is None:
+                continue
+            carrier = True
+            retained_association_count += 1
+            retained_source_exposure_count += provenance.parent_count
+            borrowed_parent_source_exposure_count += (
+                provenance.borrowed_parent_count)
+            cohort["retained_association_count"] += 1
+            meaning_counts[association.meaning]["retained"] += 1
+            per_meaning_signals[association.meaning] += 1
+            if provenance.parent_count == 1:
+                single_parent_association_count += 1
+            else:
+                dual_parent_association_count += 1
+            if association.confidence >= MIN_USABLE_CONFIDENCE:
+                usable_carrier = True
+                usable_association_count += 1
+                usable_source_exposure_count += provenance.parent_count
+                cohort["usable_association_count"] += 1
+                meaning_counts[association.meaning]["usable"] += 1
+        if carrier:
+            retained_carrier_count += 1
+            cohort["carrier_count"] += 1
+        if usable_carrier:
+            usable_carrier_count += 1
+        competing_slots += sum(
+            1 for count in per_meaning_signals.values() if count >= 2)
+
+    denominator = (
+        intergenerational_runtime.transmitted_signal_exposure_count)
+    retained_rate = (
+        _quantize(retained_source_exposure_count / denominator)
+        if denominator else None
+    )
+    usable_rate = (
+        _quantize(usable_source_exposure_count / denominator)
+        if denominator else None
+    )
+    return {
+        "population_count": population_count,
+        "retained_intergenerational_comprehension_carrier_count": (
+            retained_carrier_count),
+        "usable_intergenerational_comprehension_carrier_count": (
+            usable_carrier_count),
+        "retained_intergenerational_association_count": (
+            retained_association_count),
+        "usable_intergenerational_association_count": (
+            usable_association_count),
+        "retained_parental_source_exposure_count": (
+            retained_source_exposure_count),
+        "usable_parental_source_exposure_count": (
+            usable_source_exposure_count),
+        "retained_exposure_retention_rate": retained_rate,
+        "usable_exposure_retention_rate": usable_rate,
+        "single_parent_association_count": (
+            single_parent_association_count),
+        "dual_parent_association_count": dual_parent_association_count,
+        "borrowed_parent_source_exposure_count": (
+            borrowed_parent_source_exposure_count),
+        "agent_meaning_slots_with_competing_intergenerational_signals": (
+            competing_slots),
+        "meanings": [
+            {
+                "meaning": meaning.name,
+                "retained_association_count": (
+                    meaning_counts[meaning]["retained"]),
+                "usable_association_count": (
+                    meaning_counts[meaning]["usable"]),
+            }
+            for meaning in Meaning
+        ],
+        "lineage_depth_cohorts": [
+            {"cohort": name, **cohorts[name]}
+            for name in (
+                "generation_0",
+                "generation_1",
+                "generation_2_plus",
+            )
+        ],
+        "runtime": intergenerational_language_runtime_record(
+            intergenerational_runtime,
+            config=validated_intergenerational_config,
+            language_runtime=validated_language_runtime,
+        ),
+    }
 
 
 def coalition_dialect_runtime_record(
@@ -2977,6 +4230,7 @@ def lexical_convergence_snapshot(
     *,
     config: LanguageConfig,
     inhabitant_ids: Iterable[int] | None = None,
+    intergenerational_enabled: bool = False,
 ) -> dict[str, object]:
     """Calculate local or population agreement without pairwise enumeration."""
     selected_ids = None
@@ -3006,7 +4260,12 @@ def lexical_convergence_snapshot(
                 _raise("invalid_language_identity", "summary requires assigned IDs")
             if selected_ids is not None and inhabitant_id not in selected_ids:
                 continue
-            state = validate_agent_language_state(inhabitant.language, config=config)
+            state = validate_agent_language_state(
+                inhabitant.language,
+                config=config,
+                intergenerational_enabled=intergenerational_enabled,
+                owner_id=inhabitant_id,
+            )
             active_signals.update(
                 association.signal
                 for association in state.production.values()
@@ -3105,9 +4364,11 @@ def coalition_dialect_summary(
         snapshot,
         tick=snapshot.snapshot_tick,
     )
+    validated_language_runtime = validate_language_runtime(
+        language_runtime, initialized=True)
     runtime_record = coalition_dialect_runtime_record(
         dialect_runtime,
-        language_runtime=language_runtime,
+        language_runtime=validated_language_runtime,
     )
 
     coalition_ids = validated_snapshot.active_coalition_ids
@@ -3152,6 +4413,10 @@ def coalition_dialect_summary(
         state = validate_agent_language_state(
             inhabitant.language,
             config=language_config,
+            intergenerational_enabled=(
+                validated_language_runtime
+                .intergenerational_language_enabled),
+            owner_id=inhabitant_id,
         )
         if coalition_id is None:
             unassigned_member_count += 1
@@ -3417,6 +4682,10 @@ def language_contact_summary(
             inhabitant.language,
             config=language_config,
             contact_config=validated_contact_config,
+            intergenerational_enabled=(
+                validated_language_runtime
+                .intergenerational_language_enabled),
+            owner_id=inhabitant_id,
         )
         for association in state.comprehension.values():
             exposure = association.contact_exposure

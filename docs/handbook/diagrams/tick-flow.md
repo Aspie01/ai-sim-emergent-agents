@@ -6,8 +6,11 @@ flowchart TD
     WORLD --> INH[Inhabitants: needs, movement, gathering, deaths]
     INH --> BEL[Beliefs if enabled]
     BEL --> FAC[Formal factions if enabled]
-    FAC --> BIRTH[Procreation]
-    BIRTH --> SNAP{Dialect or contact enabled?}
+    FAC --> BIRTH[Procreation and committed child admission]
+    BIRTH --> INTERGEN{Intergenerational language enabled?}
+    INTERGEN -->|yes| TEACH[Exact-once bounded child comprehension exposure]
+    INTERGEN -->|no| SNAP{Dialect or contact enabled?}
+    TEACH --> SNAP
     SNAP -->|yes| FROZEN[Build one prior-coalition snapshot]
     SNAP -->|no| ECO[Economy]
     FROZEN --> ECO

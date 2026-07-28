@@ -28,6 +28,7 @@ from .artifact_contract import (
 from .events import EVENT_SCHEMA_VERSION
 from .config import (
     CoalitionDialectConfig,
+    IntergenerationalLanguageConfig,
     LanguageContactConfig,
     LanguageEvolutionConfig,
 )
@@ -40,6 +41,7 @@ from .coalitions import (
 from .language import (
     AgentLanguageState,
     CoalitionDialectRuntimeState,
+    IntergenerationalLanguageRuntimeState,
     LanguageContactRuntimeState,
     LanguageInvariantError,
     LanguageRuntimeState,
@@ -47,10 +49,15 @@ from .language import (
     coalition_dialect_runtime_record,
     contact_runtime_is_pristine,
     dialect_runtime_is_pristine,
+    intergenerational_language_runtime_record,
+    intergenerational_runtime_is_pristine,
     language_contact_runtime_record,
     language_runtime_is_pristine,
     language_runtime_record,
     validate_coalition_dialect_config,
+    validate_intergenerational_language_config,
+    validate_intergenerational_language_runtime,
+    validate_intergenerational_parent_references,
     validate_language_contact_config,
     validate_language_contact_runtime,
     validate_language_config,
@@ -63,6 +70,7 @@ def _person_record(
     include_social: bool = False,
     include_language: bool = False,
     include_contact: bool = False,
+    include_intergenerational: bool = False,
     language_config=None,
     contact_config=None,
 ) -> dict:
@@ -97,6 +105,7 @@ def _person_record(
             config=language_config,
             include_contact=include_contact,
             contact_config=contact_config,
+            include_intergenerational=include_intergenerational,
         )
         record["language"] = {
             key: value
@@ -338,6 +347,52 @@ def _require_pristine_disabled_contact_state(state) -> None:
         )
 
 
+def _require_pristine_disabled_intergenerational_state(state) -> None:
+    """Reject transmission state omitted from the disabled behavioral payload."""
+    for cohort, inhabitants in (
+        ("living", state.people),
+        ("dead", state.all_dead),
+    ):
+        for index, inhabitant in enumerate(inhabitants):
+            language = getattr(inhabitant, "language", None)
+            if type(language) is not AgentLanguageState:
+                raise LanguageInvariantError(
+                    "missing_disabled_agent_language_state",
+                    "disabled intergenerational language requires explicit "
+                    f"agent language state: {cohort}[{index}]",
+                )
+            hidden = [
+                (store_name, association)
+                for store_name, store in (
+                    ("production", language.production),
+                    ("comprehension", language.comprehension),
+                )
+                for association in store.values()
+                if getattr(
+                    association, "intergenerational_provenance", None
+                ) is not None
+            ]
+            if hidden:
+                inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+                raise LanguageInvariantError(
+                    "nonpristine_disabled_intergenerational_metadata",
+                    "disabled intergenerational language cannot conceal "
+                    "association metadata: "
+                    f"{cohort}[{index}] inhabitant_id={inhabitant_id!r}",
+                )
+    runtime = getattr(state, "intergenerational_language", None)
+    if type(runtime) is not IntergenerationalLanguageRuntimeState:
+        raise LanguageInvariantError(
+            "missing_disabled_intergenerational_runtime",
+            "disabled intergenerational language requires an explicit runtime",
+        )
+    if not intergenerational_runtime_is_pristine(runtime):
+        raise LanguageInvariantError(
+            "nonpristine_disabled_intergenerational_runtime",
+            "disabled intergenerational language requires pristine runtime state",
+        )
+
+
 def _coalition_state_record(runtime: CoalitionRuntimeState) -> dict:
     """Return the complete coalition runtime in canonical JSON-safe form."""
     return {
@@ -491,6 +546,54 @@ def _contact_hash_config(configuration: dict) -> LanguageContactConfig:
     return result
 
 
+def _intergenerational_hash_config(
+    configuration: dict,
+) -> IntergenerationalLanguageConfig:
+    """Build exact enabled transmission controls for behavioral hashing."""
+    required = (
+        "intergenerational_language_enabled",
+        "maximum_parental_meanings_per_parent",
+        "intergenerational_learning_strength",
+        "intergenerational_language_controls_status",
+        "intergenerational_language_control_notices",
+    )
+    missing = [name for name in required if name not in configuration]
+    if missing:
+        raise ValueError(
+            "enabled intergenerational language hashing lacks controls: "
+            + ", ".join(missing)
+        )
+    if configuration["intergenerational_language_controls_status"] != (
+        "engineering_only_uncontracted"
+    ):
+        raise ValueError(
+            "enabled intergenerational language hashing requires "
+            "engineering-only status"
+        )
+    if (
+        type(configuration["intergenerational_language_control_notices"])
+        is not list
+        or configuration["intergenerational_language_control_notices"]
+    ):
+        raise ValueError(
+            "enabled intergenerational language hashing requires exact empty "
+            "notices"
+        )
+    result = IntergenerationalLanguageConfig(
+        intergenerational_language_enabled=configuration[
+            "intergenerational_language_enabled"
+        ],
+        maximum_parental_meanings_per_parent=configuration[
+            "maximum_parental_meanings_per_parent"
+        ],
+        intergenerational_learning_strength=configuration[
+            "intergenerational_learning_strength"
+        ],
+    )
+    validate_intergenerational_language_config(result, require_enabled=True)
+    return result
+
+
 def canonical_state_hash(state, world: list, configuration: dict) -> str:
     """Return a SHA-256 fingerprint of behaviorally relevant final state."""
     social_memory_enabled = configuration.get("social_memory_enabled") is True
@@ -518,6 +621,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         raise ValueError("language contact setting must be boolean")
     language_contact_enabled = configuration.get(
         "language_contact_enabled", False)
+    if (
+        "intergenerational_language_enabled" in configuration
+        and type(configuration["intergenerational_language_enabled"]) is not bool
+    ):
+        raise ValueError("intergenerational language setting must be boolean")
+    intergenerational_language_enabled = configuration.get(
+        "intergenerational_language_enabled", False)
     non_behavioral_keys = {
         "condition",
         "log_mode",
@@ -575,6 +685,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         "language_contact_controls_status",
         "language_contact_control_notices",
     }
+    intergenerational_configuration_keys = {
+        "intergenerational_language_enabled",
+        "maximum_parental_meanings_per_parent",
+        "intergenerational_learning_strength",
+        "intergenerational_language_controls_status",
+        "intergenerational_language_control_notices",
+    }
     if not dialect_influence_enabled:
         _require_pristine_disabled_dialect_state(state)
         non_behavioral_keys.update(dialect_configuration_keys)
@@ -587,6 +704,12 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
     elif not language_evolution_enabled or not coalition_emergence_enabled:
         raise ValueError(
             "enabled language contact requires language and coalitions")
+    if not intergenerational_language_enabled:
+        _require_pristine_disabled_intergenerational_state(state)
+        non_behavioral_keys.update(intergenerational_configuration_keys)
+    elif not language_evolution_enabled:
+        raise ValueError(
+            "enabled intergenerational language requires language evolution")
     if not coalition_emergence_enabled:
         _require_empty_disabled_coalition_state(state)
         non_behavioral_keys.update(coalition_configuration_keys)
@@ -607,12 +730,40 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         _contact_hash_config(configuration)
         if language_contact_enabled else None
     )
+    intergenerational_hash_config = (
+        _intergenerational_hash_config(configuration)
+        if intergenerational_language_enabled else None
+    )
+    intergenerational_runtime = None
+    if intergenerational_language_enabled:
+        intergenerational_runtime = getattr(
+            state, "intergenerational_language", None)
+        if type(intergenerational_runtime) is not (
+            IntergenerationalLanguageRuntimeState
+        ):
+            raise ValueError(
+                "enabled intergenerational language requires a valid runtime")
+        validate_intergenerational_language_runtime(
+            intergenerational_runtime,
+            config=intergenerational_hash_config,
+            language_runtime=state.language,
+        )
+    if language_evolution_enabled:
+        validate_intergenerational_parent_references(
+            state.people,
+            state.all_dead,
+            language_config=language_hash_config,
+            contact_config=contact_hash_config,
+            intergenerational_enabled=intergenerational_language_enabled,
+            intergenerational_runtime=intergenerational_runtime,
+        )
     people_records = [
         _person_record(
             person,
             include_social=social_memory_enabled,
             include_language=language_evolution_enabled,
             include_contact=language_contact_enabled,
+            include_intergenerational=intergenerational_language_enabled,
             language_config=language_hash_config,
             contact_config=contact_hash_config,
         )
@@ -624,6 +775,7 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             include_social=social_memory_enabled,
             include_language=language_evolution_enabled,
             include_contact=language_contact_enabled,
+            include_intergenerational=intergenerational_language_enabled,
             language_config=language_hash_config,
             contact_config=contact_hash_config,
         )
@@ -697,6 +849,14 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
                 "contact_runtime_gate_mismatch",
                 "language runtime contact gate disagrees with effective controls",
             )
+        if runtime.intergenerational_language_enabled is not (
+            intergenerational_language_enabled
+        ):
+            raise LanguageInvariantError(
+                "intergenerational_runtime_gate_mismatch",
+                "language runtime intergenerational gate disagrees with "
+                "effective controls",
+            )
         payload["language_state"] = language_runtime_record(runtime)
     if coalition_emergence_enabled:
         runtime = getattr(state, "coalitions", None)
@@ -725,6 +885,15 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             contact_runtime,
             language_runtime=state.language,
             dialect_runtime=(state.dialect if dialect_influence_enabled else None),
+        )
+    if intergenerational_language_enabled:
+        assert intergenerational_runtime is not None
+        payload["intergenerational_language_state"] = (
+            intergenerational_language_runtime_record(
+                intergenerational_runtime,
+                config=intergenerational_hash_config,
+                language_runtime=state.language,
+            )
         )
     encoded = json.dumps(
         _json_safe(payload),

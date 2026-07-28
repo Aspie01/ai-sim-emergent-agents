@@ -22,6 +22,8 @@ flowchart LR
     ECO -->|authentic communicator pair| CONTACT[Language contact context]
     COAL -->|frozen different membership| CONTACT
     CONTACT -->|positive acquisition and provenance| LANG
+    POP -->|committed birth + exact parents| INTERGEN[Intergenerational exposure]
+    INTERGEN -->|bounded comprehension only| LANG
     FAC --> COMBAT[Combat]
     ECO --> COMBAT
     COMBAT --> TECH[Technology]
@@ -43,7 +45,7 @@ Solid arrows indicate configuration, state reads, or causal mutation. Dotted arr
 
 ## State model
 
-`SimulationState` directly owns living/dead populations, formal factions, event history, war/diplomacy/economy/religion stores, the stable-ID allocator, informal-coalition runtime, language runtime, dialect runtime, and language-contact runtime. World tiles and several legacy caches remain module-owned. Reset clears core stores in place so imported aliases keep their identity.
+`SimulationState` directly owns living/dead populations, formal factions, event history, war/diplomacy/economy/religion stores, the stable-ID allocator, informal-coalition runtime, language runtime, dialect runtime, language-contact runtime, and intergenerational-language runtime. World tiles and several legacy caches remain module-owned. Reset clears core stores in place so imported aliases keep their identity.
 
 This is not an event-sourced architecture. Events observe changes; they are not the authoritative state and cannot replay a run. The run manifest holds provenance and a final selected-state fingerprint, not a checkpoint.
 
@@ -83,6 +85,10 @@ An inhabitant can belong to one of each; neither membership derives from the oth
   different-active-coalitions communication can strengthen positive receiver
   acquisition and record borrowing provenance. Assigned/unassigned
   communication stays at base rates.
+- Intergenerational Language v1 is one-way from a successfully committed birth
+  and exact parent objects into bounded child comprehension. It consumes no RNG,
+  leaves parents read-only, and cannot influence reproduction or any
+  social/material state.
 - Plugins are an exception to the observer pattern: their bridge is immutable, but accepted commands causally spawn inhabitants or adjust resources, and plugin Python is not sandboxed.
 - Mythology is a disabled-by-default narrative observer with external I/O; its prose is not fed back into the simulation.
 
@@ -94,8 +100,10 @@ Focused transactions exist for:
 - informal-coalition transitions, which propose and fully validate a new runtime;
 - language communication across sender/receiver language state and
   language/dialect/contact runtimes.
+- post-birth parental exposure across child language, base language runtime,
+  and intergenerational runtime.
 
-The complete tick and economy-to-language chain are not atomic. A committed transfer precedes optional relationship and language hooks; a later hook exception does not roll back the transfer.
+The complete tick and economy-to-language chain are not atomic. A committed transfer precedes optional relationship and language hooks; a later hook exception does not roll back the transfer. Birth-language processing is also not atomic: `_spawn(child)` commits first, and a later transmission failure rolls back language owners but leaves the child admitted, its ID consumed, and parental food deducted.
 
 ## Implementation evidence
 
@@ -104,5 +112,6 @@ The complete tick and economy-to-language chain are not atomic. A committed tran
 - Reset: `sim.reset_runtime_state`, `SimulationState.reset`.
 - Isolation tests: `tests/test_language_interaction_hooks.py`,
   `tests/test_coalition_dialects.py`, `tests/test_language_contact.py`,
+  `tests/test_intergenerational_language.py`,
   `tests/test_social_partner_choice.py`.
 - Lifecycle tests: `tests/test_run_termination.py`, `tests/test_simulation_state.py`.

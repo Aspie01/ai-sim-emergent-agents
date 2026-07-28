@@ -106,6 +106,11 @@ Production associations cannot carry `ContactExposure`, and comprehension
 associations cannot carry borrowing provenance. Hidden contact metadata while
 contact is disabled fails closed.
 
+The same comprehension association may independently carry
+`IntergenerationalProvenance`. Later authentic contact can add or reinforce
+`ContactExposure` without changing the association's immutable direct-parent
+facts.
+
 ## 6. Contact-qualified borrowing provenance
 
 `BorrowingProvenance` is immutable historical metadata attached only when a
@@ -166,6 +171,12 @@ rules: surviving comprehension exposure may support a later production
 promotion, while a newly recreated comprehension association starts new
 first-contact evidence. There is no unbounded history and no stochastic
 relearning path.
+
+A parent may teach a form whose production association is contact-borrowed.
+That birth exposure records only bounded direct-parent intergenerational facts:
+it copies neither `BorrowingProvenance` nor `ContactExposure`, creates no
+contact attempt, and does not treat the original source coalition as the
+child's source.
 
 ## 10. Runtime counters and invariants
 
@@ -302,9 +313,10 @@ language policy. Language Contact v1 cannot affect:
 
 The feature stores no migration identity, prestige, schooling, official
 language, permanent bilingual label, or population-level language history.
-Intergenerational transmission, lexical mutation/evolution, compositional
-protolanguage, grammar, and language coevolution remain planned rather than
-implemented.
+Intergenerational transmission is now an independent implemented
+comprehension-only birth extension; it does not change contact classification
+or counters. Lexical mutation/evolution, compositional protolanguage, grammar,
+and language coevolution remain planned rather than implemented.
 
 ## 16. Language roadmap
 
@@ -312,11 +324,11 @@ Completed engineering implementations:
 
 - `feature/endogenous-language-v1`;
 - `feature/coalition-dialects-v1`;
-- `feature/language-contact-v1`.
+- `feature/language-contact-v1`;
+- `feature/intergenerational-language-v1`.
 
 Planned, not implemented:
 
-- `feature/intergenerational-language-v1` — **Planned, not implemented**;
 - `feature/lexical-evolution-v1` — **Planned, not implemented**;
 - `feature/compositional-protolanguage-v1` — **Planned, not implemented**;
 - `feature/grammar-evolution-v1` — **Planned, not implemented**;
@@ -347,6 +359,7 @@ engineering feature; not research-ready.
 **Primary tests:**
 
 - `tests/test_language_contact.py`;
+- `tests/test_intergenerational_language.py`;
 - `tests/test_language_evolution.py`;
 - `tests/test_language_interaction_hooks.py`;
 - `tests/test_language_reproducibility.py`;

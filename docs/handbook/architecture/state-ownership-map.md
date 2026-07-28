@@ -19,10 +19,11 @@ The simulator is midway between legacy module globals and explicit run-scoped st
 | Legacy trust | Each `Inhabitant.trust` | Layer 1, factions, transfers, religion/tech | Reproduction, beliefs, factions, metrics | Agent lifetime | Selected trust values in hash; mean of stored values in metrics |
 | Directed relationships | Each `Inhabitant.relationships` | Committed Layer-4 hooks; maintenance | Partner bias, informal coalitions, summaries/hash | Agent lifetime; cleared at death maintenance | Enabled final hash only; no standard metric |
 | Informal coalitions | `SimulationState.coalitions` | Transactional end-of-tick transition | Hash, on-demand summary, next-tick dialect/contact snapshot | In-memory run only | Enabled final hash only |
-| Per-agent language | `Inhabitant.language` | Transactional communication; maintenance | Communication, language/dialect/contact summaries, hash | Retained on living/dead agent until death cleanup | Enabled final hash, including contact metadata when enabled |
-| Language runtime | `SimulationState.language` | Initialization, communication, maintenance | Validation, summaries, hash | In-memory run only | Enabled final hash and manifest controls |
+| Per-agent language | `Inhabitant.language` | Transactional communication, post-birth parental exposure, maintenance | Communication, language/dialect/contact/intergenerational summaries, hash | Retained on living/dead agent until death cleanup | Enabled final hash, including enabled contact/intergenerational metadata |
+| Language runtime | `SimulationState.language` | Initialization, communication, post-birth exposure, maintenance | Validation, summaries, hash | In-memory run only | Enabled final hash and manifest controls |
 | Dialect runtime | `SimulationState.dialect` | Dialect-classified communication | Validation, summary, hash | In-memory run only | Enabled final hash; no standard artifact |
 | Language-contact runtime | `SimulationState.language_contact` | Different-coalition communication | Validation, on-demand summary, hash | In-memory run only | Enabled final hash; controls in manifest; no standard contact artifact |
+| Intergenerational-language runtime | `SimulationState.intergenerational_language` | Exact-once successful-birth hook | Validation, on-demand summary, hash, reset | In-memory run only | Enabled final hash; controls in manifest; no standard intergenerational artifact |
 | Event journal | `SimulationState.event_log` (`StructuredEventLog`) | All emitters | Observation, display, mythology | Narrative history pruned; journal drained per tick | Typed subset in event CSV |
 | Metrics writer state | `MetricsLogger` | Observation/finalization | Manifest writer health | File-backed during run | Required CSVs and manifest health |
 | Religion/holy wars | Religion module stores aliased partly into `SimulationState` | Religion | Combat/tech/religion | In-memory run only | Largely omitted from final hash |
@@ -37,6 +38,10 @@ The simulator is midway between legacy module globals and explicit run-scoped st
 - Contact exposure and borrowing provenance are association-owned bounded
   metadata, not coalition-owned registries. Historical source coalition IDs may
   outlive active coalition state.
+- Intergenerational provenance is comprehension-association-owned bounded
+  metadata, not parent-, family-, generation-, faction-, or coalition-owned
+  language state. Historical parent IDs remain valid through the retained dead
+  cohort; no genealogy or parent registry exists.
 - The canonical state hash covers a documented projection, not all future-affecting state shown above.
 - Events and metrics observe state; they do not own it.
 - Required CSVs are overwritten or appended by direct-run writers according to file type; they are not in-memory persistence or a resume checkpoint.
@@ -46,5 +51,6 @@ The simulator is midway between legacy module globals and explicit run-scoped st
 - `src/thalren_vale/state.py::SimulationState`.
 - Module-global aliases in `src/thalren_vale/sim.py` and owning domain modules.
 - Hash projection: `src/thalren_vale/reproducibility.py::canonical_state_hash`.
-- Reset tests: `tests/test_simulation_state.py`.
+- Reset tests: `tests/test_simulation_state.py`,
+  `tests/test_intergenerational_language.py`.
 - Hidden-state fail-closed tests: `tests/test_reproducibility.py`, `tests/test_language_reproducibility.py`.

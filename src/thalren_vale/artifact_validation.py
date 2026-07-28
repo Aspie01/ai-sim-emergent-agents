@@ -54,7 +54,10 @@ from .config import (
     DEFAULT_COALITION_MINIMUM_SIZE,
     DEFAULT_COALITION_PERSISTENCE_TICKS,
     DEFAULT_COALITION_TRUST_THRESHOLD,
+    DEFAULT_INTERGENERATIONAL_LANGUAGE_ENABLED,
+    DEFAULT_INTERGENERATIONAL_LEARNING_STRENGTH,
     DEFAULT_MAXIMUM_ACTIVE_COALITIONS,
+    DEFAULT_MAXIMUM_PARENTAL_MEANINGS_PER_PARENT,
     DEFAULT_LANGUAGE_EVOLUTION_ENABLED,
     DEFAULT_LANGUAGE_CONTACT_ENABLED,
     DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
@@ -70,8 +73,10 @@ from .config import (
     DEFAULT_SAME_COALITION_REINFORCEMENT_MULTIPLIER,
     DIALECT_NOTICE_WITHOUT_COALITIONS,
     DIALECT_NOTICE_WITHOUT_LANGUAGE,
+    INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE,
     LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
     LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
+    MAXIMUM_INTERGENERATIONAL_MEANINGS,
     VALID_COALITION_CONTROL_NOTICES,
     VALID_COALITION_CONTROL_STATUSES,
     VALID_DISABLE_LAYERS,
@@ -81,6 +86,8 @@ from .config import (
     VALID_LANGUAGE_CONTROL_STATUSES,
     VALID_LANGUAGE_CONTACT_CONTROL_NOTICES,
     VALID_LANGUAGE_CONTACT_CONTROL_STATUSES,
+    VALID_INTERGENERATIONAL_LANGUAGE_CONTROL_NOTICES,
+    VALID_INTERGENERATIONAL_LANGUAGE_CONTROL_STATUSES,
     VALID_LOG_MODES,
     VALID_SOCIAL_CONTROL_NOTICES,
     VALID_SOCIAL_CONTROL_STATUSES,
@@ -1149,6 +1156,172 @@ def _validate_language_contact_configuration(
         _add(
             issues,
             "invalid_language_contact_configuration",
+            message,
+            "manifest",
+        )
+
+
+def _validate_intergenerational_language_configuration(
+    config: dict,
+    issues: _IssueCollector,
+) -> None:
+    """Validate every present transmission control and dependency fact."""
+
+    def finite_strength(value: object) -> bool:
+        return (
+            type(value) is float
+            and math.isfinite(value)
+            and 0.0 < value <= 1.0
+        )
+
+    validators = {
+        "intergenerational_language_enabled": _is_bool,
+        "maximum_parental_meanings_per_parent": (
+            lambda value: _is_int(value)
+            and 1 <= value <= MAXIMUM_INTERGENERATIONAL_MEANINGS
+        ),
+        "intergenerational_learning_strength": finite_strength,
+        "intergenerational_language_controls_status": (
+            lambda value: _is_str(value)
+            and value in VALID_INTERGENERATIONAL_LANGUAGE_CONTROL_STATUSES
+        ),
+        "intergenerational_language_control_notices": (
+            lambda value: _is_list(value)
+            and all(
+                _is_str(item)
+                and item in VALID_INTERGENERATIONAL_LANGUAGE_CONTROL_NOTICES
+                for item in value
+            )
+            and len(value) == len(set(value))
+            and value == sorted(value)
+        ),
+    }
+    valid_present: set[str] = set()
+    for name, validator in validators.items():
+        if name not in config:
+            continue
+        if not validator(config[name]):
+            _add(
+                issues,
+                "invalid_intergenerational_language_configuration",
+                f"{name} is malformed",
+                "manifest",
+            )
+        else:
+            valid_present.add(name)
+
+    enabled_present = "intergenerational_language_enabled" in valid_present
+    status_present = (
+        "intergenerational_language_controls_status" in valid_present)
+    notices_present = (
+        "intergenerational_language_control_notices" in valid_present)
+    language_present = (
+        "language_evolution_enabled" in config
+        and _is_bool(config.get("language_evolution_enabled"))
+    )
+    enabled = (
+        config["intergenerational_language_enabled"]
+        if enabled_present else None
+    )
+    status = (
+        config["intergenerational_language_controls_status"]
+        if status_present else None
+    )
+    notices = (
+        config["intergenerational_language_control_notices"]
+        if notices_present else None
+    )
+    errors: list[str] = []
+
+    def add_error(message: str) -> None:
+        if message not in errors:
+            errors.append(message)
+
+    if enabled is True:
+        if language_present and not config["language_evolution_enabled"]:
+            add_error(
+                "enabled intergenerational language requires language evolution")
+        if notices_present and notices:
+            add_error(
+                "enabled intergenerational language conflicts with "
+                "normalization notices")
+
+    if notices_present:
+        assert type(notices) is list
+        language_notice = (
+            INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE in notices)
+        if enabled is True and notices:
+            add_error(
+                "normalization notices require disabled intergenerational "
+                "language")
+        if language_present:
+            if config["language_evolution_enabled"] and language_notice:
+                add_error(
+                    "intergenerational language dependency notice conflicts "
+                    "with effective language")
+            if (
+                notices
+                and not config["language_evolution_enabled"]
+                and not language_notice
+            ):
+                add_error(
+                    "normalized intergenerational language lacks the language "
+                    "dependency notice")
+
+    defaults = {
+        "intergenerational_language_enabled": (
+            DEFAULT_INTERGENERATIONAL_LANGUAGE_ENABLED),
+        "maximum_parental_meanings_per_parent": (
+            DEFAULT_MAXIMUM_PARENTAL_MEANINGS_PER_PARENT),
+        "intergenerational_learning_strength": (
+            DEFAULT_INTERGENERATIONAL_LEARNING_STRENGTH),
+    }
+    present_controls = set(defaults).intersection(valid_present)
+    controls_complete = set(defaults) <= valid_present
+    any_nondefault = any(
+        not _exact_equal(config[name], defaults[name])
+        for name in present_controls
+    )
+
+    if status == "disabled":
+        if any_nondefault:
+            add_error(
+                "disabled intergenerational language status conflicts with "
+                "present controls")
+        if notices_present and notices:
+            add_error(
+                "disabled intergenerational language status requires exact "
+                "empty notices")
+    elif status == "normalized_uncontracted":
+        if enabled is True:
+            add_error(
+                "normalized intergenerational language status requires "
+                "disabled transmission")
+        if not notices_present or not notices:
+            add_error(
+                "normalized intergenerational language status requires a "
+                "dependency notice")
+    elif status == "engineering_only_uncontracted":
+        if notices_present and notices:
+            add_error(
+                "engineering intergenerational language status conflicts with "
+                "normalization notices")
+        if controls_complete and not any_nondefault:
+            add_error(
+                "engineering intergenerational language status requires a "
+                "nondefault control")
+
+    if notices_present and notices and status_present and (
+        status != "normalized_uncontracted"
+    ):
+        add_error(
+            "intergenerational language status conflicts with normalization "
+            "notices")
+
+    for message in errors:
+        _add(
+            issues,
+            "invalid_intergenerational_language_configuration",
             message,
             "manifest",
         )
@@ -2265,6 +2438,26 @@ def _readiness_issues(
                 f"found {actual!r}",
                 "manifest",
             )
+    safe_intergenerational_language_controls = {
+        "intergenerational_language_enabled": (
+            DEFAULT_INTERGENERATIONAL_LANGUAGE_ENABLED),
+        "maximum_parental_meanings_per_parent": (
+            DEFAULT_MAXIMUM_PARENTAL_MEANINGS_PER_PARENT),
+        "intergenerational_learning_strength": (
+            DEFAULT_INTERGENERATIONAL_LEARNING_STRENGTH),
+        "intergenerational_language_controls_status": "disabled",
+        "intergenerational_language_control_notices": [],
+    }
+    for name, expected in safe_intergenerational_language_controls.items():
+        actual = config.get(name)
+        if not _exact_equal(actual, expected):
+            _add(
+                issues,
+                "intergenerational_language_controls_not_v2_ready",
+                f"configuration.{name}: expected {expected!r}, "
+                f"found {actual!r}",
+                "manifest",
+            )
     if contract is None:
         _add(issues, "missing_expected_run_contract", "no complete external expected-run contract was supplied", "manifest")
         return issues.materialize()
@@ -2438,6 +2631,7 @@ def _validate_strict(
         _validate_coalition_configuration(config, issues)
         _validate_dialect_configuration(config, issues)
         _validate_language_contact_configuration(config, issues)
+        _validate_intergenerational_language_configuration(config, issues)
     execution_mode = manifest.get("execution_mode")
     if not _is_str(execution_mode) or execution_mode not in {"serial", "threaded"}:
         _add(issues, "invalid_execution_mode", repr(manifest.get("execution_mode")), "manifest")

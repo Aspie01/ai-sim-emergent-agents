@@ -8,6 +8,7 @@ from thalren_vale.config import (
     COALITION_NOTICE_EMERGENCE_WITHOUT_SOCIAL_MEMORY,
     DIALECT_NOTICE_WITHOUT_COALITIONS,
     DIALECT_NOTICE_WITHOUT_LANGUAGE,
+    INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE,
     LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
     LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
     SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY,
@@ -61,6 +62,10 @@ def cli_args(**overrides):
         "cross_group_learning_multiplier": None,
         "borrowing_exposure_threshold": None,
         "borrowing_confidence_threshold": None,
+        "enable_intergenerational_language": False,
+        "disable_intergenerational_language": False,
+        "maximum_parental_meanings_per_parent": None,
+        "intergenerational_learning_strength": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -373,6 +378,65 @@ def test_nondefault_contact_controls_are_engineering_only_without_normalization(
     assert result.dialect_controls_status == "disabled"
 
 
+def test_intergenerational_controls_default_to_exact_safe_values():
+    result = SimulationConfig.from_cli(cli_args())
+    manifest = result.manifest_dict()
+
+    assert manifest["intergenerational_language_enabled"] is False
+    assert type(manifest["maximum_parental_meanings_per_parent"]) is int
+    assert manifest["maximum_parental_meanings_per_parent"] == 2
+    assert type(manifest["intergenerational_learning_strength"]) is float
+    assert manifest["intergenerational_learning_strength"] == 0.20
+    assert (
+        manifest["intergenerational_language_controls_status"] == "disabled"
+    )
+    assert manifest["intergenerational_language_control_notices"] == []
+
+
+def test_intergenerational_request_normalizes_only_against_base_language():
+    normalized = SimulationConfig.from_cli(cli_args(
+        enable_intergenerational_language=True,
+    ))
+    independent = SimulationConfig.from_cli(cli_args(
+        enable_language_evolution=True,
+        enable_intergenerational_language=True,
+    ))
+
+    assert normalized.intergenerational_language_enabled is False
+    assert normalized.intergenerational_language_control_notices == (
+        INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE,
+    )
+    assert normalized.intergenerational_language_controls_status == (
+        "normalized_uncontracted"
+    )
+    assert independent.intergenerational_language_enabled is True
+    assert independent.intergenerational_language_control_notices == ()
+    assert independent.intergenerational_language_controls_status == (
+        "engineering_only_uncontracted"
+    )
+    assert independent.coalition_emergence_enabled is False
+    assert independent.coalition_dialect_influence_enabled is False
+    assert independent.language_contact_enabled is False
+
+
+def test_nondefault_intergenerational_controls_are_engineering_only():
+    result = SimulationConfig.from_cli(cli_args(
+        maximum_parental_meanings_per_parent=3,
+        intergenerational_learning_strength=0.35,
+    ))
+
+    assert result.intergenerational_language_enabled is False
+    assert result.intergenerational_language_control_notices == ()
+    assert result.intergenerational_language_controls_status == (
+        "engineering_only_uncontracted"
+    )
+
+
+def test_intergenerational_controls_reject_nonboolean_gate():
+    with pytest.raises(ValueError, match="intergenerational language setting"):
+        SimulationConfig(intergenerational_language_enabled=1).validate()
+
+
 @pytest.mark.parametrize(
     ("override", "message"),
     [
@@ -410,6 +474,15 @@ def test_nondefault_contact_controls_are_engineering_only_without_normalization(
         ({"borrowing_confidence_threshold": 1}, "finite float"),
         ({"borrowing_confidence_threshold": 0.09}, "finite float"),
         ({"borrowing_confidence_threshold": float("inf")}, "finite float"),
+        ({"maximum_parental_meanings_per_parent": True}, "parental meanings"),
+        ({"maximum_parental_meanings_per_parent": 0}, "parental meanings"),
+        ({"maximum_parental_meanings_per_parent": 5}, "parental meanings"),
+        ({"intergenerational_learning_strength": 1}, "learning strength"),
+        ({"intergenerational_learning_strength": 0.0}, "learning strength"),
+        (
+            {"intergenerational_learning_strength": float("nan")},
+            "learning strength",
+        ),
     ],
 )
 def test_invalid_configuration_is_rejected(override, message):

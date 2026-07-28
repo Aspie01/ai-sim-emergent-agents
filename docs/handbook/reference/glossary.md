@@ -13,12 +13,14 @@
 | Directed relationship | Optional bounded stable-ID record with trust, affinity, grievance, obligation, familiarity and interaction history |
 | Formal faction | Older named causal institution driven by beliefs, legacy trust and proximity |
 | Generation | Lineage depth (`0` initially, parent maximum plus one at birth), not biological age |
+| Intergenerational provenance | Bounded immutable first-parent facts plus one- or two-parent source counts attached only to a child comprehension association |
 | Legacy trust | Name-keyed integer trust used by older survival/faction/reproduction mechanics |
 | Language contact | Positive language-only extension for authentic `DIFFERENT_ACTIVE_COALITIONS` communication; assigned/unassigned communication is not contact in v1 |
 | Manifest | JSON termination, configuration, writer-health, inventory, provenance and state-fingerprint envelope |
 | Meaning | One of the four closed language concepts: food, wood, ore, stone |
 | Mixed production carrier | Inhabitant with usable borrowed and nonborrowed production for at least one same meaning; not a stored identity label |
 | Pristine | Exact default/empty validated runtime state required when a feature is disabled or before initialization |
+| Parental exposure | One deterministic comprehension observation of a usable production form from an exact birth parent after the child has been admitted |
 | Research-ready | Artifact valid under a complete exact `ExpectedRunContract`; current runner output does not attain this |
 | Run root | Working directory for one direct run, or batch root containing condition/seed child directories |
 | Selected-state hash | SHA-256 of the canonical documented projection; not a checkpoint |

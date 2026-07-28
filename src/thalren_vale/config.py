@@ -66,6 +66,10 @@ DEFAULT_INTERGENERATIONAL_LANGUAGE_ENABLED = False
 DEFAULT_MAXIMUM_PARENTAL_MEANINGS_PER_PARENT = 2
 DEFAULT_INTERGENERATIONAL_LEARNING_STRENGTH = 0.20
 MAXIMUM_INTERGENERATIONAL_MEANINGS = 4
+DEFAULT_LEXICAL_EVOLUTION_ENABLED = False
+DEFAULT_LEXICAL_MUTATION_RATE = 0.05
+DEFAULT_MAXIMUM_LEXICAL_LINEAGE_DEPTH = 8
+MAXIMUM_LEXICAL_LINEAGE_DEPTH = 32
 FACTION_TRUST_THRESHOLD = DEFAULT_FACTION_TRUST_THRESHOLD
 WAR_TENSION_THRESHOLD = DEFAULT_WAR_TENSION_THRESHOLD
 BELIEF_SHARING_PROBABILITY = DEFAULT_BELIEF_SHARING_PROBABILITY
@@ -169,6 +173,18 @@ VALID_INTERGENERATIONAL_LANGUAGE_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+LEXICAL_EVOLUTION_NOTICE_WITHOUT_LANGUAGE = (
+    'lexical_evolution_requested_without_language'
+)
+VALID_LEXICAL_EVOLUTION_CONTROL_NOTICES = frozenset({
+    LEXICAL_EVOLUTION_NOTICE_WITHOUT_LANGUAGE,
+})
+VALID_LEXICAL_EVOLUTION_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
 
 @dataclass(frozen=True)
 class SocialMemoryConfig:
@@ -232,6 +248,15 @@ class IntergenerationalLanguageConfig:
     intergenerational_language_enabled: bool
     maximum_parental_meanings_per_parent: int
     intergenerational_learning_strength: float
+
+
+@dataclass(frozen=True)
+class LexicalEvolutionConfig:
+    """Effective engineering-only lexical mutation controls."""
+
+    lexical_evolution_enabled: bool
+    lexical_mutation_rate: float
+    maximum_lexical_lineage_depth: int
 
 
 @dataclass(frozen=True)
@@ -299,6 +324,11 @@ class SimulationConfig:
     intergenerational_learning_strength: float = (
         DEFAULT_INTERGENERATIONAL_LEARNING_STRENGTH
     )
+    lexical_evolution_enabled: bool = DEFAULT_LEXICAL_EVOLUTION_ENABLED
+    lexical_mutation_rate: float = DEFAULT_LEXICAL_MUTATION_RATE
+    maximum_lexical_lineage_depth: int = (
+        DEFAULT_MAXIMUM_LEXICAL_LINEAGE_DEPTH
+    )
     social_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     language_control_notices: tuple[str, ...] = field(
@@ -310,6 +340,8 @@ class SimulationConfig:
     language_contact_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     intergenerational_language_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    lexical_evolution_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -380,6 +412,20 @@ class SimulationConfig:
             self,
             'intergenerational_language_control_notices',
             tuple(sorted(intergenerational_notices)),
+        )
+
+        lexical_notices: list[str] = []
+        if (
+            self.lexical_evolution_enabled is True
+            and self.language_evolution_enabled is False
+        ):
+            object.__setattr__(self, 'lexical_evolution_enabled', False)
+            lexical_notices.append(
+                LEXICAL_EVOLUTION_NOTICE_WITHOUT_LANGUAGE)
+        object.__setattr__(
+            self,
+            'lexical_evolution_control_notices',
+            tuple(sorted(lexical_notices)),
         )
 
     @classmethod
@@ -580,6 +626,22 @@ class SimulationConfig:
                     None,
                 ) is None
                 else args.intergenerational_learning_strength
+            ),
+            lexical_evolution_enabled=(
+                bool(getattr(args, 'enable_lexical_evolution', False))
+                and not bool(getattr(
+                    args, 'disable_lexical_evolution', False))
+            ),
+            lexical_mutation_rate=(
+                DEFAULT_LEXICAL_MUTATION_RATE
+                if getattr(args, 'lexical_mutation_rate', None) is None
+                else args.lexical_mutation_rate
+            ),
+            maximum_lexical_lineage_depth=(
+                DEFAULT_MAXIMUM_LEXICAL_LINEAGE_DEPTH
+                if getattr(
+                    args, 'maximum_lexical_lineage_depth', None) is None
+                else args.maximum_lexical_lineage_depth
             ),
         )
         instance.validate()
@@ -817,6 +879,42 @@ class SimulationConfig:
             raise ValueError(
                 'intergenerational language normalization notices require '
                 'disabled transmission')
+        if type(self.lexical_evolution_enabled) is not bool:
+            raise ValueError('lexical evolution setting must be boolean')
+        if (
+            self.lexical_evolution_enabled
+            and not self.language_evolution_enabled
+        ):
+            raise ValueError('lexical evolution requires language evolution')
+        if (
+            type(self.lexical_mutation_rate) is not float
+            or not math.isfinite(self.lexical_mutation_rate)
+            or not 0.0 <= self.lexical_mutation_rate <= 1.0
+        ):
+            raise ValueError(
+                'lexical mutation rate must be a finite float from 0.0 to 1.0')
+        if (
+            type(self.maximum_lexical_lineage_depth) is not int
+            or not 1
+            <= self.maximum_lexical_lineage_depth
+            <= MAXIMUM_LEXICAL_LINEAGE_DEPTH
+        ):
+            raise ValueError(
+                'maximum lexical lineage depth must be an integer from 1 to '
+                f'{MAXIMUM_LEXICAL_LINEAGE_DEPTH}')
+        if any(
+            notice not in VALID_LEXICAL_EVOLUTION_CONTROL_NOTICES
+            for notice in self.lexical_evolution_control_notices
+        ):
+            raise ValueError(
+                'unknown lexical evolution normalization notice')
+        if (
+            self.lexical_evolution_control_notices
+            and self.lexical_evolution_enabled
+        ):
+            raise ValueError(
+                'lexical evolution normalization notices require disabled '
+                'lexical evolution')
 
     def apply_legacy_globals(self) -> None:
         """Keep modules using legacy constants synchronized during migration."""
@@ -845,6 +943,7 @@ class SimulationConfig:
         result.pop('dialect_control_notices', None)
         result.pop('language_contact_control_notices', None)
         result.pop('intergenerational_language_control_notices', None)
+        result.pop('lexical_evolution_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
@@ -866,6 +965,10 @@ class SimulationConfig:
             self.intergenerational_language_control_notices)
         result['intergenerational_language_controls_status'] = (
             self.intergenerational_language_controls_status)
+        result['lexical_evolution_control_notices'] = list(
+            self.lexical_evolution_control_notices)
+        result['lexical_evolution_controls_status'] = (
+            self.lexical_evolution_controls_status)
         return result
 
     @property
@@ -1047,4 +1150,28 @@ class SimulationConfig:
                 self.maximum_parental_meanings_per_parent),
             intergenerational_learning_strength=(
                 self.intergenerational_learning_strength),
+        )
+
+    @property
+    def lexical_evolution_controls_status(self) -> str:
+        """Return provenance status for uncontracted lexical controls."""
+        if self.lexical_evolution_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.lexical_evolution_enabled
+            or self.lexical_mutation_rate != DEFAULT_LEXICAL_MUTATION_RATE
+            or self.maximum_lexical_lineage_depth
+            != DEFAULT_MAXIMUM_LEXICAL_LINEAGE_DEPTH
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def lexical_evolution_config(self) -> LexicalEvolutionConfig:
+        """Return immutable effective lexical mutation controls."""
+        return LexicalEvolutionConfig(
+            lexical_evolution_enabled=self.lexical_evolution_enabled,
+            lexical_mutation_rate=self.lexical_mutation_rate,
+            maximum_lexical_lineage_depth=(
+                self.maximum_lexical_lineage_depth),
         )

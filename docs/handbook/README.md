@@ -2,16 +2,16 @@
 
 This is the authoritative technical handbook for the current Thalren Vale repository revision:
 
-- Branch: `feature/intergenerational-language-v1`
-- Base `HEAD` commit: `f9647958e35114540ab681cc7ed816991f506f43`
-- Documented implementation state: the approved, uncommitted Intergenerational
-  Language v1 working tree on that branch
+- Branch: `feature/lexical-evolution-v1`
+- Base `HEAD` commit: `2855bf15a77dffc599f6a0f4ac08721f79a379d4`
+- Documented implementation state: the approved, uncommitted Lexical Evolution
+  v1 working tree on that branch
 - Updated: 2026-07-28
 
 The commit identifies the base revision; it does not by itself contain the
-Intergenerational Language v1 implementation. The implementation and these handbook
-updates remain uncommitted branch work until the owner creates the final feature
-commit.
+Lexical Evolution v1 implementation. The implementation and these handbook
+updates remain uncommitted branch work until the owner creates the final
+feature commit.
 
 It is written for the project owner, new developers, future Codex sessions, researchers inspecting results, and reviewers auditing causal isolation, determinism, or evidence integrity. It explains executable behavior; it does not promote engineering tests or historical pilot outputs into research conclusions.
 
@@ -49,6 +49,7 @@ The compact visual overview is the [full system map](diagrams/full-system-map.md
 - [Coalition dialects](systems/coalition-dialects.md)
 - [Language contact](systems/language-contact.md)
 - [Intergenerational language](systems/intergenerational-language.md)
+- [Lexical evolution](systems/lexical-evolution.md)
 - [Combat, technology, diplomacy, and religion](systems/conflict-technology-diplomacy-religion.md)
 - [Events, observers, and plugins](systems/events-observers-and-plugins.md)
 
@@ -98,16 +99,16 @@ authoritative alone.
 | `feature/coalition-dialects-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/language-contact-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/intergenerational-language-v1` | Implemented but experimental; Disabled by default; Engineering-only |
+| `feature/lexical-evolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | Generic experiment runner | Implemented fresh-root engineering runner; not research-ready |
 | Core Replication V1 | Historical pilot material |
 | Core Replication V2 evidence | Planned, not implemented |
-| `feature/lexical-evolution-v1` | Planned, not implemented |
 | `feature/compositional-protolanguage-v1` | Planned, not implemented |
 | `feature/grammar-evolution-v1` | Planned, not implemented |
 | `feature/language-coevolution-v1` | Planned, not implemented |
 | `feature/language-research-readiness-v1` | Planned, not implemented |
 
-The next language milestone is `feature/lexical-evolution-v1`: **Planned, not implemented**.
+The next language milestone is `feature/compositional-protolanguage-v1`: **Planned, not implemented**.
 
 ## Evidence standard
 
@@ -135,6 +136,10 @@ The handbook preserves a visible distinction between source-verified behavior an
 - A successfully committed birth can provide bounded child comprehension of
   usable parental forms when Intergenerational Language v1 is enabled;
   language cannot affect reproduction or any social/material outcome.
+- After an already committed transfer, Lexical Evolution v1 may derive one
+  deterministic substitution from a pre-existing usable production form and
+  emit the descendant. It consumes no RNG and cannot alter the transfer or any
+  social/material state.
 - Plugins are causal Python extensions, not sandboxed observers.
 - The beliefs CSV’s `inhabitant_id` column contains display names in this schema revision.
 - Known obsolete equilibrium JSON files must not be used as current evidence.

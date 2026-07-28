@@ -50,16 +50,29 @@ They are names in this schema revision. The producer/header mismatch is document
 
 Dashboard JSON, raw logs, chronicles, and mythology are diagnostic and unvalidated. Revalidate the required structured set and use its end-of-tick semantics. Dashboard reputation history can persist across repeated in-process runs.
 
-## A planned language feature is missing
+## A language feature is missing
 
 Endogenous Language v1, Coalition Dialects v1, Language Contact v1, and
 Intergenerational Language v1 are implemented engineering features. Lexical
-evolution, compositional protolanguage, grammar, coevolution, and
+Evolution v1 is also implemented: it can substitute exactly one token in a
+pre-existing usable form during committed-transfer communication, with no RNG
+or fuzzy comprehension. Compositional protolanguage, grammar, coevolution, and
 research-readiness milestones are **Planned, not implemented**. Contact applies
 only to authentic different-active-coalitions communication; assigned/unassigned
 communication intentionally remains base Language v1 behavior. Birth
 transmission applies only after successful child admission and creates bounded
 comprehension, not production or a copied vocabulary.
+
+## Lexical evolution was requested but stayed disabled
+
+Lexical evolution depends only on effective base language. Requesting it while
+`language_evolution_enabled` is false normalizes only the lexical gate off,
+preserves the submitted rate and depth, and records
+`lexical_evolution_requested_without_language` with
+`normalized_uncontracted` status. Direct simulator parsing rejects
+abbreviations. The generic experiment runner rejects the entire lexical option
+family by design because these controls remain engineering-only and
+non-V2-ready.
 
 ## Documentation appears inconsistent with source
 

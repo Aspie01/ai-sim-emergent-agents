@@ -10,13 +10,17 @@ flowchart LR
     SNAP[Frozen prior-observation membership]
     CLASS[Shared coalition communication context]
     COMM[Authentic communication]
+    SOURCE{Pre-existing usable production?}
+    OPPORTUNITY[At most one deterministic lexical opportunity]
+    EMIT[Exact source or one-token descendant emitted]
+    BASE[Ordinary invention or no signal]
     INTERP[Pre-learning interpretation]
     UPDATE[Individual language update]
     ACQUIRE[Stronger positive receiver acquisition]
     EXPOSURE[Bounded cross-boundary exposure]
     BORROW[Contact-qualified borrowing promotion]
     MIXED[Mixed individual vocabulary]
-    SUMMARY[On-demand dialect/contact/intergenerational summaries]
+    SUMMARY[On-demand dialect/contact/intergenerational/lexical summaries]
     NOCOAL[No language feedback to coalition lifecycle]
     NOTRANSFER[No language feedback to transfer success]
     BIRTH[Successfully committed birth]
@@ -35,7 +39,12 @@ flowchart LR
     SNAP --> CLASS
     TRANSFER --> COMM
     CLASS -->|same coalition: optional dialect rates| COMM
-    COMM --> INTERP
+    COMM --> SOURCE
+    SOURCE -->|yes| OPPORTUNITY
+    SOURCE -->|no| BASE
+    OPPORTUNITY --> EMIT
+    EMIT --> INTERP
+    BASE --> INTERP
     INTERP --> UPDATE
     CLASS -->|different active coalitions only| ACQUIRE
     INTERP --> ACQUIRE
@@ -63,4 +72,7 @@ do not enter the contact chain; they retain base Language v1 behavior.
 The birth chain begins only after `_spawn(child)` commits and creates
 comprehension, never birth-time production. Parents remain read-only, non-birth
 spawns do not enter the chain, and no genealogy or recurring teaching loop is
-present.
+present. The lexical opportunity follows only a pre-existing usable production
+form. It uses no RNG or coalition/dialect/contact derivation input, and any
+descendant is the one actual signal interpreted by the receiver. The already
+committed transfer is not rolled back by a later language failure.

@@ -8,6 +8,7 @@ from .language import (
     IntergenerationalLanguageRuntimeState,
     LanguageContactRuntimeState,
     LanguageRuntimeState,
+    LexicalEvolutionRuntimeState,
 )
 
 
@@ -53,6 +54,8 @@ class SimulationState:
         default_factory=LanguageContactRuntimeState)
     intergenerational_language: IntergenerationalLanguageRuntimeState = field(
         default_factory=IntergenerationalLanguageRuntimeState)
+    lexical_evolution: LexicalEvolutionRuntimeState = field(
+        default_factory=LexicalEvolutionRuntimeState)
 
     def stage_inhabitant_id(self, inhabitant, candidate: int) -> None:
         """Assign, but do not yet consume, the next authoritative run ID."""
@@ -109,3 +112,4 @@ class SimulationState:
         self.dialect = CoalitionDialectRuntimeState()
         self.language_contact = LanguageContactRuntimeState()
         self.intergenerational_language = IntergenerationalLanguageRuntimeState()
+        self.lexical_evolution = LexicalEvolutionRuntimeState()

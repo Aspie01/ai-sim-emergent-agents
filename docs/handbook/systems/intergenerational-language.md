@@ -25,9 +25,11 @@ successful committed birth
 
 This is acquisition, not genetic inheritance. No complete parent vocabulary is
 copied, no production association is created at birth, and no signal changes
-form during transmission. The milestone makes bounded vertical continuity and
-divergence observable without adding mutation, composition, grammar, or
-language-to-society feedback.
+form during transmission. A parental form may already carry bounded lexical
+provenance from Lexical Evolution v1, but birth transmission copies that form
+and record exactly and creates no mutation opportunity. The milestone makes
+bounded vertical continuity and divergence observable without adding
+birth-time mutation, composition, grammar, or language-to-society feedback.
 
 ## 2. Authoritative successful-birth hook
 
@@ -200,8 +202,7 @@ The child does **not** receive the parent's:
 - `BorrowingProvenance`;
 - `ContactExposure`;
 - historical source coalition ID;
-- original lender identity;
-- lexical ancestry.
+- original lender identity.
 
 Only the direct-parent facts
 `first_parent_form_was_borrowed`, `borrowed_parent_count`, and the cumulative
@@ -209,11 +210,18 @@ Only the direct-parent facts
 not coalition contact and does not increment any dialect or contact runtime
 field.
 
+If the selected parental production association already carries
+`LexicalEvolutionProvenance`, the child may receive that same bounded
+direct-edge record on the exact copied comprehension association. This does not
+copy `BorrowingProvenance`, create a new lexical edge, advance the lexical
+derivation index, or reconstruct an ancestry chain.
+
 Later authentic different-coalition communication may add `ContactExposure` to
 the same comprehension association. `ContactExposure` and
-`IntergenerationalProvenance` are independent bounded channels and may coexist.
-Later production promotion copies neither intergenerational provenance nor a
-borrowed parent's ancestry into production.
+`IntergenerationalProvenance` are independent bounded channels and may coexist
+with `LexicalEvolutionProvenance`. Later production promotion does not copy
+intergenerational provenance, but it may preserve the bounded lexical record;
+it never inherits the parent's `BorrowingProvenance`.
 
 ## 8. Canonical retention, forgetting, and later promotion
 
@@ -434,17 +442,21 @@ schedule, juvenile stage, or language identity.
 
 ## 15. Limitations and future milestones
 
-This milestone transmits existing signals unchanged. It does not implement
-copying errors, shortening, phonetic mutation, recombination, signal ancestry,
-or cognates. The next milestone is `feature/lexical-evolution-v1`: **Planned, not implemented**.
+This milestone still transmits existing signals unchanged and creates no
+lexical opportunity during birth. Lexical Evolution v1 is now implemented
+independently for authentic committed-transfer communication and supports only
+same-length one-token substitution with bounded direct-edge provenance. Birth
+transmission does not add copying errors, shortening, recombination, cognate
+inference, or ancestry reconstruction.
 
 Also **Planned, not implemented**:
 
-- `feature/lexical-evolution-v1` — **Planned, not implemented**;
 - `feature/compositional-protolanguage-v1` — **Planned, not implemented**;
 - `feature/grammar-evolution-v1` — **Planned, not implemented**;
 - `feature/language-coevolution-v1` — **Planned, not implemented**;
 - `feature/language-research-readiness-v1` — **Planned, not implemented**.
+
+The next milestone is `feature/compositional-protolanguage-v1`: **Planned, not implemented**.
 
 No research plan, matrix, tier, evidence run, hypothesis, estimand, or
 scientific conclusion is introduced by Intergenerational Language v1.
@@ -475,6 +487,7 @@ acceptance-verified engineering feature; not research-ready.
 **Primary tests:**
 
 - `tests/test_intergenerational_language.py`;
+- `tests/test_lexical_evolution.py`;
 - `tests/test_language_evolution.py`;
 - `tests/test_language_contact.py`;
 - `tests/test_language_interaction_hooks.py`;

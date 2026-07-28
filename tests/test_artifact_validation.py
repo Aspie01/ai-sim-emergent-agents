@@ -40,6 +40,7 @@ from thalren_vale.config import (
     DIALECT_NOTICE_WITHOUT_COALITIONS,
     DIALECT_NOTICE_WITHOUT_LANGUAGE,
     INTERGENERATIONAL_LANGUAGE_NOTICE_WITHOUT_LANGUAGE,
+    LEXICAL_EVOLUTION_NOTICE_WITHOUT_LANGUAGE,
     LANGUAGE_CONTACT_NOTICE_WITHOUT_COALITIONS,
     LANGUAGE_CONTACT_NOTICE_WITHOUT_LANGUAGE,
     SOCIAL_NOTICE_BIAS_WITHOUT_MEMORY,
@@ -288,6 +289,11 @@ def make_artifacts(
         "intergenerational_learning_strength": 0.20,
         "intergenerational_language_controls_status": "disabled",
         "intergenerational_language_control_notices": [],
+        "lexical_evolution_enabled": False,
+        "lexical_mutation_rate": 0.05,
+        "maximum_lexical_lineage_depth": 8,
+        "lexical_evolution_controls_status": "disabled",
+        "lexical_evolution_control_notices": [],
     })
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return run_dir, manifest_path
@@ -1670,6 +1676,168 @@ def test_exact_normalized_intergenerational_notice_is_valid_but_not_ready(
         "intergenerational_language_controls_not_v2_ready"
         in readiness_codes(report)
     )
+
+
+LEXICAL_EVOLUTION_CONFIGURATION_FIELDS = {
+    "lexical_evolution_enabled",
+    "lexical_mutation_rate",
+    "maximum_lexical_lineage_depth",
+    "lexical_evolution_controls_status",
+    "lexical_evolution_control_notices",
+}
+
+
+def inspect_lexical_evolution_configuration(tmp_path, updates):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    manifest["configuration"].update(updates)
+    write_manifest(manifest_path, manifest)
+    return inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "language_evolution_enabled": True,
+            "language_controls_status": "engineering_only_uncontracted",
+            "lexical_evolution_enabled": True,
+            "lexical_evolution_controls_status": (
+                "engineering_only_uncontracted"),
+        },
+        {
+            "lexical_mutation_rate": 0.25,
+            "lexical_evolution_controls_status": (
+                "engineering_only_uncontracted"),
+        },
+        {
+            "maximum_lexical_lineage_depth": 9,
+            "lexical_evolution_controls_status": (
+                "engineering_only_uncontracted"),
+        },
+    ],
+)
+def test_enabled_or_nondefault_lexical_controls_block_v2_ready(
+    tmp_path,
+    updates,
+):
+    report = inspect_lexical_evolution_configuration(tmp_path, updates)
+
+    assert report.valid and not report.v2_ready
+    assert "lexical_evolution_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    sorted(LEXICAL_EVOLUTION_CONFIGURATION_FIELDS),
+)
+def test_missing_historical_lexical_field_is_valid_but_never_ready(
+    tmp_path,
+    missing,
+):
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    del manifest["configuration"][missing]
+    write_manifest(manifest_path, manifest)
+
+    report = inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+    assert report.valid and not report.v2_ready
+    assert "lexical_evolution_controls_not_v2_ready" in readiness_codes(report)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("lexical_evolution_enabled", 1),
+        ("lexical_mutation_rate", True),
+        ("lexical_mutation_rate", 1),
+        ("lexical_mutation_rate", -0.01),
+        ("lexical_mutation_rate", 1.01),
+        ("lexical_mutation_rate", float("nan")),
+        ("maximum_lexical_lineage_depth", True),
+        ("maximum_lexical_lineage_depth", 0),
+        ("maximum_lexical_lineage_depth", 33),
+        ("lexical_evolution_controls_status", "unknown"),
+        ("lexical_evolution_control_notices", "normalized"),
+        ("lexical_evolution_control_notices", ["invented_notice"]),
+    ],
+)
+def test_malformed_lexical_field_invalidates_artifact(
+    tmp_path,
+    field,
+    value,
+):
+    report = inspect_lexical_evolution_configuration(
+        tmp_path, {field: value})
+
+    assert not report.valid and not report.v2_ready
+    assert "invalid_lexical_evolution_configuration" in issue_codes(report)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"lexical_evolution_enabled": True},
+        {
+            "lexical_evolution_controls_status": "disabled",
+            "lexical_mutation_rate": 0.25,
+        },
+        {
+            "lexical_evolution_controls_status": "normalized_uncontracted",
+            "lexical_evolution_enabled": False,
+            "lexical_evolution_control_notices": [],
+        },
+        {
+            "language_evolution_enabled": True,
+            "language_controls_status": "engineering_only_uncontracted",
+            "lexical_evolution_enabled": False,
+            "lexical_evolution_controls_status": "normalized_uncontracted",
+            "lexical_evolution_control_notices": [
+                LEXICAL_EVOLUTION_NOTICE_WITHOUT_LANGUAGE],
+        },
+        {
+            "lexical_evolution_controls_status": (
+                "engineering_only_uncontracted"),
+            "lexical_evolution_control_notices": [
+                LEXICAL_EVOLUTION_NOTICE_WITHOUT_LANGUAGE],
+        },
+    ],
+)
+def test_lexical_contradictions_invalidate_artifact(tmp_path, updates):
+    report = inspect_lexical_evolution_configuration(tmp_path, updates)
+
+    assert not report.valid and not report.v2_ready
+    assert "invalid_lexical_evolution_configuration" in issue_codes(report)
+
+
+def test_exact_normalized_lexical_notice_is_valid_but_not_ready(tmp_path):
+    report = inspect_lexical_evolution_configuration(tmp_path, {
+        "language_evolution_enabled": False,
+        "lexical_evolution_enabled": False,
+        "lexical_evolution_controls_status": "normalized_uncontracted",
+        "lexical_evolution_control_notices": [
+            LEXICAL_EVOLUTION_NOTICE_WITHOUT_LANGUAGE],
+    })
+
+    assert report.valid and not report.v2_ready
+    assert "lexical_evolution_controls_not_v2_ready" in readiness_codes(report)
 
 
 @pytest.mark.parametrize(

@@ -20,6 +20,10 @@ The independent
 [Intergenerational Language v1](intergenerational-language.md) extension can
 seed bounded child comprehension from the exact parents after a successful
 birth admission. It also preserves the one-way isolation boundary.
+The independent [Lexical Evolution v1](lexical-evolution.md) extension can
+derive one deterministic substitution from a pre-existing usable production
+form and emit the descendant during authentic post-transfer communication. It
+does not change transfer success or any social/material state.
 
 ## 2. Why it exists
 
@@ -45,6 +49,8 @@ additional RNG stream.
   wrong meaning.
 - **Promotion:** a sufficiently successful comprehension association becomes a
   production association.
+- **Lexical descendant:** a signal produced by the bounded one-token
+  substitution of an already usable source form, not ordinary invention.
 
 ## 4. Current status
 
@@ -67,14 +73,16 @@ successful and failed uses, observation count, last-used tick, origin
 (`invented` or `learned`), optional source inhabitant ID, and—when Language
 Contact v1 is effective—optional bounded comprehension exposure or production
 borrowing provenance—and, when Intergenerational Language v1 is effective,
-optional bounded direct-parent provenance on comprehension.
+optional bounded direct-parent provenance on comprehension—and, when Lexical
+Evolution v1 is effective, optional bounded direct-edge lexical provenance on
+either channel.
 
 `SimulationState.language` owns `LanguageRuntimeState`: the seed-domain identity,
 attempt/result counters, invention/learning/loss counters, last communication
-and forgetting ticks, and the dialect, contact, and intergenerational gates.
-Dedicated dialect, contact, and intergenerational runtimes carry their own
-bounded counters. No lexicon is shared by a parent, family, generation,
-faction, or coalition.
+and forgetting ticks, and the dialect, contact, intergenerational, and lexical
+gates. Dedicated dialect, contact, intergenerational, and lexical runtimes carry
+their own bounded counters. No lexicon is shared by a parent, family,
+generation, faction, or coalition.
 
 ## 6. Inputs
 
@@ -99,10 +107,14 @@ transfers, and the legacy layer-one swap do not create communication.
 2. Copy sender state, receiver state, and language runtime into a proposal. If
    dialect influence or contact is active, classify one frozen coalition
    context; validate and copy the enabled dialect/contact runtimes before
-   learning.
+   learning. When lexical evolution is active, validate and copy its dedicated
+   runtime without using coalition classification in mutation derivation.
 3. Select the sender's strongest usable production association. If none exists
    and invention is enabled, derive one signal from SHA-256 over the run seed
    domain, inventor stable ID, meaning, and that inventor's next index.
+   A pre-existing selected form instead gets at most one lexical opportunity;
+   if substitution succeeds, its descendant becomes the actual emitted signal.
+   Ordinary invention never creates an opportunity in the same communication.
 4. Select the receiver's strongest usable comprehension for the produced signal.
    Finalize `NO_SIGNAL`, `UNKNOWN_SIGNAL`, `SUCCESS`, or `MISUNDERSTANDING` from
    this pre-learning state.
@@ -121,8 +133,9 @@ transfers, and the legacy layer-one swap do not create communication.
    - competing synonyms and meanings are weakened deterministically.
 6. Apply canonical retention and pruning, count every lost association, and
    validate all proposed owners and counters.
-7. Commit sender, receiver, runtime, and optional dialect/contact runtimes
-   together. Any exception restores the original language-owned owners.
+7. Commit sender, receiver, runtime, and optional
+   dialect/contact/lexical runtimes together. Any exception restores the
+   original language-owned owners, including the lexical derivation index.
 
 An unknown signal remains `UNKNOWN_SIGNAL` in the event that teaches it. A
 misunderstanding remains `MISUNDERSTANDING` in the event that corrects it.
@@ -134,12 +147,19 @@ two parents as read-only sources, creates or reinforces comprehension only, and
 does not increment ordinary communication, invention, or generic learning
 counters.
 
+Intergenerational exact copying may preserve existing lexical provenance, but
+it creates no lexical opportunity and does not advance lexical runtime.
+
 ## 8. Outputs
 
 `communicate()` returns a `CommunicationOutcome` containing tick, communicator
 IDs, transfer context, intended meaning, produced signal, pre-learning
 interpretation, result, and optional coalition classification. It updates only
 language-owned state and counters.
+
+When lexical mutation succeeds, `produced_signal` is the descendant, and every
+receiver, dialect, and contact consequence uses that same exact signal. The
+source is not also emitted.
 
 Enabled lexicons, exact language controls, and runtime counters are included in
 the final behavioral hash. Disabled language requires every inhabitant and
@@ -152,6 +172,8 @@ simulation. Communication occurs only after successful Layer-4 transfers.
 Optional intergenerational exposure occurs earlier in the tick, immediately
 after a birth admission commits and before religion inheritance or birth-event
 emission.
+Lexical evolution occurs only within post-transfer communication and never
+during birth exposure or maintenance.
 `maintain_language_state()` runs once in the end-of-tick emergent pass, after
 relationship and coalition maintenance and before authoritative observation.
 See [Tick lifecycle](../architecture/tick-lifecycle.md).
@@ -166,6 +188,7 @@ See [Tick lifecycle](../architecture/tick-lifecycle.md).
 | Informal coalitions | Coalition → optional dialect/contact context | Frozen stable-ID membership | Same economy tick | Can adjust language learning or qualify contact only |
 | Language contact | Different-coalition context → language | Positive receiver learning and bounded exposure/provenance | After interpretation | Changes individual language state only |
 | Birth/population | Successful birth → language | Exact child/parents and usable parental production | After `_spawn(child)` | Bounded child comprehension only |
+| Lexical evolution | Committed transfer/source form → language | Stable event inputs and one substituted signal | Inside communication | Actual descendant emission and individual competition only |
 | Death | Population → language maintenance | Newly dead owners | End of tick | Clears lexical associations |
 | Hashing | Language → hash | Canonical lexicons/runtime | Finalization | Fingerprints enabled state |
 
@@ -203,6 +226,12 @@ signals, dominant signal, frequency records, pairwise agreement, and population
 agreement. These are on-demand engineering summaries, not standard metrics-CSV
 columns or approved research estimands.
 
+`lexical_evolution_summary()` separately aggregates retained/usable production
+and comprehension descendants, carriers, provenance channels, borrowed-source
+descendants, direct-edge groupings, depths, selected shares, survival rates,
+and the dedicated runtime in one `O(P x L)` population pass. See
+[Lexical evolution](lexical-evolution.md).
+
 ## 14. Determinism and RNG
 
 `language.py` imports no RNG. Invention uses a canonical SHA-256 record under
@@ -211,7 +240,9 @@ simulation PRNG. Per-inhabitant indices prevent one agent's invention from
 perturbing another's signal. Confidence values are clamped and rounded to six
 decimals, and selection/pruning use enum and signal ordering. Language hooks do
 not change the core PRNG position. Birth transmission adds no RNG: parent order
-and parental-form salience are canonical. See
+and parental-form salience are canonical. Lexical mutation uses a separate
+SHA-256 domain and monotonic opportunity index, with no RNG and no
+coalition/dialect/contact derivation input. See
 [Determinism and RNG](../architecture/determinism-and-rng.md).
 
 ## 15. Failure and edge cases
@@ -230,8 +261,8 @@ and parental-form salience are canonical. See
   associations by half the base reinforcement rate, prunes canonically, and
   clears dead owners' associations while retaining their invention indices.
 - Reset validates all living/dead language states and
-  language/dialect/contact/intergenerational runtimes plus historical parent
-  IDs before clearing authoritative state.
+  language/dialect/contact/intergenerational/lexical runtimes plus historical
+  parent and lexical source IDs before clearing authoritative state.
 
 ## 16. Tests and validation
 
@@ -251,6 +282,11 @@ and competing forms, provenance, rollback, saturation, summary, hashing,
 reset, and causal isolation. See
 [Test reference](../reference/test-reference.md).
 
+`tests/test_lexical_evolution.py` covers authentic opportunities, pinned
+derivation vectors, actual descendant emission, direct-edge provenance,
+copying/channel coexistence, collisions, depth, saturation, summary
+aggregation, rollback, hashing, reset, and causal isolation.
+
 ## 17. Worked example
 
 Sender 7 transfers food to receiver 12 and has no food signal. With invention
@@ -268,10 +304,13 @@ the teaching occurrence cannot.
 - No background conversation or vocabulary synchronization exists.
 - Mixed borrowed and nonborrowed individual vocabularies can now arise under
   Language Contact v1, and bounded parental comprehension can arise under
-  Intergenerational Language v1. There is still no complete vocabulary
+  Intergenerational Language v1. Bounded same-length one-token substitution now
+  creates lexical descendants under Lexical Evolution v1. There is still no
+  complete vocabulary
   inheritance, migration identity, permanent bilingual label, grammar, syntax,
-  mutation, shortening, recombination, composition, teaching institution,
-  prestige, or faction language.
+  deletion, insertion, shortening, lengthening, recombination, fuzzy
+  comprehension, composition, teaching institution, prestige, or faction
+  language.
 - Comprehension has no effect on material transfer outcomes.
 - Standard artifacts expose hashes and controls but no dedicated language event
   stream or research-ready metric contract.
@@ -284,16 +323,16 @@ Completed engineering implementations:
 - `feature/coalition-dialects-v1`
 - `feature/language-contact-v1`
 - `feature/intergenerational-language-v1`
+- `feature/lexical-evolution-v1`
 
 Planned, not implemented:
 
-- `feature/lexical-evolution-v1` — **Planned, not implemented**
 - `feature/compositional-protolanguage-v1` — **Planned, not implemented**
 - `feature/grammar-evolution-v1` — **Planned, not implemented**
 - `feature/language-coevolution-v1` — **Planned, not implemented**
 - `feature/language-research-readiness-v1` — **Planned, not implemented**
 
-The next milestone is `feature/lexical-evolution-v1`: **Planned, not implemented**.
+The next milestone is `feature/compositional-protolanguage-v1`: **Planned, not implemented**.
 The research-readiness milestone will define a later evidence contract; it does
 not make the current engineering implementation research-ready.
 
@@ -318,6 +357,7 @@ research-ready.
 - `tests/test_language_interaction_hooks.py`
 - `tests/test_language_contact.py`
 - `tests/test_intergenerational_language.py`
+- `tests/test_lexical_evolution.py`
 - `tests/test_language_reproducibility.py`
 - `tests/test_simulation_state.py`
 - `tests/test_reproducibility.py`

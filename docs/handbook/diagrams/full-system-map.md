@@ -15,6 +15,7 @@ flowchart TB
     DIALECT[Coalition dialect context]
     CONTACT[Language contact context]
     INTERGEN[Intergenerational language]
+    LEXICAL[Lexical evolution]
     COMBAT[Formal combat]
     TECH[Technology]
     DIPLO[Diplomacy]
@@ -48,6 +49,8 @@ flowchart TB
     CONTACT -->|positive acquisition and provenance| LANG
     AGENT -->|committed birth + exact parents| INTERGEN
     INTERGEN -->|bounded child comprehension only| LANG
+    ECON -->|committed transfer and selected usable form| LEXICAL
+    LEXICAL -->|actual emitted descendant| LANG
     FACTION --> COMBAT
     ECON --> COMBAT
     COMBAT --> TECH
@@ -96,6 +99,9 @@ flowchart TB
 - The `AGENT -> INTERGEN -> LANG` path begins only after successful child
   admission. It has no reverse edge into reproduction, population, health,
   resources, factions, or relationships.
+- The `ECON -> LEXICAL -> LANG` path begins only after transfer commit and a
+  pre-existing usable production selection. It has no reverse edge into
+  transfer success, relationships, coalitions, factions, or population state.
 - Plugins are causal even though their advertised bridge snapshots are immutable.
 
 See [architecture overview](../architecture/architecture-overview.md) and [system dependency map](../architecture/system-dependency-map.md).

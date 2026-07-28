@@ -23,10 +23,12 @@ from .config import (
     CoalitionDialectConfig,
     IntergenerationalLanguageConfig,
     LanguageContactConfig,
+    LexicalEvolutionConfig,
 )
 
 
 LANGUAGE_DOMAIN = "thalren-vale:endogenous-language-v1"
+LEXICAL_EVOLUTION_DOMAIN = "thalren-vale:lexical-evolution-v1"
 PHONEME_COUNT = 8
 MIN_SIGNAL_LENGTH = 2
 MAX_SIGNAL_LENGTH = 4
@@ -35,6 +37,7 @@ MAX_COMPREHENSION_SIGNALS_PER_MEANING = 8
 MAX_COMPREHENSION_MEANINGS_PER_SIGNAL = 2
 MAX_LANGUAGE_ASSOCIATIONS = 40
 MAX_LANGUAGE_COUNTER = (1 << 63) - 1
+MAX_LEXICAL_OBSERVATION_OPPORTUNITIES = MAX_LANGUAGE_COUNTER // 2
 MIN_USABLE_CONFIDENCE = 0.10
 INVENTION_CONFIDENCE = 0.50
 PROMOTION_CONFIDENCE = 0.50
@@ -100,6 +103,12 @@ class AssociationOrigin(str, Enum):
 
     INVENTED = "invented"
     LEARNED = "learned"
+
+
+class LexicalMutationOperation(str, Enum):
+    """Closed lexical mutation operation set for lexical evolution v1."""
+
+    SUBSTITUTION = "substitution"
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +182,21 @@ class IntergenerationalProvenance:
 
 
 @dataclass(frozen=True, slots=True)
+class LexicalEvolutionProvenance:
+    """One bounded direct mutation edge for a signal form."""
+
+    first_mutation_tick: int
+    direct_source_signal: Signal
+    direct_source_owner_id: int
+    direct_source_origin: AssociationOrigin
+    mutation_operation: LexicalMutationOperation
+    mutation_position: int
+    mutation_index: int
+    lineage_depth: int
+    source_form_was_borrowed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class LexicalAssociation:
     """One immutable production or comprehension association."""
 
@@ -188,6 +212,7 @@ class LexicalAssociation:
     contact_exposure: ContactExposure | None = None
     borrowing_provenance: BorrowingProvenance | None = None
     intergenerational_provenance: IntergenerationalProvenance | None = None
+    lexical_evolution_provenance: LexicalEvolutionProvenance | None = None
 
 
 @dataclass(slots=True)
@@ -222,6 +247,7 @@ class LanguageRuntimeState:
     coalition_dialect_influence_enabled: bool = False
     language_contact_enabled: bool = False
     intergenerational_language_enabled: bool = False
+    lexical_evolution_enabled: bool = False
 
 
 @dataclass(slots=True)
@@ -272,6 +298,28 @@ class IntergenerationalLanguageRuntimeState:
     borrowed_parent_form_transmission_count: int = 0
     last_transmission_tick: int | None = None
     last_transmission_child_id: int | None = None
+
+
+@dataclass(slots=True)
+class LexicalEvolutionRuntimeState:
+    """Frozen controls, deterministic index, and synchronized observability."""
+
+    seed_domain: str | None = None
+    seed_domain_fingerprint: str | None = None
+    lexical_mutation_rate: float | None = None
+    maximum_lexical_lineage_depth: int | None = None
+    mutation_derivation_index: int = 0
+    eligible_mutation_opportunity_count: int = 0
+    mutation_trigger_count: int = 0
+    mutation_not_triggered_count: int = 0
+    successful_mutation_count: int = 0
+    lineage_depth_limit_count: int = 0
+    substitution_count: int = 0
+    descendant_production_creation_count: int = 0
+    descendant_production_reinforcement_count: int = 0
+    borrowed_source_mutation_count: int = 0
+    maximum_observed_lineage_depth: int = 0
+    last_mutation_tick: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -671,6 +719,323 @@ def initialize_intergenerational_language_runtime(
     validate_intergenerational_language_runtime(runtime, config=validated)
 
 
+def validate_lexical_evolution_config(
+    config: object,
+    *,
+    require_enabled: bool = False,
+) -> LexicalEvolutionConfig:
+    """Validate exact effective controls for lexical mutation."""
+    if type(require_enabled) is not bool:
+        _raise(
+            "invalid_lexical_evolution_config",
+            "require-enabled policy must be boolean",
+        )
+    if type(config) is not LexicalEvolutionConfig:
+        _raise(
+            "invalid_lexical_evolution_config",
+            "lexical config has an invalid exact type",
+        )
+    if type(config.lexical_evolution_enabled) is not bool:
+        _raise(
+            "invalid_lexical_evolution_config",
+            "lexical evolution setting must be boolean",
+        )
+    if (
+        type(config.lexical_mutation_rate) is not float
+        or not math.isfinite(config.lexical_mutation_rate)
+        or not 0.0 <= config.lexical_mutation_rate <= 1.0
+    ):
+        _raise(
+            "invalid_lexical_evolution_config",
+            "lexical mutation rate must be a finite float from 0.0 to 1.0",
+        )
+    if (
+        type(config.maximum_lexical_lineage_depth) is not int
+        or not 1 <= config.maximum_lexical_lineage_depth <= 32
+    ):
+        _raise(
+            "invalid_lexical_evolution_config",
+            "maximum lexical lineage depth must be an integer from 1 to 32",
+        )
+    if require_enabled and not config.lexical_evolution_enabled:
+        _raise(
+            "lexical_evolution_processing_disabled",
+            "operation requires effective lexical evolution",
+        )
+    return config
+
+
+_LEXICAL_COUNTER_FIELDS = (
+    "eligible_mutation_opportunity_count",
+    "mutation_trigger_count",
+    "mutation_not_triggered_count",
+    "successful_mutation_count",
+    "lineage_depth_limit_count",
+    "substitution_count",
+    "descendant_production_creation_count",
+    "descendant_production_reinforcement_count",
+    "borrowed_source_mutation_count",
+)
+
+
+def lexical_evolution_runtime_is_pristine(runtime: object) -> bool:
+    """Return whether lexical runtime is exactly disabled and untouched."""
+    return type(runtime) is LexicalEvolutionRuntimeState and (
+        runtime.seed_domain is None
+        and runtime.seed_domain_fingerprint is None
+        and runtime.lexical_mutation_rate is None
+        and runtime.maximum_lexical_lineage_depth is None
+        and type(runtime.mutation_derivation_index) is int
+        and runtime.mutation_derivation_index == 0
+        and all(
+            type(getattr(runtime, name)) is int
+            and getattr(runtime, name) == 0
+            for name in _LEXICAL_COUNTER_FIELDS
+        )
+        and type(runtime.maximum_observed_lineage_depth) is int
+        and runtime.maximum_observed_lineage_depth == 0
+        and runtime.last_mutation_tick is None
+    )
+
+
+def validate_lexical_evolution_runtime(
+    runtime: object,
+    *,
+    config: LexicalEvolutionConfig | None = None,
+    language_runtime: LanguageRuntimeState | None = None,
+) -> LexicalEvolutionRuntimeState:
+    """Fail closed unless lexical controls, counters, and index are canonical."""
+    if type(runtime) is not LexicalEvolutionRuntimeState:
+        _raise(
+            "invalid_lexical_evolution_runtime",
+            "lexical runtime type is invalid",
+        )
+    for name in _LEXICAL_COUNTER_FIELDS:
+        if not _exact_nonnegative_int(getattr(runtime, name)):
+            _raise("invalid_lexical_evolution_runtime", f"{name} is invalid")
+    if not _exact_nonnegative_int(runtime.mutation_derivation_index):
+        _raise(
+            "invalid_lexical_evolution_runtime",
+            "mutation derivation index is invalid",
+        )
+    if not _exact_nonnegative_int(runtime.maximum_observed_lineage_depth):
+        _raise(
+            "invalid_lexical_evolution_runtime",
+            "maximum observed lineage depth is invalid",
+        )
+    controls = (
+        runtime.seed_domain,
+        runtime.seed_domain_fingerprint,
+        runtime.lexical_mutation_rate,
+        runtime.maximum_lexical_lineage_depth,
+    )
+    if all(value is None for value in controls):
+        if not lexical_evolution_runtime_is_pristine(runtime):
+            _raise(
+                "nonpristine_lexical_evolution_runtime",
+                "uninitialized lexical runtime retains state",
+            )
+    elif any(value is None for value in controls):
+        _raise(
+            "invalid_lexical_evolution_runtime",
+            "lexical runtime controls are only partially initialized",
+        )
+    else:
+        assert type(runtime.seed_domain) is str
+        prefix = f"{LEXICAL_EVOLUTION_DOMAIN}|seed="
+        if not runtime.seed_domain.startswith(prefix):
+            _raise(
+                "invalid_lexical_evolution_runtime",
+                "lexical seed domain is not initialized canonically",
+            )
+        try:
+            runtime.seed_domain.encode("ascii")
+        except UnicodeEncodeError:
+            _raise(
+                "invalid_lexical_evolution_runtime",
+                "lexical seed domain must be ASCII",
+            )
+        seed_text = runtime.seed_domain[len(prefix):]
+        try:
+            parsed_seed = int(seed_text)
+        except (TypeError, ValueError):
+            _raise(
+                "invalid_lexical_evolution_runtime",
+                "lexical seed domain contains an invalid seed",
+            )
+        if str(parsed_seed) != seed_text:
+            _raise(
+                "invalid_lexical_evolution_runtime",
+                "lexical seed domain seed is not canonical",
+            )
+        expected = hashlib.sha256(
+            runtime.seed_domain.encode("ascii")).hexdigest()
+        if runtime.seed_domain_fingerprint != expected:
+            _raise(
+                "invalid_lexical_evolution_runtime",
+                "lexical seed-domain fingerprint mismatch",
+            )
+        runtime_config = LexicalEvolutionConfig(
+            lexical_evolution_enabled=True,
+            lexical_mutation_rate=runtime.lexical_mutation_rate,
+            maximum_lexical_lineage_depth=(
+                runtime.maximum_lexical_lineage_depth),
+        )
+        validate_lexical_evolution_config(runtime_config)
+        if config is not None:
+            validated_config = validate_lexical_evolution_config(config)
+            if not validated_config.lexical_evolution_enabled:
+                _raise(
+                    "invalid_lexical_evolution_config",
+                    "initialized lexical runtime requires enabled controls",
+                )
+            if runtime_config != validated_config:
+                _raise(
+                    "lexical_evolution_runtime_config_mismatch",
+                    "lexical runtime controls disagree with configuration",
+                )
+
+        opportunities = runtime.eligible_mutation_opportunity_count
+        triggered = runtime.mutation_trigger_count
+        not_triggered = runtime.mutation_not_triggered_count
+        mutations = runtime.successful_mutation_count
+        depth_limited = runtime.lineage_depth_limit_count
+        creations = runtime.descendant_production_creation_count
+        reinforcements = (
+            runtime.descendant_production_reinforcement_count)
+        if opportunities > MAX_LEXICAL_OBSERVATION_OPPORTUNITIES:
+            _raise(
+                "invalid_lexical_evolution_runtime",
+                "lexical opportunities exceed the synchronized cap",
+            )
+        if opportunities != triggered + not_triggered:
+            _raise(
+                "lexical_opportunity_partition_mismatch",
+                "trigger outcomes do not partition lexical opportunities",
+            )
+        if triggered != mutations + depth_limited:
+            _raise(
+                "lexical_trigger_partition_mismatch",
+                "mutation outcomes do not partition lexical triggers",
+            )
+        if mutations != runtime.substitution_count:
+            _raise(
+                "lexical_operation_partition_mismatch",
+                "substitutions do not partition successful mutations",
+            )
+        if mutations != creations + reinforcements:
+            _raise(
+                "lexical_descendant_partition_mismatch",
+                "descendant updates do not partition successful mutations",
+            )
+        if runtime.borrowed_source_mutation_count > mutations:
+            _raise(
+                "lexical_borrowed_source_subset_mismatch",
+                "borrowed source mutations exceed successful mutations",
+            )
+        assert type(runtime.maximum_lexical_lineage_depth) is int
+        if (
+            runtime.maximum_observed_lineage_depth
+            > runtime.maximum_lexical_lineage_depth
+        ):
+            _raise(
+                "lexical_lineage_depth_mismatch",
+                "observed lineage depth exceeds the configured cap",
+            )
+        saturated = (
+            opportunities == MAX_LEXICAL_OBSERVATION_OPPORTUNITIES)
+        if (
+            not saturated
+            and runtime.mutation_derivation_index != opportunities
+        ):
+            _raise(
+                "lexical_derivation_index_mismatch",
+                "unsaturated derivation index must equal opportunities",
+            )
+        if (
+            saturated
+            and runtime.mutation_derivation_index < opportunities
+        ):
+            _raise(
+                "lexical_derivation_index_mismatch",
+                "saturated derivation index trails opportunities",
+            )
+        if runtime.last_mutation_tick is not None and (
+            type(runtime.last_mutation_tick) is not int
+            or runtime.last_mutation_tick < 0
+        ):
+            _raise(
+                "invalid_lexical_evolution_runtime",
+                "last mutation tick is invalid",
+            )
+        if mutations > 0 and (
+            runtime.last_mutation_tick is None
+            or runtime.maximum_observed_lineage_depth == 0
+        ):
+            _raise(
+                "invalid_lexical_evolution_runtime",
+                "mutation history lacks current markers",
+            )
+        if not saturated and mutations == 0 and (
+            runtime.last_mutation_tick is not None
+            or runtime.maximum_observed_lineage_depth != 0
+        ):
+            _raise(
+                "invalid_lexical_evolution_runtime",
+                "empty mutation history retains current markers",
+            )
+        if saturated and (
+            (runtime.last_mutation_tick is None)
+            is not (runtime.maximum_observed_lineage_depth == 0)
+        ):
+            _raise(
+                "invalid_lexical_evolution_runtime",
+                "saturated mutation markers must coexist",
+            )
+    if language_runtime is not None:
+        validated_language = validate_language_runtime(
+            language_runtime, initialized=True)
+        initialized = runtime.seed_domain is not None
+        if validated_language.lexical_evolution_enabled is not initialized:
+            _raise(
+                "lexical_evolution_runtime_gate_mismatch",
+                "language gate disagrees with lexical runtime",
+            )
+        if (
+            runtime.last_mutation_tick is not None
+            and (
+                validated_language.last_communication_tick is None
+                or runtime.last_mutation_tick
+                > validated_language.last_communication_tick
+            )
+        ):
+            _raise(
+                "lexical_evolution_tick_mismatch",
+                "last mutation exceeds communication history",
+            )
+    return runtime
+
+
+def initialize_lexical_evolution_runtime(
+    runtime: LexicalEvolutionRuntimeState,
+    config: LexicalEvolutionConfig,
+    run_seed: int,
+) -> None:
+    """Freeze lexical controls and initialize deterministic seed identity."""
+    validate_lexical_evolution_runtime(runtime)
+    validated = validate_lexical_evolution_config(
+        config, require_enabled=True)
+    if type(run_seed) is not int:
+        _raise("invalid_lexical_evolution_seed", "run seed must be exact")
+    runtime.seed_domain = f"{LEXICAL_EVOLUTION_DOMAIN}|seed={run_seed}"
+    runtime.seed_domain_fingerprint = hashlib.sha256(
+        runtime.seed_domain.encode("ascii")).hexdigest()
+    runtime.lexical_mutation_rate = validated.lexical_mutation_rate
+    runtime.maximum_lexical_lineage_depth = (
+        validated.maximum_lexical_lineage_depth)
+    validate_lexical_evolution_runtime(runtime, config=validated)
+
+
 _CONTACT_RESULT_COUNTER_FIELDS = (
     "cross_coalition_success_count",
     "cross_coalition_misunderstanding_count",
@@ -1001,6 +1366,7 @@ def _validate_association(
     maximum_signal_length: int,
     contact_config: LanguageContactConfig | None,
     intergenerational_enabled: bool,
+    lexical_config: LexicalEvolutionConfig | None,
     owner_id: int | None,
 ) -> LexicalAssociation:
     if type(association) is not LexicalAssociation:
@@ -1064,6 +1430,104 @@ def _validate_association(
             "hidden_disabled_intergenerational_language_metadata",
             "disabled intergenerational processing cannot retain metadata",
         )
+    lexical_enabled = (
+        lexical_config is not None
+        and lexical_config.lexical_evolution_enabled
+    )
+    lexical = association.lexical_evolution_provenance
+    if not lexical_enabled and lexical is not None:
+        _raise(
+            "hidden_disabled_lexical_evolution_metadata",
+            "disabled lexical processing cannot retain association metadata",
+        )
+    if lexical is not None:
+        if type(lexical) is not LexicalEvolutionProvenance:
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "lexical provenance type is invalid",
+            )
+        for name in (
+            "first_mutation_tick",
+            "direct_source_owner_id",
+            "mutation_position",
+            "mutation_index",
+            "lineage_depth",
+        ):
+            if not _exact_nonnegative_int(getattr(lexical, name)):
+                _raise(
+                    "invalid_lexical_evolution_metadata",
+                    f"lexical provenance {name} is invalid",
+                )
+        if type(lexical.direct_source_signal) is not Signal:
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "direct source signal is invalid",
+            )
+        if type(lexical.direct_source_origin) is not AssociationOrigin:
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "direct source origin is invalid",
+            )
+        if type(lexical.mutation_operation) is not LexicalMutationOperation:
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "mutation operation is invalid",
+            )
+        if type(lexical.source_form_was_borrowed) is not bool:
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "borrowed-source status must be boolean",
+            )
+        if lexical.mutation_index < 1:
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "mutation index must be positive",
+            )
+        assert lexical_config is not None
+        if not 1 <= lexical.lineage_depth <= (
+            lexical_config.maximum_lexical_lineage_depth
+        ):
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "lineage depth exceeds effective controls",
+            )
+        if lexical.first_mutation_tick > association.last_used_tick:
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "first mutation exceeds association history",
+            )
+        if (
+            lexical.source_form_was_borrowed
+            and lexical.direct_source_origin is not AssociationOrigin.LEARNED
+        ):
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "borrowed mutation sources must be learned",
+            )
+        source_tokens = lexical.direct_source_signal.phoneme_ids
+        descendant_tokens = association.signal.phoneme_ids
+        if len(source_tokens) != len(descendant_tokens):
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "source and descendant lengths disagree",
+            )
+        if not 0 <= lexical.mutation_position < len(source_tokens):
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "mutation position is outside the signal",
+            )
+        differing = tuple(
+            index
+            for index, (source_token, descendant_token) in enumerate(
+                zip(source_tokens, descendant_tokens)
+            )
+            if source_token != descendant_token
+        )
+        if differing != (lexical.mutation_position,):
+            _raise(
+                "invalid_lexical_evolution_metadata",
+                "lexical provenance must describe exactly one substitution",
+            )
     if store == "production":
         if provenance is not None:
             _raise(
@@ -1273,12 +1737,15 @@ def validate_agent_language_state(
     config: LanguageConfig,
     contact_config: LanguageContactConfig | None = None,
     intergenerational_enabled: bool = False,
+    lexical_config: LexicalEvolutionConfig | None = None,
     owner_id: int | None = None,
 ) -> AgentLanguageState:
     """Fail closed unless one agent state is canonical and within every cap."""
     _validate_config(config, require_enabled=False)
     if contact_config is not None:
         validate_language_contact_config(contact_config)
+    if lexical_config is not None:
+        validate_lexical_evolution_config(lexical_config)
     if type(state) is not AgentLanguageState:
         _raise("invalid_agent_language_state", "agent language state is missing or invalid")
     if type(state.production) is not dict or type(state.comprehension) is not dict:
@@ -1304,6 +1771,7 @@ def validate_agent_language_state(
             maximum_signal_length=config.maximum_signal_length,
             contact_config=contact_config,
             intergenerational_enabled=intergenerational_enabled,
+            lexical_config=lexical_config,
             owner_id=owner_id,
         )
         if key != (validated.meaning, validated.signal):
@@ -1326,6 +1794,7 @@ def validate_agent_language_state(
             maximum_signal_length=config.maximum_signal_length,
             contact_config=contact_config,
             intergenerational_enabled=intergenerational_enabled,
+            lexical_config=lexical_config,
             owner_id=owner_id,
         )
         if key != (validated.signal, validated.meaning):
@@ -1390,6 +1859,7 @@ def language_runtime_is_pristine(runtime: object) -> bool:
         and runtime.coalition_dialect_influence_enabled is False
         and runtime.language_contact_enabled is False
         and runtime.intergenerational_language_enabled is False
+        and runtime.lexical_evolution_enabled is False
     )
 
 
@@ -1427,6 +1897,11 @@ def validate_language_runtime(
         _raise(
             "invalid_language_runtime",
             "intergenerational language runtime gate must be boolean",
+        )
+    if type(runtime.lexical_evolution_enabled) is not bool:
+        _raise(
+            "invalid_language_runtime",
+            "lexical evolution runtime gate must be boolean",
         )
     if runtime.communication_attempt_count != (
         runtime.successful_interpretation_count
@@ -1481,6 +1956,7 @@ def initialize_language_runtime(
     coalition_dialect_influence_enabled: bool = False,
     language_contact_enabled: bool = False,
     intergenerational_language_enabled: bool = False,
+    lexical_evolution_enabled: bool = False,
 ) -> None:
     """Initialize only the canonical seed domain; no entropy is constructed."""
     validate_language_runtime(runtime, initialized=False)
@@ -1501,6 +1977,11 @@ def initialize_language_runtime(
             "invalid_intergenerational_language_config",
             "language runtime intergenerational gate must be boolean",
         )
+    if type(lexical_evolution_enabled) is not bool:
+        _raise(
+            "invalid_lexical_evolution_config",
+            "language runtime lexical gate must be boolean",
+        )
     seed_domain = f"{LANGUAGE_DOMAIN}|seed={run_seed}"
     runtime.seed_domain = seed_domain
     runtime.seed_domain_fingerprint = hashlib.sha256(
@@ -1512,6 +1993,7 @@ def initialize_language_runtime(
     runtime.language_contact_enabled = language_contact_enabled
     runtime.intergenerational_language_enabled = (
         intergenerational_language_enabled)
+    runtime.lexical_evolution_enabled = lexical_evolution_enabled
     validate_language_runtime(runtime, initialized=True)
 
 
@@ -1547,12 +2029,176 @@ def derive_invention_signal(
     return Signal(tuple(digest[index + 1] & 0x07 for index in range(length)))
 
 
+def _lexical_derivation_digest(
+    runtime: LexicalEvolutionRuntimeState,
+    *,
+    purpose: str,
+    opportunity_index: int,
+    tick: int,
+    sender_id: int,
+    receiver_id: int,
+    meaning: Meaning,
+    source_signal: Signal,
+) -> bytes:
+    """Return one canonical digest independent of social language context."""
+    if type(runtime) is not LexicalEvolutionRuntimeState:
+        _raise(
+            "invalid_lexical_evolution_runtime",
+            "lexical derivation runtime type is invalid",
+        )
+    seed_domain = runtime.seed_domain
+    if type(seed_domain) is not str:
+        _raise(
+            "invalid_lexical_evolution_runtime",
+            "lexical derivation seed identity is invalid",
+        )
+    try:
+        seed_bytes = seed_domain.encode("ascii")
+    except UnicodeEncodeError:
+        _raise(
+            "invalid_lexical_evolution_runtime",
+            "lexical derivation seed identity is invalid",
+        )
+    if (
+        not seed_domain.startswith(f"{LEXICAL_EVOLUTION_DOMAIN}|seed=")
+        or runtime.seed_domain_fingerprint
+        != hashlib.sha256(seed_bytes).hexdigest()
+    ):
+        _raise(
+            "invalid_lexical_evolution_runtime",
+            "lexical derivation seed identity is invalid",
+        )
+    if purpose not in ("trigger", "substitution"):
+        _raise(
+            "invalid_lexical_derivation_purpose",
+            "lexical derivation purpose is invalid",
+        )
+    if not _exact_nonnegative_int(opportunity_index) or opportunity_index < 1:
+        _raise(
+            "invalid_lexical_derivation_index",
+            "lexical opportunity index must be positive",
+        )
+    validated_tick = _validate_tick(tick)
+    if not _exact_nonnegative_int(sender_id):
+        _raise("invalid_language_identity", "lexical sender ID is invalid")
+    if not _exact_nonnegative_int(receiver_id):
+        _raise("invalid_language_identity", "lexical receiver ID is invalid")
+    if sender_id == receiver_id:
+        _raise("invalid_language_identity", "lexical participants must differ")
+    if type(meaning) is not Meaning:
+        _raise("invalid_language_meaning", "lexical meaning must be canonical")
+    if type(source_signal) is not Signal:
+        _raise("invalid_signal", "lexical source signal is invalid")
+    tokens = ",".join(str(token) for token in source_signal.phoneme_ids)
+    record = (
+        f"{seed_domain}|purpose={purpose}"
+        f"|opportunity_index={opportunity_index}|tick={validated_tick}"
+        f"|sender_id={sender_id}|receiver_id={receiver_id}"
+        f"|meaning={meaning.name}|source_length={len(source_signal.phoneme_ids)}"
+        f"|source_tokens={tokens}"
+    )
+    return hashlib.sha256(record.encode("ascii")).digest()
+
+
+def derive_lexical_mutation_trigger(
+    runtime: LexicalEvolutionRuntimeState,
+    config: LexicalEvolutionConfig,
+    *,
+    opportunity_index: int,
+    tick: int,
+    sender_id: int,
+    receiver_id: int,
+    meaning: Meaning,
+    source_signal: Signal,
+) -> bool:
+    """Return the exact deterministic mutation-rate decision."""
+    validated = validate_lexical_evolution_config(
+        config, require_enabled=True)
+    if runtime.lexical_mutation_rate != validated.lexical_mutation_rate:
+        _raise(
+            "lexical_evolution_runtime_config_mismatch",
+            "lexical mutation rate disagrees with runtime controls",
+        )
+    digest = _lexical_derivation_digest(
+        runtime,
+        purpose="trigger",
+        opportunity_index=opportunity_index,
+        tick=tick,
+        sender_id=sender_id,
+        receiver_id=receiver_id,
+        meaning=meaning,
+        source_signal=source_signal,
+    )
+    sample = int.from_bytes(digest[:8], "big")
+    numerator, denominator = validated.lexical_mutation_rate.as_integer_ratio()
+    return sample * denominator < numerator * (1 << 64)
+
+
+def derive_lexical_substitution(
+    runtime: LexicalEvolutionRuntimeState,
+    *,
+    opportunity_index: int,
+    tick: int,
+    sender_id: int,
+    receiver_id: int,
+    meaning: Meaning,
+    source_signal: Signal,
+) -> tuple[Signal, int]:
+    """Derive exactly one valid same-length substitution."""
+    digest = _lexical_derivation_digest(
+        runtime,
+        purpose="substitution",
+        opportunity_index=opportunity_index,
+        tick=tick,
+        sender_id=sender_id,
+        receiver_id=receiver_id,
+        meaning=meaning,
+        source_signal=source_signal,
+    )
+    source_tokens = source_signal.phoneme_ids
+    position = digest[0] % len(source_tokens)
+    offset = 1 + digest[1] % (PHONEME_COUNT - 1)
+    descendant_tokens = list(source_tokens)
+    descendant_tokens[position] = (
+        descendant_tokens[position] + offset
+    ) % PHONEME_COUNT
+    descendant = Signal(tuple(descendant_tokens))
+    if descendant == source_signal:
+        _raise(
+            "invalid_lexical_substitution",
+            "substitution failed to change the source signal",
+        )
+    return descendant, position
+
+
 def _copy_agent_state(state: AgentLanguageState) -> AgentLanguageState:
     return AgentLanguageState(
         production=dict(state.production),
         comprehension=dict(state.comprehension),
         next_invention_index=state.next_invention_index,
     )
+
+
+def _validate_lexical_mutation_indices(
+    states: Iterable[AgentLanguageState],
+    runtime: LexicalEvolutionRuntimeState,
+) -> None:
+    """Require every retained direct edge to precede the committed index."""
+    for state in states:
+        for association in (
+            *state.production.values(),
+            *state.comprehension.values(),
+        ):
+            provenance = association.lexical_evolution_provenance
+            if (
+                provenance is not None
+                and provenance.mutation_index
+                > runtime.mutation_derivation_index
+            ):
+                _raise(
+                    "invalid_lexical_evolution_metadata",
+                    "retained mutation index exceeds committed runtime",
+                )
 
 
 def _validate_state_tick(
@@ -1787,6 +2433,147 @@ def _commit_intergenerational_runtime(
         setattr(target, item.name, getattr(proposed, item.name))
 
 
+def _commit_lexical_runtime(
+    target: LexicalEvolutionRuntimeState,
+    proposed: LexicalEvolutionRuntimeState,
+) -> None:
+    for item in fields(LexicalEvolutionRuntimeState):
+        setattr(target, item.name, getattr(proposed, item.name))
+
+
+def _copy_lexical_provenance_if_absent(
+    association: LexicalAssociation,
+    source: LexicalAssociation,
+) -> LexicalAssociation:
+    """Copy one immutable lexical edge only when the destination lacks one."""
+    if (
+        association.lexical_evolution_provenance is not None
+        or source.lexical_evolution_provenance is None
+    ):
+        return association
+    return replace(
+        association,
+        lexical_evolution_provenance=(
+            source.lexical_evolution_provenance),
+    )
+
+
+def _prepare_lexical_emission(
+    proposed_sender: AgentLanguageState,
+    source: LexicalAssociation,
+    runtime: LexicalEvolutionRuntimeState,
+    config: LexicalEvolutionConfig,
+    *,
+    tick: int,
+    sender_id: int,
+    receiver_id: int,
+) -> LexicalAssociation:
+    """Apply one opportunity and return the exact association to emit."""
+    validated = validate_lexical_evolution_config(
+        config, require_enabled=True)
+    validate_lexical_evolution_runtime(runtime, config=validated)
+    if source.confidence < MIN_USABLE_CONFIDENCE:
+        _raise(
+            "invalid_lexical_mutation_source",
+            "lexical mutation source is not usable",
+        )
+    opportunity_index = _increment(
+        runtime.mutation_derivation_index,
+        field_name="mutation_derivation_index",
+    )
+    runtime.mutation_derivation_index = opportunity_index
+    triggered = derive_lexical_mutation_trigger(
+        runtime,
+        validated,
+        opportunity_index=opportunity_index,
+        tick=tick,
+        sender_id=sender_id,
+        receiver_id=receiver_id,
+        meaning=source.meaning,
+        source_signal=source.signal,
+    )
+    source_lexical = source.lexical_evolution_provenance
+    source_depth = (
+        source_lexical.lineage_depth if source_lexical is not None else 0
+    )
+    counting = (
+        runtime.eligible_mutation_opportunity_count
+        < MAX_LEXICAL_OBSERVATION_OPPORTUNITIES
+    )
+    if counting:
+        runtime.eligible_mutation_opportunity_count += 1
+    if not triggered:
+        if counting:
+            runtime.mutation_not_triggered_count += 1
+        return source
+    if counting:
+        runtime.mutation_trigger_count += 1
+    if source_depth >= validated.maximum_lexical_lineage_depth:
+        if counting:
+            runtime.lineage_depth_limit_count += 1
+        return source
+
+    descendant_signal, position = derive_lexical_substitution(
+        runtime,
+        opportunity_index=opportunity_index,
+        tick=tick,
+        sender_id=sender_id,
+        receiver_id=receiver_id,
+        meaning=source.meaning,
+        source_signal=source.signal,
+    )
+    lineage_depth = source_depth + 1
+    provenance = LexicalEvolutionProvenance(
+        first_mutation_tick=tick,
+        direct_source_signal=source.signal,
+        direct_source_owner_id=sender_id,
+        direct_source_origin=source.origin,
+        mutation_operation=LexicalMutationOperation.SUBSTITUTION,
+        mutation_position=position,
+        mutation_index=opportunity_index,
+        lineage_depth=lineage_depth,
+        source_form_was_borrowed=(
+            source.borrowing_provenance is not None),
+    )
+    key = (source.meaning, descendant_signal)
+    existing = proposed_sender.production.get(key)
+    if existing is None:
+        selected = LexicalAssociation(
+            meaning=source.meaning,
+            signal=descendant_signal,
+            confidence=INVENTION_CONFIDENCE,
+            last_used_tick=tick,
+            origin=AssociationOrigin.INVENTED,
+            lexical_evolution_provenance=provenance,
+        )
+        proposed_sender.production[key] = selected
+        created = True
+    else:
+        selected = existing
+        if existing.lexical_evolution_provenance is None:
+            selected = replace(
+                existing,
+                lexical_evolution_provenance=provenance,
+            )
+            proposed_sender.production[key] = selected
+        created = False
+    if counting:
+        runtime.successful_mutation_count += 1
+        runtime.substitution_count += 1
+        if created:
+            runtime.descendant_production_creation_count += 1
+        else:
+            runtime.descendant_production_reinforcement_count += 1
+        if source.borrowing_provenance is not None:
+            runtime.borrowed_source_mutation_count += 1
+    runtime.maximum_observed_lineage_depth = max(
+        runtime.maximum_observed_lineage_depth,
+        lineage_depth,
+    )
+    runtime.last_mutation_tick = tick
+    return selected
+
+
 def _parental_candidate_sort_key(
     association: LexicalAssociation,
 ) -> tuple:
@@ -1833,6 +2620,8 @@ def transmit_intergenerational_language(
     language_runtime: LanguageRuntimeState,
     intergenerational_runtime: IntergenerationalLanguageRuntimeState,
     contact_config: LanguageContactConfig | None = None,
+    lexical_config: LexicalEvolutionConfig | None = None,
+    lexical_runtime: LexicalEvolutionRuntimeState | None = None,
 ) -> None:
     """Commit one exact-once post-birth comprehension proposal transactionally."""
     _validate_config(language_config, require_enabled=True)
@@ -1857,6 +2646,26 @@ def transmit_intergenerational_language(
         config=validated_intergenerational_config,
         language_runtime=validated_language_runtime,
     )
+    if validated_language_runtime.lexical_evolution_enabled:
+        if lexical_config is None or lexical_runtime is None:
+            _raise(
+                "missing_lexical_evolution_transaction_inputs",
+                "lexical-enabled transmission requires config and runtime",
+            )
+        validated_lexical_config = validate_lexical_evolution_config(
+            lexical_config, require_enabled=True)
+        validate_lexical_evolution_runtime(
+            lexical_runtime,
+            config=validated_lexical_config,
+            language_runtime=validated_language_runtime,
+        )
+    elif lexical_config is not None or lexical_runtime is not None:
+        _raise(
+            "unexpected_lexical_evolution_transaction_inputs",
+            "lexical-disabled transmission cannot receive lexical inputs",
+        )
+    else:
+        validated_lexical_config = None
 
     if validated_language_runtime.language_contact_enabled:
         validated_contact_config = validate_language_contact_config(
@@ -1924,6 +2733,7 @@ def transmit_intergenerational_language(
         config=language_config,
         contact_config=validated_contact_config,
         intergenerational_enabled=True,
+        lexical_config=validated_lexical_config,
         owner_id=child_id,
     )
     parent_states: list[tuple[LanguageInhabitant, AgentLanguageState]] = []
@@ -1935,6 +2745,7 @@ def transmit_intergenerational_language(
             config=language_config,
             contact_config=validated_contact_config,
             intergenerational_enabled=True,
+            lexical_config=validated_lexical_config,
             owner_id=parent_id,
         )
         state_identity = _language_state_identity(parent_state)
@@ -1948,6 +2759,12 @@ def transmit_intergenerational_language(
     _validate_state_tick(child_state, tick=validated_tick)
     for _parent, parent_state in parent_states:
         _validate_state_tick(parent_state, tick=validated_tick)
+    if validated_lexical_config is not None:
+        assert lexical_runtime is not None
+        _validate_lexical_mutation_indices(
+            (child_state, *(state for _parent, state in parent_states)),
+            lexical_runtime,
+        )
     if any(
         association.intergenerational_provenance is not None
         for association in child_state.comprehension.values()
@@ -2047,8 +2864,11 @@ def transmit_intergenerational_language(
                             parent_count=1,
                             borrowed_parent_count=(
                                 1 if parent_form_was_borrowed else 0),
-                        )
+                            )
                     ),
+                    lexical_evolution_provenance=(
+                        parental_association
+                        .lexical_evolution_provenance),
                 )
                 creation_count += 1
                 continue
@@ -2080,13 +2900,18 @@ def transmit_intergenerational_language(
                         + (1 if parent_form_was_borrowed else 0)
                     ),
                 )
-            proposed_child.comprehension[key] = replace(
-                _observed_without_use(
-                    existing,
-                    tick=validated_tick,
-                    confidence_delta=learning_strength,
-                ),
-                intergenerational_provenance=provenance,
+            proposed_child.comprehension[key] = (
+                _copy_lexical_provenance_if_absent(
+                    replace(
+                        _observed_without_use(
+                            existing,
+                            tick=validated_tick,
+                            confidence_delta=learning_strength,
+                        ),
+                        intergenerational_provenance=provenance,
+                    ),
+                    parental_association,
+                )
             )
             reinforcement_count += 1
 
@@ -2125,6 +2950,7 @@ def transmit_intergenerational_language(
         config=language_config,
         contact_config=validated_contact_config,
         intergenerational_enabled=True,
+        lexical_config=validated_lexical_config,
         owner_id=child_id,
     )
     validate_language_runtime(
@@ -2245,6 +3071,8 @@ def communicate(
     contact_config: LanguageContactConfig | None = None,
     contact_runtime: LanguageContactRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
+    lexical_config: LexicalEvolutionConfig | None = None,
+    lexical_runtime: LexicalEvolutionRuntimeState | None = None,
 ) -> CommunicationOutcome:
     """Apply one complete communication transaction or leave all state unchanged."""
     contact_required = (
@@ -2266,6 +3094,8 @@ def communicate(
             contact_config=contact_config,
             contact_runtime=contact_runtime,
             coalition_membership_snapshot=coalition_membership_snapshot,
+            lexical_config=lexical_config,
+            lexical_runtime=lexical_runtime,
         )
     if contact_config is not None or contact_runtime is not None:
         _raise(
@@ -2300,20 +3130,49 @@ def communicate(
         _raise("inactive_language_identity", "sender and receiver must both be active")
     validated_runtime = validate_language_runtime(
         runtime, initialized=True)
+    lexical_required = validated_runtime.lexical_evolution_enabled
+    if lexical_required:
+        if lexical_config is None or lexical_runtime is None:
+            _raise(
+                "missing_lexical_evolution_transaction_inputs",
+                "enabled lexical communication requires config and runtime",
+            )
+        validated_lexical_config = validate_lexical_evolution_config(
+            lexical_config, require_enabled=True)
+        validated_lexical_runtime = validate_lexical_evolution_runtime(
+            lexical_runtime,
+            config=validated_lexical_config,
+            language_runtime=validated_runtime,
+        )
+    elif lexical_config is not None or lexical_runtime is not None:
+        _raise(
+            "unexpected_lexical_evolution_transaction_inputs",
+            "disabled lexical communication cannot receive lexical inputs",
+        )
+    else:
+        validated_lexical_config = None
+        validated_lexical_runtime = None
     intergenerational_enabled = (
         validated_runtime.intergenerational_language_enabled)
     sender_state = validate_agent_language_state(
         sender.language,
         config=config,
         intergenerational_enabled=intergenerational_enabled,
+        lexical_config=validated_lexical_config,
         owner_id=sender_id,
     )
     receiver_state = validate_agent_language_state(
         receiver.language,
         config=config,
         intergenerational_enabled=intergenerational_enabled,
+        lexical_config=validated_lexical_config,
         owner_id=receiver_id,
     )
+    if validated_lexical_runtime is not None:
+        _validate_lexical_mutation_indices(
+            (sender_state, receiver_state),
+            validated_lexical_runtime,
+        )
     _validate_state_tick(sender_state, tick=validated_tick)
     _validate_state_tick(receiver_state, tick=validated_tick)
     if sender_state is receiver_state:
@@ -2367,8 +3226,23 @@ def communicate(
     proposed_sender = _copy_agent_state(sender_state)
     proposed_receiver = _copy_agent_state(receiver_state)
     proposed_runtime = replace(runtime)
+    proposed_lexical = (
+        replace(validated_lexical_runtime) if lexical_required else None
+    )
     selected_production = _select_production(
         proposed_sender, intended_meaning)
+    if selected_production is not None and lexical_required:
+        assert proposed_lexical is not None
+        assert validated_lexical_config is not None
+        selected_production = _prepare_lexical_emission(
+            proposed_sender,
+            selected_production,
+            proposed_lexical,
+            validated_lexical_config,
+            tick=validated_tick,
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+        )
     if selected_production is None and config.language_invention_enabled:
         signal = derive_invention_signal(
             proposed_runtime,
@@ -2431,26 +3305,45 @@ def communicate(
             proposed_sender,
             config=config,
             intergenerational_enabled=intergenerational_enabled,
+            lexical_config=validated_lexical_config,
             owner_id=sender_id,
         )
         validate_agent_language_state(
             proposed_receiver,
             config=config,
             intergenerational_enabled=intergenerational_enabled,
+            lexical_config=validated_lexical_config,
             owner_id=receiver_id,
         )
         validate_language_runtime(proposed_runtime, initialized=True)
+        if proposed_lexical is not None:
+            validate_lexical_evolution_runtime(
+                proposed_lexical,
+                config=validated_lexical_config,
+                language_runtime=proposed_runtime,
+            )
         if proposed_dialect is not None:
             validate_coalition_dialect_runtime(
                 proposed_dialect,
                 language_runtime=proposed_runtime,
             )
         original_runtime = replace(runtime)
+        original_lexical = (
+            replace(lexical_runtime) if proposed_lexical is not None else None
+        )
         if proposed_dialect is None:
             try:
                 _commit_runtime(runtime, proposed_runtime)
+                if proposed_lexical is not None:
+                    assert lexical_runtime is not None
+                    _commit_lexical_runtime(
+                        lexical_runtime, proposed_lexical)
             except BaseException:
                 _commit_runtime(runtime, original_runtime)
+                if original_lexical is not None:
+                    assert lexical_runtime is not None
+                    _commit_lexical_runtime(
+                        lexical_runtime, original_lexical)
                 raise
         else:
             original_sender = sender.language
@@ -2461,11 +3354,19 @@ def communicate(
                 receiver.language = proposed_receiver
                 _commit_runtime(runtime, proposed_runtime)
                 _commit_dialect_runtime(dialect_runtime, proposed_dialect)
+                if proposed_lexical is not None:
+                    assert lexical_runtime is not None
+                    _commit_lexical_runtime(
+                        lexical_runtime, proposed_lexical)
             except BaseException:
                 sender.language = original_sender
                 receiver.language = original_receiver
                 _commit_runtime(runtime, original_runtime)
                 _commit_dialect_runtime(dialect_runtime, original_dialect)
+                if original_lexical is not None:
+                    assert lexical_runtime is not None
+                    _commit_lexical_runtime(
+                        lexical_runtime, original_lexical)
                 raise
         return CommunicationOutcome(
             tick=validated_tick,
@@ -2557,6 +3458,10 @@ def communicate(
             succeeded=True,
             confidence_delta=reinforcement,
         )
+        updated_comprehension = _copy_lexical_provenance_if_absent(
+            updated_comprehension,
+            selected_production,
+        )
         proposed_receiver.comprehension[comprehension_key] = updated_comprehension
         if same_coalition:
             rate_applications += 1
@@ -2576,10 +3481,13 @@ def communicate(
         production_activated = False
         if receiver_production is not None:
             proposed_receiver.production[receiver_production_key] = (
-                _observed_without_use(
-                    receiver_production,
-                    tick=validated_tick,
-                    confidence_delta=learning / 2.0,
+                _copy_lexical_provenance_if_absent(
+                    _observed_without_use(
+                        receiver_production,
+                        tick=validated_tick,
+                        confidence_delta=learning / 2.0,
+                    ),
+                    selected_production,
                 )
             )
             production_activated = True
@@ -2598,6 +3506,9 @@ def communicate(
                     last_used_tick=validated_tick,
                     origin=AssociationOrigin.LEARNED,
                     learned_from_id=updated_comprehension.learned_from_id,
+                    lexical_evolution_provenance=(
+                        updated_comprehension
+                        .lexical_evolution_provenance),
                 )
             )
             _increment_runtime(proposed_runtime, "learned_association_count")
@@ -2630,13 +3541,20 @@ def communicate(
                 last_used_tick=validated_tick,
                 origin=AssociationOrigin.LEARNED,
                 learned_from_id=sender_id,
+                lexical_evolution_provenance=(
+                    selected_production.lexical_evolution_provenance),
             )
             _increment_runtime(proposed_runtime, "learned_association_count")
         else:
-            proposed_receiver.comprehension[correct_key] = _observed_without_use(
-                correct,
-                tick=validated_tick,
-                confidence_delta=learning,
+            proposed_receiver.comprehension[correct_key] = (
+                _copy_lexical_provenance_if_absent(
+                    _observed_without_use(
+                        correct,
+                        tick=validated_tick,
+                        confidence_delta=learning,
+                    ),
+                    selected_production,
+                )
             )
         if same_coalition:
             rate_applications += 1
@@ -2653,13 +3571,20 @@ def communicate(
                 last_used_tick=validated_tick,
                 origin=AssociationOrigin.LEARNED,
                 learned_from_id=sender_id,
+                lexical_evolution_provenance=(
+                    selected_production.lexical_evolution_provenance),
             )
             _increment_runtime(proposed_runtime, "learned_association_count")
         else:
-            proposed_receiver.comprehension[correct_key] = _observed_without_use(
-                correct,
-                tick=validated_tick,
-                confidence_delta=learning,
+            proposed_receiver.comprehension[correct_key] = (
+                _copy_lexical_provenance_if_absent(
+                    _observed_without_use(
+                        correct,
+                        tick=validated_tick,
+                        confidence_delta=learning,
+                    ),
+                    selected_production,
+                )
             )
         if same_coalition:
             rate_applications += 1
@@ -2682,15 +3607,23 @@ def communicate(
         proposed_sender,
         config=config,
         intergenerational_enabled=intergenerational_enabled,
+        lexical_config=validated_lexical_config,
         owner_id=sender_id,
     )
     validate_agent_language_state(
         proposed_receiver,
         config=config,
         intergenerational_enabled=intergenerational_enabled,
+        lexical_config=validated_lexical_config,
         owner_id=receiver_id,
     )
     validate_language_runtime(proposed_runtime, initialized=True)
+    if proposed_lexical is not None:
+        validate_lexical_evolution_runtime(
+            proposed_lexical,
+            config=validated_lexical_config,
+            language_runtime=proposed_runtime,
+        )
     if proposed_dialect is not None:
         validate_coalition_dialect_runtime(
             proposed_dialect,
@@ -2700,6 +3633,9 @@ def communicate(
     original_sender = sender.language
     original_receiver = receiver.language
     original_runtime = replace(runtime)
+    original_lexical = (
+        replace(lexical_runtime) if proposed_lexical is not None else None
+    )
     original_dialect = (
         replace(dialect_runtime) if proposed_dialect is not None else None
     )
@@ -2707,12 +3643,18 @@ def communicate(
         sender.language = proposed_sender
         receiver.language = proposed_receiver
         _commit_runtime(runtime, proposed_runtime)
+        if proposed_lexical is not None:
+            assert lexical_runtime is not None
+            _commit_lexical_runtime(lexical_runtime, proposed_lexical)
         if proposed_dialect is not None:
             _commit_dialect_runtime(dialect_runtime, proposed_dialect)
     except BaseException:
         sender.language = original_sender
         receiver.language = original_receiver
         _commit_runtime(runtime, original_runtime)
+        if original_lexical is not None:
+            assert lexical_runtime is not None
+            _commit_lexical_runtime(lexical_runtime, original_lexical)
         if original_dialect is not None:
             _commit_dialect_runtime(dialect_runtime, original_dialect)
         raise
@@ -2755,6 +3697,8 @@ def _communicate_with_contact(
     contact_config: LanguageContactConfig | None,
     contact_runtime: LanguageContactRuntimeState | None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None,
+    lexical_config: LexicalEvolutionConfig | None,
+    lexical_runtime: LexicalEvolutionRuntimeState | None,
 ) -> CommunicationOutcome:
     """Apply one contact-enabled transaction using one frozen classification."""
     _validate_config(config, require_enabled=True)
@@ -2798,6 +3742,28 @@ def _communicate_with_contact(
             "missing_language_contact_transaction_inputs",
             "enabled contact communication requires config, runtime, and snapshot",
         )
+    lexical_required = validated_runtime.lexical_evolution_enabled
+    if lexical_required:
+        if lexical_config is None or lexical_runtime is None:
+            _raise(
+                "missing_lexical_evolution_transaction_inputs",
+                "enabled lexical communication requires config and runtime",
+            )
+        validated_lexical_config = validate_lexical_evolution_config(
+            lexical_config, require_enabled=True)
+        validated_lexical_runtime = validate_lexical_evolution_runtime(
+            lexical_runtime,
+            config=validated_lexical_config,
+            language_runtime=validated_runtime,
+        )
+    elif lexical_config is not None or lexical_runtime is not None:
+        _raise(
+            "unexpected_lexical_evolution_transaction_inputs",
+            "disabled lexical communication cannot receive lexical inputs",
+        )
+    else:
+        validated_lexical_config = None
+        validated_lexical_runtime = None
 
     dialect_required = validated_runtime.coalition_dialect_influence_enabled
     validated_dialect_runtime = None
@@ -2844,6 +3810,7 @@ def _communicate_with_contact(
         contact_config=validated_contact_config,
         intergenerational_enabled=(
             validated_runtime.intergenerational_language_enabled),
+        lexical_config=validated_lexical_config,
         owner_id=sender_id,
     )
     receiver_state = validate_agent_language_state(
@@ -2852,8 +3819,14 @@ def _communicate_with_contact(
         contact_config=validated_contact_config,
         intergenerational_enabled=(
             validated_runtime.intergenerational_language_enabled),
+        lexical_config=validated_lexical_config,
         owner_id=receiver_id,
     )
+    if validated_lexical_runtime is not None:
+        _validate_lexical_mutation_indices(
+            (sender_state, receiver_state),
+            validated_lexical_runtime,
+        )
     _validate_state_tick(sender_state, tick=validated_tick)
     _validate_state_tick(receiver_state, tick=validated_tick)
     if sender_state is receiver_state:
@@ -2874,8 +3847,23 @@ def _communicate_with_contact(
     proposed_dialect = (
         replace(validated_dialect_runtime) if dialect_required else None
     )
+    proposed_lexical = (
+        replace(validated_lexical_runtime) if lexical_required else None
+    )
     selected_production = _select_production(
         proposed_sender, intended_meaning)
+    if selected_production is not None and lexical_required:
+        assert proposed_lexical is not None
+        assert validated_lexical_config is not None
+        selected_production = _prepare_lexical_emission(
+            proposed_sender,
+            selected_production,
+            proposed_lexical,
+            validated_lexical_config,
+            tick=validated_tick,
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+        )
     if selected_production is None and config.language_invention_enabled:
         signal = derive_invention_signal(
             proposed_runtime,
@@ -2945,6 +3933,8 @@ def _communicate_with_contact(
             proposed_contact,
             language_config=config,
             contact_config=validated_contact_config,
+            lexical_config=validated_lexical_config,
+            proposed_lexical=proposed_lexical,
             sender_id=sender_id,
             receiver_id=receiver_id,
         )
@@ -2954,11 +3944,13 @@ def _communicate_with_contact(
             runtime,
             dialect_runtime,
             contact_runtime,
+            lexical_runtime,
             proposed_sender=proposed_sender,
             proposed_receiver=proposed_receiver,
             proposed_runtime=proposed_runtime,
             proposed_dialect=proposed_dialect,
             proposed_contact=proposed_contact,
+            proposed_lexical=proposed_lexical,
         )
         return CommunicationOutcome(
             tick=validated_tick,
@@ -3071,6 +4063,10 @@ def _communicate_with_contact(
             succeeded=True,
             confidence_delta=reinforcement,
         )
+        updated_comprehension = _copy_lexical_provenance_if_absent(
+            updated_comprehension,
+            selected_production,
+        )
         if qualifying_contact:
             updated_comprehension, candidate_created = (
                 _record_contact_exposure(
@@ -3108,10 +4104,13 @@ def _communicate_with_contact(
         production_activated = False
         if receiver_production is not None:
             proposed_receiver.production[receiver_production_key] = (
-                _observed_without_use(
-                    receiver_production,
-                    tick=validated_tick,
-                    confidence_delta=learning / 2.0,
+                _copy_lexical_provenance_if_absent(
+                    _observed_without_use(
+                        receiver_production,
+                        tick=validated_tick,
+                        confidence_delta=learning / 2.0,
+                    ),
+                    selected_production,
                 )
             )
             production_activated = True
@@ -3160,6 +4159,9 @@ def _communicate_with_contact(
                         origin=AssociationOrigin.LEARNED,
                         learned_from_id=updated_comprehension.learned_from_id,
                         borrowing_provenance=borrowing_provenance,
+                        lexical_evolution_provenance=(
+                            updated_comprehension
+                            .lexical_evolution_provenance),
                     )
                 )
                 _increment_runtime(
@@ -3201,13 +4203,18 @@ def _communicate_with_contact(
                 last_used_tick=validated_tick,
                 origin=AssociationOrigin.LEARNED,
                 learned_from_id=sender_id,
+                lexical_evolution_provenance=(
+                    selected_production.lexical_evolution_provenance),
             )
             _increment_runtime(proposed_runtime, "learned_association_count")
         else:
-            updated_correct = _observed_without_use(
-                correct,
-                tick=validated_tick,
-                confidence_delta=learning,
+            updated_correct = _copy_lexical_provenance_if_absent(
+                _observed_without_use(
+                    correct,
+                    tick=validated_tick,
+                    confidence_delta=learning,
+                ),
+                selected_production,
             )
         if qualifying_contact:
             updated_correct, candidate_created = _record_contact_exposure(
@@ -3242,13 +4249,18 @@ def _communicate_with_contact(
                 last_used_tick=validated_tick,
                 origin=AssociationOrigin.LEARNED,
                 learned_from_id=sender_id,
+                lexical_evolution_provenance=(
+                    selected_production.lexical_evolution_provenance),
             )
             _increment_runtime(proposed_runtime, "learned_association_count")
         else:
-            updated_correct = _observed_without_use(
-                correct,
-                tick=validated_tick,
-                confidence_delta=learning,
+            updated_correct = _copy_lexical_provenance_if_absent(
+                _observed_without_use(
+                    correct,
+                    tick=validated_tick,
+                    confidence_delta=learning,
+                ),
+                selected_production,
             )
         if qualifying_contact:
             updated_correct, candidate_created = _record_contact_exposure(
@@ -3303,6 +4315,8 @@ def _communicate_with_contact(
         proposed_contact,
         language_config=config,
         contact_config=validated_contact_config,
+        lexical_config=validated_lexical_config,
+        proposed_lexical=proposed_lexical,
         sender_id=sender_id,
         receiver_id=receiver_id,
     )
@@ -3312,11 +4326,13 @@ def _communicate_with_contact(
         runtime,
         dialect_runtime,
         contact_runtime,
+        lexical_runtime,
         proposed_sender=proposed_sender,
         proposed_receiver=proposed_receiver,
         proposed_runtime=proposed_runtime,
         proposed_dialect=proposed_dialect,
         proposed_contact=proposed_contact,
+        proposed_lexical=proposed_lexical,
     )
     return CommunicationOutcome(
         tick=validated_tick,
@@ -3342,6 +4358,8 @@ def _validate_contact_proposal(
     *,
     language_config: LanguageConfig,
     contact_config: LanguageContactConfig,
+    lexical_config: LexicalEvolutionConfig | None,
+    proposed_lexical: LexicalEvolutionRuntimeState | None,
     sender_id: int,
     receiver_id: int,
 ) -> None:
@@ -3352,6 +4370,7 @@ def _validate_contact_proposal(
         contact_config=contact_config,
         intergenerational_enabled=(
             proposed_runtime.intergenerational_language_enabled),
+        lexical_config=lexical_config,
         owner_id=sender_id,
     )
     validate_agent_language_state(
@@ -3360,9 +4379,16 @@ def _validate_contact_proposal(
         contact_config=contact_config,
         intergenerational_enabled=(
             proposed_runtime.intergenerational_language_enabled),
+        lexical_config=lexical_config,
         owner_id=receiver_id,
     )
     validate_language_runtime(proposed_runtime, initialized=True)
+    if proposed_lexical is not None:
+        validate_lexical_evolution_runtime(
+            proposed_lexical,
+            config=lexical_config,
+            language_runtime=proposed_runtime,
+        )
     if proposed_dialect is not None:
         validate_coalition_dialect_runtime(
             proposed_dialect,
@@ -3382,18 +4408,23 @@ def _commit_contact_proposal(
     runtime: LanguageRuntimeState,
     dialect_runtime: CoalitionDialectRuntimeState | None,
     contact_runtime: LanguageContactRuntimeState,
+    lexical_runtime: LexicalEvolutionRuntimeState | None,
     *,
     proposed_sender: AgentLanguageState,
     proposed_receiver: AgentLanguageState,
     proposed_runtime: LanguageRuntimeState,
     proposed_dialect: CoalitionDialectRuntimeState | None,
     proposed_contact: LanguageContactRuntimeState,
+    proposed_lexical: LexicalEvolutionRuntimeState | None,
 ) -> None:
     """Commit or restore the complete language/dialect/contact owner set."""
     original_sender = sender.language
     original_receiver = receiver.language
     original_runtime = replace(runtime)
     original_contact = replace(contact_runtime)
+    original_lexical = (
+        replace(lexical_runtime) if proposed_lexical is not None else None
+    )
     original_dialect = (
         replace(dialect_runtime) if proposed_dialect is not None else None
     )
@@ -3405,6 +4436,9 @@ def _commit_contact_proposal(
             assert dialect_runtime is not None
             _commit_dialect_runtime(dialect_runtime, proposed_dialect)
         _commit_contact_runtime(contact_runtime, proposed_contact)
+        if proposed_lexical is not None:
+            assert lexical_runtime is not None
+            _commit_lexical_runtime(lexical_runtime, proposed_lexical)
     except BaseException:
         sender.language = original_sender
         receiver.language = original_receiver
@@ -3413,6 +4447,9 @@ def _commit_contact_proposal(
             assert dialect_runtime is not None
             _commit_dialect_runtime(dialect_runtime, original_dialect)
         _commit_contact_runtime(contact_runtime, original_contact)
+        if original_lexical is not None:
+            assert lexical_runtime is not None
+            _commit_lexical_runtime(lexical_runtime, original_lexical)
         raise
 
 
@@ -3424,6 +4461,8 @@ def maintain_language_state(
     config: LanguageConfig,
     runtime: LanguageRuntimeState,
     contact_config: LanguageContactConfig | None = None,
+    lexical_config: LexicalEvolutionConfig | None = None,
+    lexical_runtime: LexicalEvolutionRuntimeState | None = None,
 ) -> None:
     """Forget and prune once at the authoritative end-of-tick boundary."""
     _validate_config(config, require_enabled=True)
@@ -3431,6 +4470,26 @@ def maintain_language_state(
     validated_runtime = validate_language_runtime(runtime, initialized=True)
     intergenerational_enabled = (
         validated_runtime.intergenerational_language_enabled)
+    if validated_runtime.lexical_evolution_enabled:
+        if lexical_config is None or lexical_runtime is None:
+            _raise(
+                "missing_lexical_evolution_transaction_inputs",
+                "lexical-enabled maintenance requires config and runtime",
+            )
+        validated_lexical_config = validate_lexical_evolution_config(
+            lexical_config, require_enabled=True)
+        validate_lexical_evolution_runtime(
+            lexical_runtime,
+            config=validated_lexical_config,
+            language_runtime=validated_runtime,
+        )
+    elif lexical_config is not None or lexical_runtime is not None:
+        _raise(
+            "unexpected_lexical_evolution_transaction_inputs",
+            "lexical-disabled maintenance cannot receive lexical inputs",
+        )
+    else:
+        validated_lexical_config = None
     if validated_runtime.language_contact_enabled:
         validated_contact_config = validate_language_contact_config(
             contact_config)
@@ -3483,8 +4542,12 @@ def maintain_language_state(
             config=config,
             contact_config=validated_contact_config,
             intergenerational_enabled=intergenerational_enabled,
+            lexical_config=validated_lexical_config,
             owner_id=inhabitant_id,
         )
+        if lexical_runtime is not None:
+            _validate_lexical_mutation_indices(
+                (validated_state,), lexical_runtime)
         _validate_state_tick(validated_state, tick=validated_tick)
         state_identity = _language_state_identity(validated_state)
         if state_identity in seen_state_identities:
@@ -3507,8 +4570,12 @@ def maintain_language_state(
             config=config,
             contact_config=validated_contact_config,
             intergenerational_enabled=intergenerational_enabled,
+            lexical_config=validated_lexical_config,
             owner_id=inhabitant_id,
         )
+        if lexical_runtime is not None:
+            _validate_lexical_mutation_indices(
+                (validated_state,), lexical_runtime)
         _validate_state_tick(validated_state, tick=validated_tick)
         state_identity = _language_state_identity(validated_state)
         if state_identity in seen_state_identities:
@@ -3551,6 +4618,7 @@ def maintain_language_state(
             config=config,
             contact_config=validated_contact_config,
             intergenerational_enabled=intergenerational_enabled,
+            lexical_config=validated_lexical_config,
             owner_id=getattr(inhabitant, "inhabitant_id", None),
         )
         proposed_states.append((inhabitant, current_state, proposed))
@@ -3629,11 +4697,30 @@ def _intergenerational_provenance_record(
     }
 
 
+def _lexical_evolution_provenance_record(
+    provenance: LexicalEvolutionProvenance,
+) -> dict[str, object]:
+    """Return one direct lexical-mutation edge canonically."""
+    return {
+        "first_mutation_tick": provenance.first_mutation_tick,
+        "direct_source_signal": list(
+            provenance.direct_source_signal.phoneme_ids),
+        "direct_source_owner_id": provenance.direct_source_owner_id,
+        "direct_source_origin": provenance.direct_source_origin.value,
+        "mutation_operation": provenance.mutation_operation.value,
+        "mutation_position": provenance.mutation_position,
+        "mutation_index": provenance.mutation_index,
+        "lineage_depth": provenance.lineage_depth,
+        "source_form_was_borrowed": provenance.source_form_was_borrowed,
+    }
+
+
 def association_record(
     association: LexicalAssociation,
     *,
     include_contact: bool = False,
     include_intergenerational: bool = False,
+    include_lexical_evolution: bool = False,
 ) -> dict[str, object]:
     """Return one association using only canonical JSON-safe primitives."""
     result: dict[str, object] = {
@@ -3662,6 +4749,12 @@ def association_record(
                 association.intergenerational_provenance)
             if association.intergenerational_provenance is not None else None
         )
+    if include_lexical_evolution:
+        result["lexical_evolution_provenance"] = (
+            _lexical_evolution_provenance_record(
+                association.lexical_evolution_provenance)
+            if association.lexical_evolution_provenance is not None else None
+        )
     return result
 
 
@@ -3672,6 +4765,8 @@ def agent_language_record(
     include_contact: bool = False,
     contact_config: LanguageContactConfig | None = None,
     include_intergenerational: bool = False,
+    include_lexical_evolution: bool = False,
+    lexical_config: LexicalEvolutionConfig | None = None,
 ) -> dict[str, object]:
     """Return one agent's complete language state in canonical order."""
     if type(include_contact) is not bool:
@@ -3683,6 +4778,11 @@ def agent_language_record(
         _raise(
             "invalid_intergenerational_language_config",
             "intergenerational serialization gate must be boolean",
+        )
+    if type(include_lexical_evolution) is not bool:
+        _raise(
+            "invalid_lexical_evolution_config",
+            "lexical serialization gate must be boolean",
         )
     if include_contact:
         validated_contact = validate_language_contact_config(contact_config)
@@ -3696,6 +4796,16 @@ def agent_language_record(
             "unexpected_language_contact_transaction_inputs",
             "disabled contact serialization cannot receive contact controls",
         )
+    if include_lexical_evolution:
+        validated_lexical = validate_lexical_evolution_config(
+            lexical_config, require_enabled=True)
+    elif lexical_config is not None:
+        _raise(
+            "unexpected_lexical_evolution_transaction_inputs",
+            "disabled lexical serialization cannot receive lexical controls",
+        )
+    else:
+        validated_lexical = None
     inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
     if not _exact_nonnegative_int(inhabitant_id):
         _raise("invalid_language_identity", "snapshot requires an assigned ID")
@@ -3704,6 +4814,7 @@ def agent_language_record(
         config=config,
         contact_config=contact_config if include_contact else None,
         intergenerational_enabled=include_intergenerational,
+        lexical_config=validated_lexical,
         owner_id=inhabitant_id,
     )
     return {
@@ -3714,6 +4825,7 @@ def agent_language_record(
                 association,
                 include_contact=include_contact,
                 include_intergenerational=include_intergenerational,
+                include_lexical_evolution=include_lexical_evolution,
             )
             for _key, association in sorted(
                 state.production.items(),
@@ -3726,6 +4838,7 @@ def agent_language_record(
                 association,
                 include_contact=include_contact,
                 include_intergenerational=include_intergenerational,
+                include_lexical_evolution=include_lexical_evolution,
             )
             for _key, association in sorted(
                 state.comprehension.items(),
@@ -3741,6 +4854,8 @@ def canonical_language_snapshot(
     *,
     config: LanguageConfig,
     include_intergenerational: bool = False,
+    include_lexical_evolution: bool = False,
+    lexical_config: LexicalEvolutionConfig | None = None,
 ) -> list[dict[str, object]]:
     """Return canonical bounded language state for tests and inspection."""
     records = [
@@ -3748,6 +4863,8 @@ def canonical_language_snapshot(
             inhabitant,
             config=config,
             include_intergenerational=include_intergenerational,
+            include_lexical_evolution=include_lexical_evolution,
+            lexical_config=lexical_config,
         )
         for inhabitant in people
     ]
@@ -3779,6 +4896,8 @@ def language_runtime_record(runtime: LanguageRuntimeState) -> dict[str, object]:
         result["language_contact_enabled"] = True
     if runtime.intergenerational_language_enabled:
         result["intergenerational_language_enabled"] = True
+    if runtime.lexical_evolution_enabled:
+        result["lexical_evolution_enabled"] = True
     return result
 
 
@@ -3819,6 +4938,76 @@ def intergenerational_language_runtime_record(
     }
 
 
+def lexical_evolution_runtime_record(
+    runtime: LexicalEvolutionRuntimeState,
+    *,
+    config: LexicalEvolutionConfig,
+    language_runtime: LanguageRuntimeState,
+) -> dict[str, object]:
+    """Return canonical lexical controls, counters, and future index."""
+    validate_lexical_evolution_runtime(
+        runtime,
+        config=config,
+        language_runtime=language_runtime,
+    )
+    return {
+        "seed_domain": runtime.seed_domain,
+        "seed_domain_fingerprint": runtime.seed_domain_fingerprint,
+        "lexical_mutation_rate": runtime.lexical_mutation_rate,
+        "maximum_lexical_lineage_depth": (
+            runtime.maximum_lexical_lineage_depth),
+        "mutation_derivation_index": runtime.mutation_derivation_index,
+        "eligible_mutation_opportunity_count": (
+            runtime.eligible_mutation_opportunity_count),
+        "mutation_trigger_count": runtime.mutation_trigger_count,
+        "mutation_not_triggered_count": (
+            runtime.mutation_not_triggered_count),
+        "successful_mutation_count": runtime.successful_mutation_count,
+        "lineage_depth_limit_count": runtime.lineage_depth_limit_count,
+        "substitution_count": runtime.substitution_count,
+        "descendant_production_creation_count": (
+            runtime.descendant_production_creation_count),
+        "descendant_production_reinforcement_count": (
+            runtime.descendant_production_reinforcement_count),
+        "borrowed_source_mutation_count": (
+            runtime.borrowed_source_mutation_count),
+        "maximum_observed_lineage_depth": (
+            runtime.maximum_observed_lineage_depth),
+        "last_mutation_tick": runtime.last_mutation_tick,
+    }
+
+
+def _validated_lexical_summary_inputs(
+    language_runtime: LanguageRuntimeState,
+    lexical_config: LexicalEvolutionConfig | None,
+    lexical_runtime: LexicalEvolutionRuntimeState | None,
+) -> tuple[
+    LexicalEvolutionConfig | None,
+    LexicalEvolutionRuntimeState | None,
+]:
+    """Validate optional lexical-bearing inputs for another summary."""
+    if language_runtime.lexical_evolution_enabled:
+        if lexical_config is None or lexical_runtime is None:
+            _raise(
+                "missing_lexical_evolution_transaction_inputs",
+                "lexical-bearing summary requires config and runtime",
+            )
+        validated_config = validate_lexical_evolution_config(
+            lexical_config, require_enabled=True)
+        validated_runtime = validate_lexical_evolution_runtime(
+            lexical_runtime,
+            config=validated_config,
+            language_runtime=language_runtime,
+        )
+        return validated_config, validated_runtime
+    if lexical_config is not None or lexical_runtime is not None:
+        _raise(
+            "unexpected_lexical_evolution_transaction_inputs",
+            "lexical-disabled summary cannot receive lexical inputs",
+        )
+    return None, None
+
+
 def validate_intergenerational_parent_references(
     living: Iterable[LanguageInhabitant],
     dead: Iterable[LanguageInhabitant],
@@ -3829,13 +5018,36 @@ def validate_intergenerational_parent_references(
     intergenerational_runtime: (
         IntergenerationalLanguageRuntimeState | None
     ) = None,
+    lexical_config: LexicalEvolutionConfig | None = None,
+    lexical_runtime: LexicalEvolutionRuntimeState | None = None,
 ) -> None:
-    """Validate all language owners and retained parent IDs before state boundaries."""
+    """Validate all owners and historical language IDs before state boundaries."""
     if type(intergenerational_enabled) is not bool:
         _raise(
             "invalid_intergenerational_language_config",
             "whole-state intergenerational gate must be boolean",
         )
+    lexical_enabled = lexical_config is not None
+    if lexical_enabled:
+        validated_lexical_config = validate_lexical_evolution_config(
+            lexical_config, require_enabled=True)
+        if lexical_runtime is None:
+            _raise(
+                "missing_lexical_evolution_runtime",
+                "enabled whole-state validation requires lexical runtime",
+            )
+        validated_lexical_runtime = validate_lexical_evolution_runtime(
+            lexical_runtime,
+            config=validated_lexical_config,
+        )
+    elif lexical_runtime is not None:
+        _raise(
+            "unexpected_lexical_evolution_transaction_inputs",
+            "disabled whole-state validation cannot receive lexical runtime",
+        )
+    else:
+        validated_lexical_config = None
+        validated_lexical_runtime = None
     owners = tuple(living) + tuple(dead)
     owner_ids: set[int] = set()
     owner_object_ids: set[int] = set()
@@ -3863,6 +5075,7 @@ def validate_intergenerational_parent_references(
             config=language_config,
             contact_config=contact_config,
             intergenerational_enabled=intergenerational_enabled,
+            lexical_config=validated_lexical_config,
             owner_id=inhabitant_id,
         )
         identity = _language_state_identity(state)
@@ -3936,6 +5149,42 @@ def validate_intergenerational_parent_references(
                 "retained parental exposures exceed cumulative transmitted "
                 "exposures",
             )
+    if lexical_enabled:
+        assert validated_lexical_runtime is not None
+        retained_mutation_indices: set[int] = set()
+        for _inhabitant_id, state in validated:
+            for association in (
+                *state.production.values(),
+                *state.comprehension.values(),
+            ):
+                provenance = association.lexical_evolution_provenance
+                if provenance is None:
+                    continue
+                if provenance.direct_source_owner_id not in owner_ids:
+                    _raise(
+                        "invalid_lexical_evolution_metadata",
+                        "direct source owner is absent from the complete "
+                        "stable-ID cohort",
+                    )
+                if (
+                    provenance.mutation_index
+                    > validated_lexical_runtime.mutation_derivation_index
+                ):
+                    _raise(
+                        "invalid_lexical_evolution_metadata",
+                        "retained mutation index exceeds committed runtime",
+                    )
+                retained_mutation_indices.add(provenance.mutation_index)
+        if (
+            validated_lexical_runtime.eligible_mutation_opportunity_count
+            < MAX_LEXICAL_OBSERVATION_OPPORTUNITIES
+            and len(retained_mutation_indices)
+            > validated_lexical_runtime.successful_mutation_count
+        ):
+            _raise(
+                "lexical_mutation_retention_partition_mismatch",
+                "retained mutation indices exceed successful mutations",
+            )
 
 
 def intergenerational_language_summary(
@@ -3946,6 +5195,8 @@ def intergenerational_language_summary(
     language_runtime: LanguageRuntimeState,
     intergenerational_runtime: IntergenerationalLanguageRuntimeState,
     contact_config: LanguageContactConfig | None = None,
+    lexical_config: LexicalEvolutionConfig | None = None,
+    lexical_runtime: LexicalEvolutionRuntimeState | None = None,
 ) -> dict[str, object]:
     """Aggregate retained parental comprehension in one O(P x L) pass."""
     _validate_config(language_config, require_enabled=True)
@@ -3968,6 +5219,13 @@ def intergenerational_language_summary(
         intergenerational_runtime,
         config=validated_intergenerational_config,
         language_runtime=validated_language_runtime,
+    )
+    validated_lexical_config, validated_lexical_runtime = (
+        _validated_lexical_summary_inputs(
+            validated_language_runtime,
+            lexical_config,
+            lexical_runtime,
+        )
     )
     if validated_language_runtime.language_contact_enabled:
         validated_contact_config = validate_language_contact_config(
@@ -4056,8 +5314,12 @@ def intergenerational_language_summary(
             config=language_config,
             contact_config=validated_contact_config,
             intergenerational_enabled=True,
+            lexical_config=validated_lexical_config,
             owner_id=inhabitant_id,
         )
+        if validated_lexical_runtime is not None:
+            _validate_lexical_mutation_indices(
+                (state,), validated_lexical_runtime)
         carrier = False
         usable_carrier = False
         per_meaning_signals = {meaning: 0 for meaning in Meaning}
@@ -4150,6 +5412,389 @@ def intergenerational_language_summary(
     }
 
 
+def lexical_evolution_summary(
+    people: Iterable[LanguageInhabitant],
+    *,
+    language_config: LanguageConfig,
+    lexical_config: LexicalEvolutionConfig,
+    language_runtime: LanguageRuntimeState,
+    lexical_runtime: LexicalEvolutionRuntimeState,
+    contact_config: LanguageContactConfig | None = None,
+    intergenerational_enabled: bool = False,
+) -> dict[str, object]:
+    """Aggregate current direct lexical edges in one bounded population pass."""
+    _validate_config(language_config, require_enabled=True)
+    validated_lexical_config = validate_lexical_evolution_config(
+        lexical_config, require_enabled=True)
+    validated_language_runtime = validate_language_runtime(
+        language_runtime, initialized=True)
+    if not validated_language_runtime.lexical_evolution_enabled:
+        _raise(
+            "lexical_evolution_runtime_gate_mismatch",
+            "lexical summary requires the authoritative runtime gate",
+        )
+    validate_lexical_evolution_runtime(
+        lexical_runtime,
+        config=validated_lexical_config,
+        language_runtime=validated_language_runtime,
+    )
+    if validated_language_runtime.language_contact_enabled:
+        validated_contact_config = validate_language_contact_config(
+            contact_config)
+        if not validated_contact_config.language_contact_enabled:
+            _raise(
+                "invalid_language_contact_config",
+                "contact-bearing lexical summaries require enabled controls",
+            )
+    elif contact_config is not None:
+        _raise(
+            "unexpected_language_contact_transaction_inputs",
+            "contact-disabled lexical summary cannot receive contact controls",
+        )
+    else:
+        validated_contact_config = None
+    if type(intergenerational_enabled) is not bool:
+        _raise(
+            "invalid_intergenerational_language_config",
+            "lexical summary intergenerational gate must be boolean",
+        )
+    if (
+        intergenerational_enabled
+        is not validated_language_runtime.intergenerational_language_enabled
+    ):
+        _raise(
+            "intergenerational_language_runtime_gate_mismatch",
+            "lexical summary intergenerational gate disagrees with runtime",
+        )
+
+    population_count = 0
+    retained_carrier_count = 0
+    usable_carrier_count = 0
+    retained_production_carrier_count = 0
+    usable_production_carrier_count = 0
+    retained_comprehension_carrier_count = 0
+    usable_comprehension_carrier_count = 0
+    retained_borrowed_source_carrier_count = 0
+    usable_borrowed_source_carrier_count = 0
+    retained_association_count = 0
+    usable_association_count = 0
+    retained_production_count = 0
+    usable_production_count = 0
+    retained_comprehension_count = 0
+    usable_comprehension_count = 0
+    retained_borrowed_source_association_count = 0
+    usable_borrowed_source_association_count = 0
+    retained_contact_channel_count = 0
+    retained_intergenerational_channel_count = 0
+    retained_borrowing_channel_count = 0
+    usable_borrowing_channel_count = 0
+    source_descendant_coexistence_count = 0
+    usable_source_descendant_coexistence_count = 0
+    selected_production_slot_count = 0
+    selected_descendant_slot_count = 0
+    maximum_retained_lineage_depth = 0
+    retained_mutation_indices: set[int] = set()
+    usable_mutation_indices: set[int] = set()
+    direct_edge_descendants: dict[
+        tuple[Meaning, int, Signal], set[Signal]
+    ] = {}
+    seen_ids: set[int] = set()
+    meaning_counts = {
+        meaning: {
+            "retained": 0,
+            "usable": 0,
+            "selected_slots": 0,
+            "selected_descendant_slots": 0,
+        }
+        for meaning in Meaning
+    }
+    depth_counts = {
+        depth: {"retained": 0, "usable": 0}
+        for depth in range(
+            1, validated_lexical_config.maximum_lexical_lineage_depth + 1)
+    }
+    retained_signals = {meaning: set() for meaning in Meaning}
+    usable_signals = {meaning: set() for meaning in Meaning}
+
+    for inhabitant in people:
+        inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+        if not _exact_nonnegative_int(inhabitant_id):
+            _raise(
+                "invalid_language_identity",
+                "lexical summary requires assigned IDs",
+            )
+        if inhabitant_id in seen_ids:
+            _raise(
+                "duplicate_language_identity",
+                "lexical summary IDs must be unique",
+            )
+        seen_ids.add(inhabitant_id)
+        population_count += 1
+        state = validate_agent_language_state(
+            inhabitant.language,
+            config=language_config,
+            contact_config=validated_contact_config,
+            intergenerational_enabled=intergenerational_enabled,
+            lexical_config=validated_lexical_config,
+            owner_id=inhabitant_id,
+        )
+        carrier = False
+        usable_carrier = False
+        retained_production_carrier = False
+        usable_production_carrier = False
+        retained_comprehension_carrier = False
+        usable_comprehension_carrier = False
+        retained_borrowed_source_carrier = False
+        usable_borrowed_source_carrier = False
+        selected: dict[Meaning, LexicalAssociation] = {}
+        for store, associations in (
+            ("production", state.production.values()),
+            ("comprehension", state.comprehension.values()),
+        ):
+            for association in associations:
+                if (
+                    store == "production"
+                    and association.confidence >= MIN_USABLE_CONFIDENCE
+                ):
+                    current = selected.get(association.meaning)
+                    if current is None or (
+                        -association.confidence,
+                        association.signal.phoneme_ids,
+                    ) < (
+                        -current.confidence,
+                        current.signal.phoneme_ids,
+                    ):
+                        selected[association.meaning] = association
+                provenance = association.lexical_evolution_provenance
+                if provenance is None:
+                    continue
+                if provenance.mutation_index > (
+                    lexical_runtime.mutation_derivation_index
+                ):
+                    _raise(
+                        "invalid_lexical_evolution_metadata",
+                        "summary mutation index exceeds committed runtime",
+                    )
+                carrier = True
+                retained_association_count += 1
+                retained_mutation_indices.add(provenance.mutation_index)
+                retained_signals[association.meaning].add(association.signal)
+                maximum_retained_lineage_depth = max(
+                    maximum_retained_lineage_depth, provenance.lineage_depth)
+                meaning_counts[association.meaning]["retained"] += 1
+                depth_counts[provenance.lineage_depth]["retained"] += 1
+                direct_key = (
+                    association.meaning,
+                    provenance.direct_source_owner_id,
+                    provenance.direct_source_signal,
+                )
+                direct_edge_descendants.setdefault(
+                    direct_key, set()).add(association.signal)
+                if provenance.source_form_was_borrowed:
+                    retained_borrowed_source_association_count += 1
+                    retained_borrowed_source_carrier = True
+                if store == "production":
+                    retained_production_count += 1
+                    retained_production_carrier = True
+                    source_key = (
+                        association.meaning,
+                        provenance.direct_source_signal,
+                    )
+                    source_present = source_key in state.production
+                    if association.borrowing_provenance is not None:
+                        retained_borrowing_channel_count += 1
+                else:
+                    retained_comprehension_count += 1
+                    retained_comprehension_carrier = True
+                    source_key = (
+                        provenance.direct_source_signal,
+                        association.meaning,
+                    )
+                    source_present = source_key in state.comprehension
+                    if association.contact_exposure is not None:
+                        retained_contact_channel_count += 1
+                    if association.intergenerational_provenance is not None:
+                        retained_intergenerational_channel_count += 1
+                if source_present:
+                    source_descendant_coexistence_count += 1
+                if association.confidence >= MIN_USABLE_CONFIDENCE:
+                    usable_carrier = True
+                    usable_association_count += 1
+                    usable_mutation_indices.add(provenance.mutation_index)
+                    usable_signals[association.meaning].add(association.signal)
+                    meaning_counts[association.meaning]["usable"] += 1
+                    depth_counts[provenance.lineage_depth]["usable"] += 1
+                    if provenance.source_form_was_borrowed:
+                        usable_borrowed_source_association_count += 1
+                        usable_borrowed_source_carrier = True
+                    if store == "production":
+                        usable_production_count += 1
+                        usable_production_carrier = True
+                        if association.borrowing_provenance is not None:
+                            usable_borrowing_channel_count += 1
+                    else:
+                        usable_comprehension_count += 1
+                        usable_comprehension_carrier = True
+                    if source_present:
+                        usable_source_descendant_coexistence_count += 1
+        if carrier:
+            retained_carrier_count += 1
+        if usable_carrier:
+            usable_carrier_count += 1
+        if retained_production_carrier:
+            retained_production_carrier_count += 1
+        if usable_production_carrier:
+            usable_production_carrier_count += 1
+        if retained_comprehension_carrier:
+            retained_comprehension_carrier_count += 1
+        if usable_comprehension_carrier:
+            usable_comprehension_carrier_count += 1
+        if retained_borrowed_source_carrier:
+            retained_borrowed_source_carrier_count += 1
+        if usable_borrowed_source_carrier:
+            usable_borrowed_source_carrier_count += 1
+        for meaning, association in selected.items():
+            selected_production_slot_count += 1
+            meaning_counts[meaning]["selected_slots"] += 1
+            if association.lexical_evolution_provenance is not None:
+                selected_descendant_slot_count += 1
+                meaning_counts[meaning]["selected_descendant_slots"] += 1
+
+    successful_mutations = lexical_runtime.successful_mutation_count
+    saturated = (
+        lexical_runtime.eligible_mutation_opportunity_count
+        == MAX_LEXICAL_OBSERVATION_OPPORTUNITIES
+    )
+    if (
+        not saturated
+        and len(retained_mutation_indices) > successful_mutations
+    ):
+        _raise(
+            "lexical_mutation_retention_partition_mismatch",
+            "retained mutation indices exceed successful mutations",
+        )
+    retained_survival_rate = (
+        None
+        if saturated or successful_mutations == 0
+        else _quantize(
+            len(retained_mutation_indices) / successful_mutations)
+    )
+    usable_survival_rate = (
+        None
+        if saturated or successful_mutations == 0
+        else _quantize(
+            len(usable_mutation_indices) / successful_mutations)
+    )
+    selected_share = (
+        _quantize(
+            selected_descendant_slot_count / selected_production_slot_count)
+        if selected_production_slot_count else None
+    )
+    branching_source_count = sum(
+        1 for descendants in direct_edge_descendants.values()
+        if len(descendants) >= 2
+    )
+    return {
+        "population_count": population_count,
+        "retained_lexical_descendant_carrier_count": retained_carrier_count,
+        "usable_lexical_descendant_carrier_count": usable_carrier_count,
+        "retained_production_descendant_carrier_count": (
+            retained_production_carrier_count),
+        "usable_production_descendant_carrier_count": (
+            usable_production_carrier_count),
+        "retained_comprehension_descendant_carrier_count": (
+            retained_comprehension_carrier_count),
+        "usable_comprehension_descendant_carrier_count": (
+            usable_comprehension_carrier_count),
+        "retained_borrowed_source_descendant_carrier_count": (
+            retained_borrowed_source_carrier_count),
+        "usable_borrowed_source_descendant_carrier_count": (
+            usable_borrowed_source_carrier_count),
+        "retained_lexical_descendant_association_count": (
+            retained_association_count),
+        "usable_lexical_descendant_association_count": (
+            usable_association_count),
+        "retained_borrowed_source_descendant_association_count": (
+            retained_borrowed_source_association_count),
+        "usable_borrowed_source_descendant_association_count": (
+            usable_borrowed_source_association_count),
+        "channels": {
+            "retained_production_association_count": retained_production_count,
+            "usable_production_association_count": usable_production_count,
+            "retained_comprehension_association_count": (
+                retained_comprehension_count),
+            "usable_comprehension_association_count": (
+                usable_comprehension_count),
+            "retained_contact_exposure_count": (
+                retained_contact_channel_count),
+            "retained_intergenerational_provenance_count": (
+                retained_intergenerational_channel_count),
+            "retained_borrowing_provenance_count": (
+                retained_borrowing_channel_count),
+            "usable_borrowing_provenance_count": (
+                usable_borrowing_channel_count),
+        },
+        "source_descendant_coexistence_count": (
+            source_descendant_coexistence_count),
+        "usable_source_descendant_coexistence_count": (
+            usable_source_descendant_coexistence_count),
+        "direct_source_branching_count": branching_source_count,
+        "selected_production_slot_count": selected_production_slot_count,
+        "selected_descendant_production_slot_count": (
+            selected_descendant_slot_count),
+        "selected_descendant_share": selected_share,
+        "distinct_retained_mutation_index_count": (
+            len(retained_mutation_indices)),
+        "distinct_usable_mutation_index_count": len(usable_mutation_indices),
+        "retained_mutation_survival_rate": retained_survival_rate,
+        "usable_mutation_survival_rate": usable_survival_rate,
+        "maximum_retained_lineage_depth": maximum_retained_lineage_depth,
+        "mutation_derivation_index": lexical_runtime.mutation_derivation_index,
+        "meanings": [
+            {
+                "meaning": meaning.name,
+                "retained_association_count": (
+                    meaning_counts[meaning]["retained"]),
+                "usable_association_count": (
+                    meaning_counts[meaning]["usable"]),
+                "unique_retained_descendant_signal_count": (
+                    len(retained_signals[meaning])),
+                "unique_usable_descendant_signal_count": (
+                    len(usable_signals[meaning])),
+                "selected_production_slot_count": (
+                    meaning_counts[meaning]["selected_slots"]),
+                "selected_descendant_production_slot_count": (
+                    meaning_counts[meaning]["selected_descendant_slots"]),
+                "selected_descendant_share": (
+                    _quantize(
+                        meaning_counts[meaning]["selected_descendant_slots"]
+                        / meaning_counts[meaning]["selected_slots"]
+                    )
+                    if meaning_counts[meaning]["selected_slots"] else None
+                ),
+            }
+            for meaning in Meaning
+        ],
+        "lineage_depths": [
+            {
+                "lineage_depth": depth,
+                "retained_association_count": (
+                    depth_counts[depth]["retained"]),
+                "usable_association_count": depth_counts[depth]["usable"],
+            }
+            for depth in range(
+                1,
+                validated_lexical_config.maximum_lexical_lineage_depth + 1,
+            )
+        ],
+        "runtime": lexical_evolution_runtime_record(
+            lexical_runtime,
+            config=validated_lexical_config,
+            language_runtime=validated_language_runtime,
+        ),
+    }
+
+
 def coalition_dialect_runtime_record(
     runtime: CoalitionDialectRuntimeState,
     *,
@@ -4231,9 +5876,15 @@ def lexical_convergence_snapshot(
     config: LanguageConfig,
     inhabitant_ids: Iterable[int] | None = None,
     intergenerational_enabled: bool = False,
+    lexical_config: LexicalEvolutionConfig | None = None,
 ) -> dict[str, object]:
     """Calculate local or population agreement without pairwise enumeration."""
     selected_ids = None
+    if lexical_config is not None:
+        validated_lexical_config = validate_lexical_evolution_config(
+            lexical_config, require_enabled=True)
+    else:
+        validated_lexical_config = None
     if inhabitant_ids is not None:
         selected = tuple(inhabitant_ids)
         if any(not _exact_nonnegative_int(item) for item in selected):
@@ -4264,6 +5915,7 @@ def lexical_convergence_snapshot(
                 inhabitant.language,
                 config=config,
                 intergenerational_enabled=intergenerational_enabled,
+                lexical_config=validated_lexical_config,
                 owner_id=inhabitant_id,
             )
             active_signals.update(
@@ -4349,6 +6001,8 @@ def coalition_dialect_summary(
     dialect_config: CoalitionDialectConfig,
     language_runtime: LanguageRuntimeState,
     dialect_runtime: CoalitionDialectRuntimeState,
+    lexical_config: LexicalEvolutionConfig | None = None,
+    lexical_runtime: LexicalEvolutionRuntimeState | None = None,
 ) -> dict[str, object]:
     """Summarize current agent lexicons by frozen coalition in O(P x L)."""
     _validate_config(language_config, require_enabled=True)
@@ -4366,6 +6020,13 @@ def coalition_dialect_summary(
     )
     validated_language_runtime = validate_language_runtime(
         language_runtime, initialized=True)
+    validated_lexical_config, validated_lexical_runtime = (
+        _validated_lexical_summary_inputs(
+            validated_language_runtime,
+            lexical_config,
+            lexical_runtime,
+        )
+    )
     runtime_record = coalition_dialect_runtime_record(
         dialect_runtime,
         language_runtime=validated_language_runtime,
@@ -4416,8 +6077,12 @@ def coalition_dialect_summary(
             intergenerational_enabled=(
                 validated_language_runtime
                 .intergenerational_language_enabled),
+            lexical_config=validated_lexical_config,
             owner_id=inhabitant_id,
         )
+        if validated_lexical_runtime is not None:
+            _validate_lexical_mutation_indices(
+                (state,), validated_lexical_runtime)
         if coalition_id is None:
             unassigned_member_count += 1
             destination = unassigned_counts
@@ -4600,6 +6265,8 @@ def language_contact_summary(
     contact_config: LanguageContactConfig,
     language_runtime: LanguageRuntimeState,
     contact_runtime: LanguageContactRuntimeState,
+    lexical_config: LexicalEvolutionConfig | None = None,
+    lexical_runtime: LexicalEvolutionRuntimeState | None = None,
 ) -> dict[str, object]:
     """Aggregate current contact and borrowing state in one O(P x L) pass.
 
@@ -4622,6 +6289,13 @@ def language_contact_summary(
             "language_contact_runtime_gate_mismatch",
             "contact summary requires the authoritative runtime gate",
         )
+    validated_lexical_config, validated_lexical_runtime = (
+        _validated_lexical_summary_inputs(
+            validated_language_runtime,
+            lexical_config,
+            lexical_runtime,
+        )
+    )
     validate_language_contact_runtime(
         contact_runtime,
         config=validated_contact_config,
@@ -4685,8 +6359,12 @@ def language_contact_summary(
             intergenerational_enabled=(
                 validated_language_runtime
                 .intergenerational_language_enabled),
+            lexical_config=validated_lexical_config,
             owner_id=inhabitant_id,
         )
+        if validated_lexical_runtime is not None:
+            _validate_lexical_mutation_indices(
+                (state,), validated_lexical_runtime)
         for association in state.comprehension.values():
             exposure = association.contact_exposure
             if exposure is None:

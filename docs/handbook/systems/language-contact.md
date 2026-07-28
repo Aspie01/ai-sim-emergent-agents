@@ -27,6 +27,13 @@ communication remain base-rate Language v1 behavior. Same-coalition
 communication remains base Language v1 behavior unless the independent
 Coalition Dialects v1 gate is enabled.
 
+The independent [Lexical Evolution v1](lexical-evolution.md) extension may
+substitute the selected sender form before interpretation. The one shared
+contact classification still governs accounting while the receiver learns the
+actual emitted descendant under the existing exact-signal rules.
+Coalition/contact state is not an input to lexical derivation, and no extra
+contact attempt is created.
+
 ## 2. Verified gap beyond the earlier language slices
 
 Base Language v1 grounds communication only in successfully committed aid and
@@ -111,6 +118,11 @@ The same comprehension association may independently carry
 `ContactExposure` without changing the association's immutable direct-parent
 facts.
 
+A comprehension association may also carry
+`LexicalEvolutionProvenance`. Contact learning copies that bounded signal-form
+record exactly when the destination has none while `ContactExposure`
+independently records the immediate cross-coalition acquisition channel.
+
 ## 6. Contact-qualified borrowing provenance
 
 `BorrowingProvenance` is immutable historical metadata attached only when a
@@ -155,6 +167,11 @@ association is counted, and contact `BorrowingProvenance` is attached. If only
 the generic rule qualifies, production has no borrowing provenance. Promotion
 is exact-once for an existing key.
 
+Generic and contact-qualified promotion preserve an existing bounded lexical
+record. Production still cannot carry `ContactExposure` or
+`IntergenerationalProvenance`; a contact-qualified production may carry both
+its lexical direct-edge record and its separate `BorrowingProvenance`.
+
 ## 9. Mixed individual vocabularies, pruning, and relearning
 
 All production and comprehension associations remain inhabitant-owned. An
@@ -176,7 +193,9 @@ A parent may teach a form whose production association is contact-borrowed.
 That birth exposure records only bounded direct-parent intergenerational facts:
 it copies neither `BorrowingProvenance` nor `ContactExposure`, creates no
 contact attempt, and does not treat the original source coalition as the
-child's source.
+child's source. If that form already has lexical provenance, the birth path
+copies the signal and bounded lexical record exactly without creating a new
+mutation opportunity.
 
 ## 10. Runtime counters and invariants
 
@@ -315,8 +334,10 @@ The feature stores no migration identity, prestige, schooling, official
 language, permanent bilingual label, or population-level language history.
 Intergenerational transmission is now an independent implemented
 comprehension-only birth extension; it does not change contact classification
-or counters. Lexical mutation/evolution, compositional protolanguage, grammar,
-and language coevolution remain planned rather than implemented.
+or counters. Lexical Evolution v1 is an independent implemented substitution
+extension whose derivation does not read contact classification. Compositional
+protolanguage, grammar, and language coevolution remain planned rather than
+implemented.
 
 ## 16. Language roadmap
 
@@ -325,15 +346,17 @@ Completed engineering implementations:
 - `feature/endogenous-language-v1`;
 - `feature/coalition-dialects-v1`;
 - `feature/language-contact-v1`;
-- `feature/intergenerational-language-v1`.
+- `feature/intergenerational-language-v1`;
+- `feature/lexical-evolution-v1`.
 
 Planned, not implemented:
 
-- `feature/lexical-evolution-v1` — **Planned, not implemented**;
 - `feature/compositional-protolanguage-v1` — **Planned, not implemented**;
 - `feature/grammar-evolution-v1` — **Planned, not implemented**;
 - `feature/language-coevolution-v1` — **Planned, not implemented**;
 - `feature/language-research-readiness-v1` — **Planned, not implemented**.
+
+The next milestone is `feature/compositional-protolanguage-v1`: **Planned, not implemented**.
 
 ## 17. Implementation evidence
 
@@ -360,6 +383,7 @@ engineering feature; not research-ready.
 
 - `tests/test_language_contact.py`;
 - `tests/test_intergenerational_language.py`;
+- `tests/test_lexical_evolution.py`;
 - `tests/test_language_evolution.py`;
 - `tests/test_language_interaction_hooks.py`;
 - `tests/test_language_reproducibility.py`;

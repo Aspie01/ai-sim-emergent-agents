@@ -5,6 +5,7 @@
 | Active inhabitant | Living object admitted to `SimulationState.people` with a stable run-scoped ID |
 | Authentic communication | Language call produced exactly once by a successfully committed Layer-4 individual or faction-mediated transfer |
 | Borrowing provenance | Immutable first-contact and adoption facts attached only to a contact-promoted learned production association |
+| Borrowed-source descendant | Lexical descendant whose direct source production carried `BorrowingProvenance`; this is recorded by `LexicalEvolutionProvenance.source_form_was_borrowed` and is distinct from later borrowing of the descendant itself |
 | Coalition | Informal stable-ID social group derived from reciprocal `Relationship` topology; not a formal faction |
 | Condition | Filename-safe run label recorded in artifacts; not itself a behavioral hash input |
 | Context | Either transfer context (`AID_TRANSFER`, `PAID_TRADE`, `FACTION_TRADE`) or one of four coalition communication classifications |
@@ -16,6 +17,9 @@
 | Intergenerational provenance | Bounded immutable first-parent facts plus one- or two-parent source counts attached only to a child comprehension association |
 | Legacy trust | Name-keyed integer trust used by older survival/faction/reproduction mechanics |
 | Language contact | Positive language-only extension for authentic `DIFFERENT_ACTIVE_COALITIONS` communication; assigned/unassigned communication is not contact in v1 |
+| Lexical descendant | Same-length signal produced by one deterministic token substitution of a pre-existing usable production form |
+| Lexical evolution provenance | Immutable bounded direct mutation edge recording source form/owner/origin, operation/position/index/tick, scalar lineage depth, and whether the source form was borrowed |
+| Lexical lineage depth | Bounded scalar number of mutation steps represented by the current direct edge; not a stored ancestry chain |
 | Manifest | JSON termination, configuration, writer-health, inventory, provenance and state-fingerprint envelope |
 | Meaning | One of the four closed language concepts: food, wood, ore, stone |
 | Mixed production carrier | Inhabitant with usable borrowed and nonborrowed production for at least one same meaning; not a stored identity label |

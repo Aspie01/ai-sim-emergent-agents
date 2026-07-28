@@ -2,7 +2,7 @@
 
 ## Current conclusion
 
-The repository contains strong engineering validation for deterministic seeded execution, termination-aware structured artifacts, deep validation, social memory, informal coalitions, endogenous language, coalition dialects, Language Contact v1, and Intergenerational Language v1. It does not contain executed Core Replication V2 evidence or a complete V2 orchestration/provenance workflow.
+The repository contains strong engineering validation for deterministic seeded execution, termination-aware structured artifacts, deep validation, social memory, informal coalitions, endogenous language, coalition dialects, Language Contact v1, Intergenerational Language v1, and Lexical Evolution v1. It does not contain executed Core Replication V2 evidence or a complete V2 orchestration/provenance workflow.
 
 Valid engineering evidence and research-ready evidence are different states:
 
@@ -46,12 +46,12 @@ Completed engineering implementations at the documented revision:
 - `feature/coalition-dialects-v1`: Implemented but experimental; Disabled by default; Engineering-only.
 - `feature/language-contact-v1`: Implemented but experimental; Disabled by default; Engineering-only.
 - `feature/intergenerational-language-v1`: Implemented but experimental; Disabled by default; Engineering-only.
+- `feature/lexical-evolution-v1`: Implemented but experimental; Disabled by default; Engineering-only.
 
 Future milestones:
 
 | Milestone | Status |
 | --- | --- |
-| `feature/lexical-evolution-v1` | Planned, not implemented |
 | `feature/compositional-protolanguage-v1` | Planned, not implemented |
 | `feature/grammar-evolution-v1` | Planned, not implemented |
 | `feature/language-coevolution-v1` | Planned, not implemented |
@@ -59,16 +59,20 @@ Future milestones:
 
 Current source implements bounded different-coalition acquisition, exposure,
 and contact-qualified borrowing plus bounded comprehension-only transmission
-from exact birth parents. It does not implement complete vocabulary
-inheritance, signal mutation/lineage, compositional signals, grammar/syntax,
+from exact birth parents. It also implements deterministic same-length
+one-token lexical descendants with bounded direct-edge provenance during
+authentic committed-transfer communication. It does not implement complete
+vocabulary inheritance, deletion/insertion, ancestry reconstruction,
+phonology, morphology, cognates, compositional signals, grammar/syntax,
 language-to-coalition/social feedback, or a finalized language research
-contract. On-demand contact and intergenerational summaries are not approved
-research endpoints. Retained parental exposure does not prove uninterrupted
+contract. On-demand contact, intergenerational, and lexical summaries are not
+approved research endpoints. Retained parental exposure does not prove uninterrupted
 inheritance because later ordinary communication may reinforce the same
-association. This handbook does not invent hypotheses, estimands, uncertainty
-rules, or research conclusions for these mechanisms.
+association, and retained lexical indices do not reconstruct a full lineage.
+This handbook does not invent hypotheses, estimands, uncertainty rules, or
+research conclusions for these mechanisms.
 
-The next language milestone is `feature/lexical-evolution-v1`: **Planned, not implemented**.
+The next language milestone is `feature/compositional-protolanguage-v1`: **Planned, not implemented**.
 
 ## Core Replication V2 authorization
 
@@ -87,6 +91,10 @@ Tests establish implementation contracts such as:
 - successful-birth-only parental exposure, comprehension-only acquisition,
   exact-once sentinels, rollback boundaries, one-pass summaries, hashing, and
   causal isolation;
+- post-transfer lexical opportunities, pinned deterministic substitutions,
+  actual descendant emission, direct-edge provenance, collision/depth/saturation
+  semantics, transactional rollback, one-pass summaries, hashing, and causal
+  isolation;
 - termination and manifest sealing;
 - artifact streaming, checksums, cross-file consistency, and readiness vetoes;
 - runner containment and timeout/cancellation classification.
@@ -94,9 +102,10 @@ Tests establish implementation contracts such as:
 They do not establish natural long-run effect sizes, scientific hypotheses, external validity, full environment portability, or V2 research readiness.
 
 Artifact validation makes missing, enabled, normalized, or nondefault
-intergenerational controls non-V2-ready, and an `ExpectedRunContract` cannot
-override that veto. The generic runner rejects the complete intergenerational
-option family before output-root or child-process activity.
+intergenerational or lexical controls non-V2-ready, and an
+`ExpectedRunContract` cannot override either veto. The generic runner rejects
+the complete intergenerational and lexical option families before output-root
+or child-process activity. Both parsers retain `allow_abbrev=False`.
 
 ## Criteria for a future research-readiness revision
 
@@ -109,4 +118,5 @@ The later `feature/language-research-readiness-v1` milestone is **Planned, not i
 - Runner: `run_experiments.py`.
 - Tests: `tests/test_artifact_validation.py`,
   `tests/test_experiment_runner.py`, `tests/test_reproducibility.py`,
-  `tests/test_intergenerational_language.py`.
+  `tests/test_intergenerational_language.py`,
+  `tests/test_lexical_evolution.py`.

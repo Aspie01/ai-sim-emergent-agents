@@ -31,6 +31,7 @@ from .config import (
     IntergenerationalLanguageConfig,
     LanguageContactConfig,
     LanguageEvolutionConfig,
+    LexicalEvolutionConfig,
 )
 from .social import relationship_records
 from .coalitions import (
@@ -45,12 +46,15 @@ from .language import (
     LanguageContactRuntimeState,
     LanguageInvariantError,
     LanguageRuntimeState,
+    LexicalEvolutionRuntimeState,
     agent_language_record,
     coalition_dialect_runtime_record,
     contact_runtime_is_pristine,
     dialect_runtime_is_pristine,
     intergenerational_language_runtime_record,
     intergenerational_runtime_is_pristine,
+    lexical_evolution_runtime_is_pristine,
+    lexical_evolution_runtime_record,
     language_contact_runtime_record,
     language_runtime_is_pristine,
     language_runtime_record,
@@ -61,6 +65,8 @@ from .language import (
     validate_language_contact_config,
     validate_language_contact_runtime,
     validate_language_config,
+    validate_lexical_evolution_config,
+    validate_lexical_evolution_runtime,
 )
 
 
@@ -71,8 +77,10 @@ def _person_record(
     include_language: bool = False,
     include_contact: bool = False,
     include_intergenerational: bool = False,
+    include_lexical_evolution: bool = False,
     language_config=None,
     contact_config=None,
+    lexical_config=None,
 ) -> dict:
     religion = getattr(person, "religion", None)
     record = {
@@ -106,6 +114,8 @@ def _person_record(
             include_contact=include_contact,
             contact_config=contact_config,
             include_intergenerational=include_intergenerational,
+            include_lexical_evolution=include_lexical_evolution,
+            lexical_config=lexical_config,
         )
         record["language"] = {
             key: value
@@ -393,6 +403,52 @@ def _require_pristine_disabled_intergenerational_state(state) -> None:
         )
 
 
+def _require_pristine_disabled_lexical_state(state) -> None:
+    """Reject lexical state omitted from the disabled behavioral payload."""
+    for cohort, inhabitants in (
+        ("living", state.people),
+        ("dead", state.all_dead),
+    ):
+        for index, inhabitant in enumerate(inhabitants):
+            language = getattr(inhabitant, "language", None)
+            if type(language) is not AgentLanguageState:
+                raise LanguageInvariantError(
+                    "missing_disabled_agent_language_state",
+                    "disabled lexical evolution requires explicit agent "
+                    f"language state: {cohort}[{index}]",
+                )
+            hidden = [
+                association
+                for store in (
+                    language.production,
+                    language.comprehension,
+                )
+                for association in store.values()
+                if getattr(
+                    association, "lexical_evolution_provenance", None
+                ) is not None
+            ]
+            if hidden:
+                inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+                raise LanguageInvariantError(
+                    "nonpristine_disabled_lexical_evolution_metadata",
+                    "disabled lexical evolution cannot conceal association "
+                    f"metadata: {cohort}[{index}] "
+                    f"inhabitant_id={inhabitant_id!r}",
+                )
+    runtime = getattr(state, "lexical_evolution", None)
+    if type(runtime) is not LexicalEvolutionRuntimeState:
+        raise LanguageInvariantError(
+            "missing_disabled_lexical_evolution_runtime",
+            "disabled lexical evolution requires an explicit runtime",
+        )
+    if not lexical_evolution_runtime_is_pristine(runtime):
+        raise LanguageInvariantError(
+            "nonpristine_disabled_lexical_evolution_runtime",
+            "disabled lexical evolution requires pristine runtime state",
+        )
+
+
 def _coalition_state_record(runtime: CoalitionRuntimeState) -> dict:
     """Return the complete coalition runtime in canonical JSON-safe form."""
     return {
@@ -594,6 +650,45 @@ def _intergenerational_hash_config(
     return result
 
 
+def _lexical_hash_config(configuration: dict) -> LexicalEvolutionConfig:
+    """Build exact enabled lexical controls for behavioral hashing."""
+    required = (
+        "lexical_evolution_enabled",
+        "lexical_mutation_rate",
+        "maximum_lexical_lineage_depth",
+        "lexical_evolution_controls_status",
+        "lexical_evolution_control_notices",
+    )
+    missing = [name for name in required if name not in configuration]
+    if missing:
+        raise ValueError(
+            "enabled lexical evolution hashing lacks controls: "
+            + ", ".join(missing)
+        )
+    if configuration["lexical_evolution_controls_status"] != (
+        "engineering_only_uncontracted"
+    ):
+        raise ValueError(
+            "enabled lexical evolution hashing requires engineering-only status"
+        )
+    if (
+        type(configuration["lexical_evolution_control_notices"]) is not list
+        or configuration["lexical_evolution_control_notices"]
+    ):
+        raise ValueError(
+            "enabled lexical evolution hashing requires exact empty notices"
+        )
+    result = LexicalEvolutionConfig(
+        lexical_evolution_enabled=configuration[
+            "lexical_evolution_enabled"],
+        lexical_mutation_rate=configuration["lexical_mutation_rate"],
+        maximum_lexical_lineage_depth=configuration[
+            "maximum_lexical_lineage_depth"],
+    )
+    validate_lexical_evolution_config(result, require_enabled=True)
+    return result
+
+
 def canonical_state_hash(state, world: list, configuration: dict) -> str:
     """Return a SHA-256 fingerprint of behaviorally relevant final state."""
     social_memory_enabled = configuration.get("social_memory_enabled") is True
@@ -628,6 +723,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         raise ValueError("intergenerational language setting must be boolean")
     intergenerational_language_enabled = configuration.get(
         "intergenerational_language_enabled", False)
+    if (
+        "lexical_evolution_enabled" in configuration
+        and type(configuration["lexical_evolution_enabled"]) is not bool
+    ):
+        raise ValueError("lexical evolution setting must be boolean")
+    lexical_evolution_enabled = configuration.get(
+        "lexical_evolution_enabled", False)
     non_behavioral_keys = {
         "condition",
         "log_mode",
@@ -692,6 +794,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         "intergenerational_language_controls_status",
         "intergenerational_language_control_notices",
     }
+    lexical_configuration_keys = {
+        "lexical_evolution_enabled",
+        "lexical_mutation_rate",
+        "maximum_lexical_lineage_depth",
+        "lexical_evolution_controls_status",
+        "lexical_evolution_control_notices",
+    }
     if not dialect_influence_enabled:
         _require_pristine_disabled_dialect_state(state)
         non_behavioral_keys.update(dialect_configuration_keys)
@@ -710,6 +819,12 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
     elif not language_evolution_enabled:
         raise ValueError(
             "enabled intergenerational language requires language evolution")
+    if not lexical_evolution_enabled:
+        _require_pristine_disabled_lexical_state(state)
+        non_behavioral_keys.update(lexical_configuration_keys)
+    elif not language_evolution_enabled:
+        raise ValueError(
+            "enabled lexical evolution requires language evolution")
     if not coalition_emergence_enabled:
         _require_empty_disabled_coalition_state(state)
         non_behavioral_keys.update(coalition_configuration_keys)
@@ -734,6 +849,10 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         _intergenerational_hash_config(configuration)
         if intergenerational_language_enabled else None
     )
+    lexical_hash_config = (
+        _lexical_hash_config(configuration)
+        if lexical_evolution_enabled else None
+    )
     intergenerational_runtime = None
     if intergenerational_language_enabled:
         intergenerational_runtime = getattr(
@@ -748,6 +867,17 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             config=intergenerational_hash_config,
             language_runtime=state.language,
         )
+    lexical_runtime = None
+    if lexical_evolution_enabled:
+        lexical_runtime = getattr(state, "lexical_evolution", None)
+        if type(lexical_runtime) is not LexicalEvolutionRuntimeState:
+            raise ValueError(
+                "enabled lexical evolution requires a valid runtime")
+        validate_lexical_evolution_runtime(
+            lexical_runtime,
+            config=lexical_hash_config,
+            language_runtime=state.language,
+        )
     if language_evolution_enabled:
         validate_intergenerational_parent_references(
             state.people,
@@ -756,6 +886,8 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             contact_config=contact_hash_config,
             intergenerational_enabled=intergenerational_language_enabled,
             intergenerational_runtime=intergenerational_runtime,
+            lexical_config=lexical_hash_config,
+            lexical_runtime=lexical_runtime,
         )
     people_records = [
         _person_record(
@@ -764,8 +896,10 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             include_language=language_evolution_enabled,
             include_contact=language_contact_enabled,
             include_intergenerational=intergenerational_language_enabled,
+            include_lexical_evolution=lexical_evolution_enabled,
             language_config=language_hash_config,
             contact_config=contact_hash_config,
+            lexical_config=lexical_hash_config,
         )
         for person in state.people
     ]
@@ -776,8 +910,10 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             include_language=language_evolution_enabled,
             include_contact=language_contact_enabled,
             include_intergenerational=intergenerational_language_enabled,
+            include_lexical_evolution=lexical_evolution_enabled,
             language_config=language_hash_config,
             contact_config=contact_hash_config,
+            lexical_config=lexical_hash_config,
         )
         for person in state.all_dead
     ]
@@ -857,6 +993,12 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
                 "language runtime intergenerational gate disagrees with "
                 "effective controls",
             )
+        if runtime.lexical_evolution_enabled is not lexical_evolution_enabled:
+            raise LanguageInvariantError(
+                "lexical_evolution_runtime_gate_mismatch",
+                "language runtime lexical gate disagrees with effective "
+                "controls",
+            )
         payload["language_state"] = language_runtime_record(runtime)
     if coalition_emergence_enabled:
         runtime = getattr(state, "coalitions", None)
@@ -894,6 +1036,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
                 config=intergenerational_hash_config,
                 language_runtime=state.language,
             )
+        )
+    if lexical_evolution_enabled:
+        assert lexical_runtime is not None
+        payload["lexical_evolution_state"] = lexical_evolution_runtime_record(
+            lexical_runtime,
+            config=lexical_hash_config,
+            language_runtime=state.language,
         )
     encoded = json.dumps(
         _json_safe(payload),

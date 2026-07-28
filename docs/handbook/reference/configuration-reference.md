@@ -1,6 +1,6 @@
 # Configuration reference
 
-`SimulationConfig` is a frozen effective configuration. The simulator parses with `allow_abbrev=False`, normalizes feature dependencies, validates values, updates a small set of compatibility globals, and passes explicit frozen subconfigurations to the newer social, coalition, language, dialect, contact, and intergenerational-language systems.
+`SimulationConfig` is a frozen effective configuration. The simulator parses with `allow_abbrev=False`, normalizes feature dependencies, validates values, updates a small set of compatibility globals, and passes explicit frozen subconfigurations to the newer social, coalition, language, dialect, contact, intergenerational-language, and lexical-evolution systems.
 
 ## Core fields
 
@@ -129,6 +129,26 @@ intergenerational gate off and records:
 The feature does not depend on coalitions, dialect influence, language contact,
 formal factions, or settlements.
 
+## Lexical-evolution controls
+
+| Field | Default | Valid range / dependency |
+| --- | ---: | --- |
+| `lexical_evolution_enabled` | `False` | Exact Boolean; requires only effective base language evolution |
+| `lexical_mutation_rate` | exact float `0.05` | Exact finite float in inclusive `0.0..1.0` |
+| `maximum_lexical_lineage_depth` | `8` | Exact non-Boolean integer `1..32` |
+
+CLI forms are `--enable-lexical-evolution`,
+`--disable-lexical-evolution`, `--lexical-mutation-rate`, and
+`--maximum-lexical-lineage-depth`.
+
+Requesting lexical evolution without effective base language normalizes only
+the lexical gate off, preserves both submitted numeric controls, and records:
+
+- `lexical_evolution_requested_without_language`
+
+The feature does not depend on intergenerational language, coalitions, dialect
+influence, language contact, social memory, formal factions, or settlements.
+
 ## Provenance status
 
 Each newer feature family records one of:
@@ -137,12 +157,25 @@ Each newer feature family records one of:
 - `normalized_uncontracted`: an invalid dependency request was normalized off and notices record why;
 - `engineering_only_uncontracted`: a feature is enabled or any control is nondefault, without normalization notices.
 
-These are provenance classifications, not alternate runtime switches. The generic experiment runner rejects all social, coalition, language, dialect, contact, and intergenerational option families—including exact, equals, unambiguous-prefix, and ambiguous-prefix forms—before output-root creation or mutation, command construction, verification mutation, or child launch.
+These are provenance classifications, not alternate runtime switches. Lexical
+controls use exactly the same statuses:
+
+- exact disabled defaults use `disabled`;
+- a normalized request uses `normalized_uncontracted`;
+- an enabled gate or either nondefault numeric control without normalization
+  uses `engineering_only_uncontracted`.
+
+The generic experiment runner rejects all social, coalition, language, dialect,
+contact, intergenerational, and lexical option families—including exact,
+equals, unambiguous-prefix, and ambiguous-prefix forms—before output-root
+creation or mutation, command construction, verification mutation, or child
+launch. Both simulator and runner parsers reject option abbreviations through
+`allow_abbrev=False`.
 
 Present contradictions are artifact-invalid. Historically missing
-intergenerational fields remain schema-valid, but missing, enabled, normalized,
-or nondefault intergenerational controls veto V2 readiness. An
-`ExpectedRunContract` cannot override that veto.
+intergenerational or lexical fields remain schema-valid, but missing, enabled,
+normalized, or nondefault controls in either family veto V2 readiness. An
+`ExpectedRunContract` cannot override either veto.
 
 ## Seed and entry-point caveats
 
@@ -159,6 +192,7 @@ example from the repository directory.
 - Source: `src/thalren_vale/config.py`, `src/thalren_vale/sim.py::run`, `src/thalren_vale/__main__.py`.
 - Tests: `tests/test_config.py`, `tests/test_language_contact.py`,
   `tests/test_intergenerational_language.py`,
+  `tests/test_lexical_evolution.py`,
   `tests/test_language_reproducibility.py`, `tests/test_reproducibility.py`,
   `tests/test_artifact_validation.py`, `tests/test_experiment_runner.py`.
 - Verified help: `python -m thalren_vale --help`.

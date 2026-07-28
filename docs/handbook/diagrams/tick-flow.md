@@ -12,9 +12,12 @@ flowchart TD
     INTERGEN -->|no| SNAP{Dialect or contact enabled?}
     TEACH --> SNAP
     SNAP -->|yes| FROZEN[Build one prior-coalition snapshot]
-    SNAP -->|no| ECO[Economy]
+    SNAP -->|no| ECO[Economy and committed-transfer language]
     FROZEN --> ECO
-    ECO --> COMBAT[Combat if enabled]
+    ECO --> LEXICAL{Eligible lexical opportunity?}
+    LEXICAL -->|yes| MUTATE[Exact source or one-token descendant emission]
+    LEXICAL -->|no| COMBAT[Combat if enabled]
+    MUTATE --> COMBAT
     COMBAT --> TECH[Technology if enabled]
     TECH --> DIP[Diplomacy if enabled]
     DIP --> REL[Religion and optional mythology]

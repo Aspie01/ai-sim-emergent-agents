@@ -12,6 +12,10 @@ base language rates with no penalty. The independent
 receiver-side learning and borrowing evidence for
 `DIFFERENT_ACTIVE_COALITIONS`; that is not a dialect penalty or
 coalition-owned language.
+The independent [Lexical Evolution v1](lexical-evolution.md) extension may
+change the actually emitted signal before interpretation. Its trigger and
+substitution derivation do not read the shared coalition classification,
+dialect runtime, or contact state.
 
 The causal direction is strictly one-way:
 
@@ -47,6 +51,9 @@ feedback from comprehension success.
   same-coalition adjusted rate.
 - **Language contact:** independent positive acquisition/provenance extension
   that qualifies only different-active-coalitions communication.
+- **Lexical opportunity:** independent deterministic form-substitution step
+  for a pre-existing usable production association; coalition context is not a
+  derivation input.
 
 ## 4. Current status
 
@@ -115,9 +122,13 @@ mutable coalition state, inventory, or language results.
 1. Validate constant-time snapshot provenance and freshness, communicator IDs,
    and active presence.
 2. Perform two membership lookups and choose exactly one of the four contexts.
-3. Copy sender lexicon, receiver lexicon, language runtime, dialect runtime, and
-   the independent contact runtime when enabled.
-4. Finalize the language result from pre-learning comprehension.
+3. Copy sender lexicon, receiver lexicon, language runtime, dialect runtime,
+   independent lexical runtime when enabled, and independent contact runtime
+   when enabled.
+4. If lexical evolution is enabled, derive at most one opportunity from the
+   selected source without reading dialect/contact context. Finalize the
+   language result from pre-learning comprehension of the actual emitted
+   source or descendant signal.
 5. For `same_active_coalition` only, calculate:
 
    ```text
@@ -181,6 +192,7 @@ runs after that transition. See
 | Aid/trade | Economy → dialect | Authentic committed communicator pair | Post-commit | Triggers one classification |
 | Endogenous language | Dialect → language | Adjusted same-coalition learning/reinforcement rates | After interpretation | Changes language state only |
 | Language contact | Shared classification → language | Different-coalition positive acquisition and bounded provenance | After interpretation | Independent language-only extension |
+| Lexical evolution | Selected usable form → emitted signal | Context-independent SHA-256 opportunity and substitution | Before interpretation | Independent language-only form change |
 | Coalition lifecycle | Intentionally isolated | No language result | End of tick | IDs/membership unaffected |
 | Material/social systems | Intentionally isolated | None | All times | No transfer, trust, faction, survival, or RNG effect |
 | Hashing | Dialect → hash | Exact controls and runtime | Finalization | Fingerprints enabled behavior |
@@ -204,6 +216,10 @@ Language contact has its own gate, defaults, normalization notices, runtime,
 and counters. Neither language extension requires the other, but both require
 effective base language and coalition emergence and share one snapshot and
 classification when both are enabled.
+
+Lexical evolution requires only effective base language. It does not require
+coalitions, dialects, or contact and never reads this subsystem's
+classification when deriving a variant.
 
 ## 12. Events
 
@@ -245,6 +261,11 @@ and inspects at most the bounded association cap per inhabitant, giving
 enumeration. Post-pass ordering is limited to bounded coalition IDs, the fixed
 `Meaning` enum, bounded signal-frequency keys, and fixed runtime fields. See
 [Determinism and RNG](../architecture/determinism-and-rng.md).
+
+When lexical evolution is enabled, the actual descendant signal can naturally
+change the existing exact-signal result to which dialect rates apply. It does
+not create a second communication or dialect classification, and toggling the
+dialect gate cannot change the lexical trigger or descendant signal.
 
 ## 15. Failure and edge cases
 
@@ -301,6 +322,8 @@ authoritative state.
   and borrowing, but no spatial contact zone, permanent bilingual identity,
   migration label, prestige, schooling, leadership, diplomacy, faction
   language, grammar, or inherited dialect exists.
+- Lexical Evolution v1 now provides bounded one-token substitution, but no
+  fuzzy intelligibility, phonology, morphology, composition, or grammar.
 - Current summaries are on-demand and store no history.
 - The feature is blocked from research experiment plans and V2 readiness.
 
@@ -312,10 +335,10 @@ Completed engineering implementations:
 - `feature/coalition-dialects-v1`
 - `feature/language-contact-v1`
 - `feature/intergenerational-language-v1`
+- `feature/lexical-evolution-v1`
 
 Planned, not implemented:
 
-- `feature/lexical-evolution-v1` — **Planned, not implemented**
 - `feature/compositional-protolanguage-v1` — **Planned, not implemented**
 - `feature/grammar-evolution-v1` — **Planned, not implemented**
 - `feature/language-coevolution-v1` — **Planned, not implemented**
@@ -323,6 +346,8 @@ Planned, not implemented:
 
 In particular, language-driven coalition lifecycle and relationship feedback are
 part of coevolution, not current dialect behavior.
+
+The next milestone is `feature/compositional-protolanguage-v1`: **Planned, not implemented**.
 
 ## 20. Implementation evidence
 
@@ -348,6 +373,7 @@ slice; not research-ready.
 - `tests/test_coalition_dialects.py`
 - `tests/test_language_contact.py`
 - `tests/test_language_evolution.py`
+- `tests/test_lexical_evolution.py`
 - `tests/test_language_interaction_hooks.py`
 - `tests/test_language_reproducibility.py`
 - `tests/test_informal_coalitions.py`

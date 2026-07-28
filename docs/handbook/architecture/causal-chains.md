@@ -106,6 +106,25 @@ already admitted child and consumed stable ID committed while rolling back the
 three language-owned mutable owners. See
 [Intergenerational language](../systems/intergenerational-language.md).
 
+## Lexical evolution
+
+```text
+already-committed aid/trade
+-> authoritative pre-existing usable production selection
+-> one deterministic lexical opportunity
+-> exact source emission when not triggered or depth-limited
+   OR one-token descendant substitution and actual descendant emission
+-> exact receiver interpretation and learning
+-> ordinary competition, promotion, forgetting, pruning, or extinction
+```
+
+Ordinary invention is not a lexical opportunity. The substitution derivation
+uses stable lexical-event inputs and SHA-256, not coalition/dialect/contact
+state or RNG. The descendant may coexist with or replace its source through
+ordinary bounded association rules. The transfer has already committed and no
+language result feeds back into material, social, biological, faction, or
+coalition state. See [Lexical evolution](../systems/lexical-evolution.md).
+
 ## Formal civilization chain
 
 ```text
@@ -147,6 +166,7 @@ The generic runner currently records only part of the complete provenance shown.
 | Coalition membership -> same-group language rates | Causal one-way |
 | Different active coalitions -> positive contact acquisition/borrowing | Causal one-way within language |
 | Committed birth + exact parents -> child comprehension | Causal one-way within language after birth admission |
+| Committed transfer + selected usable form -> lexical descendant emission | Causal one-way within language after transfer commit |
 | Language -> economy/coalitions/survival | Intentionally isolated |
 | State -> metrics/events/dashboard | Diagnostic/observational |
 | Plan -> child process/artifacts | Operational causal chain |
@@ -155,6 +175,6 @@ The generic runner currently records only part of the complete provenance shown.
 ## Implementation evidence
 
 - Sources: `inhabitants.py`, `economy.py`, `social.py`, `coalitions.py`, `language.py`, `sim.py`, `run_experiments.py`.
-- Tests: social, coalition, language, dialect, contact, intergenerational,
+- Tests: social, coalition, language, dialect, contact, intergenerational, lexical,
   termination, and artifact suites listed in
   [test reference](../reference/test-reference.md).

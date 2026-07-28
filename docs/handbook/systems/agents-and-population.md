@@ -271,16 +271,16 @@ Two inhabitants share a tile. Each has mutual legacy trust 5, hunger 20, and one
 ## 19. Future extensions
 
 `feature/intergenerational-language-v1` is implemented but experimental,
-disabled by default, and engineering-only. Signal mutation belongs to the next
-milestone, `feature/lexical-evolution-v1`: **Planned, not implemented**. Age,
+disabled by default, and engineering-only. `feature/lexical-evolution-v1` is
+also implemented but creates opportunities only during authentic
+post-transfer communication, never during birth or population admission. Age,
 demographic roles, migration identity, and genetic inheritance remain absent.
 
 ## 20. Implementation evidence
 
-**Implementation status:** Implemented but experimental on
-`feature/intergenerational-language-v1`, based at
-`f9647958e35114540ab681cc7ed816991f506f43` with the accepted feature working
-tree.
+**Implementation status:** Implemented but experimental in the documented
+Lexical Evolution v1 working tree; population and reproduction semantics are
+unchanged by that feature.
 
 **Primary source**
 

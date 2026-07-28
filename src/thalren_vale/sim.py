@@ -74,8 +74,10 @@ from .language import (
     initialize_intergenerational_language_runtime,
     initialize_language_contact_runtime,
     initialize_language_runtime,
+    initialize_lexical_evolution_runtime,
     intergenerational_runtime_is_pristine,
     language_runtime_is_pristine,
+    lexical_evolution_runtime_is_pristine,
     maintain_language_state,
     transmit_intergenerational_language,
     validate_agent_language_state,
@@ -84,6 +86,7 @@ from .language import (
     validate_intergenerational_parent_references,
     validate_language_contact_runtime,
     validate_language_runtime,
+    validate_lexical_evolution_runtime,
 )
 
 TICKS = config.TICKS
@@ -149,6 +152,7 @@ def _validated_reset_language_owners(
     contact_config: config.LanguageContactConfig | None,
     *,
     intergenerational_enabled: bool,
+    lexical_config: config.LexicalEvolutionConfig | None,
 ) -> list[tuple[object, AgentLanguageState]]:
     """Validate every unique authoritative language owner before reset mutates."""
     validated: list[tuple[object, AgentLanguageState]] = []
@@ -171,6 +175,7 @@ def _validated_reset_language_owners(
                 config=_RESET_LANGUAGE_VALIDATION_CONFIG,
                 contact_config=contact_config,
                 intergenerational_enabled=intergenerational_enabled,
+                lexical_config=lexical_config,
                 owner_id=getattr(inhabitant, "inhabitant_id", None),
             )
             validated.append((inhabitant, validated_state))
@@ -181,6 +186,7 @@ def _validate_reset_language_runtimes(
 ) -> tuple[
     config.LanguageContactConfig | None,
     config.IntergenerationalLanguageConfig | None,
+    config.LexicalEvolutionConfig | None,
 ]:
     """Validate all language runtimes and return active contact controls."""
     if language_runtime_is_pristine(state.language):
@@ -201,7 +207,14 @@ def _validate_reset_language_runtimes(
                 "nonpristine_intergenerational_language_runtime",
                 "disabled language runtime cannot conceal parental state",
             )
-        return None, None
+        if not lexical_evolution_runtime_is_pristine(
+            state.lexical_evolution
+        ):
+            raise LanguageInvariantError(
+                "nonpristine_lexical_evolution_runtime",
+                "disabled language runtime cannot conceal lexical state",
+            )
+        return None, None, None
 
     validate_language_runtime(state.language, initialized=True)
     if state.language.coalition_dialect_influence_enabled:
@@ -269,19 +282,42 @@ def _validate_reset_language_runtimes(
                 "nonpristine_intergenerational_language_runtime",
                 "disabled intergenerational language cannot retain runtime state",
             )
-    return contact_config, intergenerational_config
+    if state.language.lexical_evolution_enabled:
+        lexical_config = config.LexicalEvolutionConfig(
+            lexical_evolution_enabled=True,
+            lexical_mutation_rate=(
+                state.lexical_evolution.lexical_mutation_rate),
+            maximum_lexical_lineage_depth=(
+                state.lexical_evolution.maximum_lexical_lineage_depth),
+        )
+        validate_lexical_evolution_runtime(
+            state.lexical_evolution,
+            config=lexical_config,
+            language_runtime=state.language,
+        )
+    else:
+        lexical_config = None
+        if not lexical_evolution_runtime_is_pristine(
+            state.lexical_evolution
+        ):
+            raise LanguageInvariantError(
+                "nonpristine_lexical_evolution_runtime",
+                "disabled lexical evolution cannot retain runtime state",
+            )
+    return contact_config, intergenerational_config, lexical_config
 
 
 def reset_runtime_state() -> None:
     """Reset all mutable stores that can leak across in-process runs."""
     global _last_dynamic_t
 
-    contact_config, intergenerational_config = (
+    contact_config, intergenerational_config, lexical_config = (
         _validate_reset_language_runtimes())
     intergenerational_enabled = intergenerational_config is not None
     language_owners = _validated_reset_language_owners(
         contact_config,
         intergenerational_enabled=intergenerational_enabled,
+        lexical_config=lexical_config,
     )
     validate_intergenerational_parent_references(
         people,
@@ -292,6 +328,10 @@ def reset_runtime_state() -> None:
         intergenerational_runtime=(
             state.intergenerational_language
             if intergenerational_enabled else None
+        ),
+        lexical_config=lexical_config,
+        lexical_runtime=(
+            state.lexical_evolution if lexical_config is not None else None
         ),
     )
 
@@ -660,6 +700,7 @@ def economy_layer(
     dialect_config: config.CoalitionDialectConfig | None = None,
     coalition_config: config.CoalitionConfig | None = None,
     contact_config: config.LanguageContactConfig | None = None,
+    lexical_config: config.LexicalEvolutionConfig | None = None,
 ) -> None:
     """Layer 4: currency, pricing, trade, raids, scarcity, wealth."""
     if social_config is None:
@@ -711,6 +752,13 @@ def economy_layer(
             borrowing_confidence_threshold=(
                 config.DEFAULT_BORROWING_CONFIDENCE_THRESHOLD
             ),
+        )
+    if lexical_config is None:
+        lexical_config = config.LexicalEvolutionConfig(
+            lexical_evolution_enabled=False,
+            lexical_mutation_rate=config.DEFAULT_LEXICAL_MUTATION_RATE,
+            maximum_lexical_lineage_depth=(
+                config.DEFAULT_MAXIMUM_LEXICAL_LINEAGE_DEPTH),
         )
     coalition_membership_snapshot = None
     coalition_context_required = (
@@ -769,6 +817,14 @@ def economy_layer(
                 state.language_contact
                 if contact_config.language_contact_enabled else None
             ),
+            lexical_config=(
+                lexical_config if lexical_config.lexical_evolution_enabled
+                else None
+            ),
+            lexical_runtime=(
+                state.lexical_evolution
+                if lexical_config.lexical_evolution_enabled else None
+            ),
             coalition_membership_snapshot=coalition_membership_snapshot,
             rng=random,
         )
@@ -816,6 +872,12 @@ def maintain_emergent_state(
                 config=run_config.intergenerational_language_config,
                 language_runtime=state.language,
             )
+        if run_config.lexical_evolution_enabled:
+            validate_lexical_evolution_runtime(
+                state.lexical_evolution,
+                config=run_config.lexical_evolution_config,
+                language_runtime=state.language,
+            )
         maintain_language_state(
             people,
             newly_dead,
@@ -825,6 +887,14 @@ def maintain_emergent_state(
             contact_config=(
                 run_config.language_contact_config
                 if run_config.language_contact_enabled else None
+            ),
+            lexical_config=(
+                run_config.lexical_evolution_config
+                if run_config.lexical_evolution_enabled else None
+            ),
+            lexical_runtime=(
+                state.lexical_evolution
+                if run_config.lexical_evolution_enabled else None
             ),
         )
 
@@ -1127,6 +1197,7 @@ def procreation_layer(
         config.IntergenerationalLanguageConfig | None
     ) = None,
     contact_config: config.LanguageContactConfig | None = None,
+    lexical_config: config.LexicalEvolutionConfig | None = None,
 ) -> None:
     """Generational logic: trust-based births, belief inheritance, faction assignment.
 
@@ -1257,6 +1328,13 @@ def procreation_layer(
                         intergenerational_runtime=(
                             state.intergenerational_language),
                         contact_config=contact_config,
+                        lexical_config=lexical_config,
+                        lexical_runtime=(
+                            state.lexical_evolution
+                            if lexical_config is not None
+                            and lexical_config.lexical_evolution_enabled
+                            else None
+                        ),
                     )
 
                 # Religion inheritance: 95 % chance when the birth tile is
@@ -2201,6 +2279,19 @@ def run() -> None:
     _parser.add_argument(
         '--intergenerational-learning-strength', type=float, default=None,
         help='Confidence delta for each parental comprehension exposure')
+    _lexical_evolution = _parser.add_mutually_exclusive_group()
+    _lexical_evolution.add_argument(
+        '--enable-lexical-evolution', action='store_true',
+        help='Enable engineering-only lexical signal substitution')
+    _lexical_evolution.add_argument(
+        '--disable-lexical-evolution', action='store_true',
+        help='Explicitly retain exact emitted signal forms')
+    _parser.add_argument(
+        '--lexical-mutation-rate', type=float, default=None,
+        help='Deterministic lexical mutation opportunity rate')
+    _parser.add_argument(
+        '--maximum-lexical-lineage-depth', type=int, default=None,
+        help='Maximum bounded lexical direct-lineage depth')
     _args = _parser.parse_args()
 
     # ── Validate and apply effective configuration ──────────────────────────
@@ -2254,6 +2345,12 @@ def run() -> None:
                 'warning: intergenerational language was requested without '
                 'effective language evolution; parental transmission '
                 'normalized to false and the run is not V2-ready\n')
+    for _notice in _run_config.lexical_evolution_control_notices:
+        if _notice == config.LEXICAL_EVOLUTION_NOTICE_WITHOUT_LANGUAGE:
+            sys.stderr.write(
+                'warning: lexical evolution was requested without effective '
+                'language evolution; lexical evolution normalized to false '
+                'and the run is not V2-ready\n')
     _run_config.apply_legacy_globals()
     TICKS = _run_config.ticks
     POP_CAP = _run_config.population_cap
@@ -2280,6 +2377,8 @@ def run() -> None:
             language_contact_enabled=_run_config.language_contact_enabled,
             intergenerational_language_enabled=(
                 _run_config.intergenerational_language_enabled),
+            lexical_evolution_enabled=(
+                _run_config.lexical_evolution_enabled),
         )
         if _run_config.language_contact_enabled:
             initialize_language_contact_runtime(
@@ -2290,6 +2389,12 @@ def run() -> None:
             initialize_intergenerational_language_runtime(
                 state.intergenerational_language,
                 _run_config.intergenerational_language_config,
+            )
+        if _run_config.lexical_evolution_enabled:
+            initialize_lexical_evolution_runtime(
+                state.lexical_evolution,
+                _run_config.lexical_evolution_config,
+                _seed_value,
             )
     # Serial mode: guarantees reproducibility by eliminating thread PRNG interleaving
     _serial_mode = (_args.seed is not None)
@@ -2410,6 +2515,10 @@ def run() -> None:
                     _run_config.language_contact_config
                     if _run_config.language_contact_enabled else None
                 ),
+                (
+                    _run_config.lexical_evolution_config
+                    if _run_config.lexical_evolution_enabled else None
+                ),
             )
             _t_proc = (time.perf_counter() - _t_proc_start) * 1000
 
@@ -2423,6 +2532,7 @@ def run() -> None:
                     _run_config.coalition_dialect_config,
                     _run_config.coalition_config,
                     _run_config.language_contact_config,
+                    _run_config.lexical_evolution_config,
                 )
             _t_eco = (time.perf_counter() - _t_eco_start) * 1000
 

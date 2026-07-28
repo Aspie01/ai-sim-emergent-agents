@@ -21,7 +21,7 @@ world tiles
 -> inhabitant needs, movement, inventory and death
 -> beliefs and formal factions
 -> reproduction and optional post-admission parental comprehension exposure
--> economy/resources/currency/relationships/language and contact exposure
+-> economy/resources/currency/relationships/language, lexical variation and contact exposure
 -> combat, technology, diplomacy, religion
 -> scheduled interventions and plugins
 -> social/coalition/language maintenance
@@ -46,6 +46,15 @@ objects directly, selects a bounded deterministic subset of usable parental
 production, and proposes child comprehension only. No non-birth spawn enters
 this path. A proposal failure rolls back child/base/intergenerational language
 owners but not the already committed birth.
+
+When Lexical Evolution v1 is effective, an authentic post-transfer
+`communicate()` call first selects the sender's pre-existing usable production
+association. One SHA-256 opportunity may replace that source with a
+same-length, one-token descendant. The descendant is the actual emitted signal
+used by interpretation, receiver learning, contact/dialect accounting, and
+promotion. Ordinary invention, birth transmission, maintenance, and
+noncommunication state changes do not enter this path. The derivation reads no
+coalition, dialect, contact, relationship, or RNG state.
 
 ## Observation to artifacts
 
@@ -87,6 +96,15 @@ only when every living/dead association and runtime is pristine. The on-demand
 summary is not a standard artifact and performs one `O(P x L)` population pass
 without parent lookup, pairing, sorting, mutation, or RNG.
 
+Enabled lexical hashing includes exact controls/status, the base-language
+lexical gate, the complete dedicated runtime including
+`mutation_derivation_index`, and canonical direct-edge lexical provenance on
+production and comprehension. Disabled lexical fields are omitted only when
+the dedicated runtime and every living/dead association are pristine.
+`lexical_evolution_summary()` is also internal and on demand: it makes one
+`O(P x L)` pass without owner resolution, pairing, ancestry traversal,
+population sorting, state mutation, or RNG.
+
 The current belief CSV header says `inhabitant_id`, but the producer writes the inhabitant display name. The deep validator verifies a nonempty unique string at each snapshot tick; it does not reinterpret it as the stable integer ID.
 
 ## Plan to batch result
@@ -115,5 +133,6 @@ Canonical analysis should begin with revalidation of the raw structured set. Der
 - `run_experiments.py`.
 - Tests: `tests/test_events.py`, `tests/test_language_contact.py`,
   `tests/test_intergenerational_language.py`,
+  `tests/test_lexical_evolution.py`,
   `tests/test_language_reproducibility.py`, `tests/test_artifact_validation.py`,
   `tests/test_experiment_runner.py`.

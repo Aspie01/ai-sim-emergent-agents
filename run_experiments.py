@@ -95,6 +95,12 @@ _UNCONTRACTED_INTERGENERATIONAL_LANGUAGE_FLAGS = frozenset({
     '--maximum-parental-meanings-per-parent',
     '--intergenerational-learning-strength',
 })
+_UNCONTRACTED_COMPOSITIONAL_PROTOLANGUAGE_FLAGS = frozenset({
+    '--enable-compositional-protolanguage',
+    '--disable-compositional-protolanguage',
+    '--maximum-resource-morpheme-length',
+    '--modality-morpheme-length',
+})
 _UNCONTRACTED_LEXICAL_EVOLUTION_FLAGS = frozenset({
     '--enable-lexical-evolution',
     '--disable-lexical-evolution',
@@ -219,6 +225,26 @@ def _reject_uncontracted_intergenerational_language_args(
                 f'permitted in the experiment runner: {argument}')
 
 
+def _reject_uncontracted_compositional_protolanguage_args(
+    extra_args: tuple[str, ...],
+) -> None:
+    """Reserve every exact, equals, and prefix composition option."""
+    for argument in extra_args:
+        option_name = argument.split('=', 1)[0]
+        if any(
+            option_name == flag
+            or (
+                option_name.startswith('--')
+                and len(option_name) > 2
+                and flag.startswith(option_name)
+            )
+            for flag in _UNCONTRACTED_COMPOSITIONAL_PROTOLANGUAGE_FLAGS
+        ):
+            raise ValueError(
+                f'uncontracted compositional protolanguage control is not '
+                f'permitted in the experiment runner: {argument}')
+
+
 def _reject_uncontracted_lexical_evolution_args(
     extra_args: tuple[str, ...],
 ) -> None:
@@ -296,6 +322,7 @@ def _freeze_cell(cell: object) -> _FrozenCell:
     _reject_uncontracted_language_contact_args(frozen_extra_args)
     _reject_uncontracted_intergenerational_language_args(frozen_extra_args)
     _reject_uncontracted_lexical_evolution_args(frozen_extra_args)
+    _reject_uncontracted_compositional_protolanguage_args(frozen_extra_args)
     if timeout_seconds is not None and (
         type(timeout_seconds) is not int or timeout_seconds < 1
     ):
@@ -371,6 +398,8 @@ def load_plan(plan_path: Path) -> tuple[dict, str]:
         _reject_uncontracted_intergenerational_language_args(
             tuple(parsed_extra))
         _reject_uncontracted_lexical_evolution_args(tuple(parsed_extra))
+        _reject_uncontracted_compositional_protolanguage_args(
+            tuple(parsed_extra))
     return plan, hashlib.sha256(raw).hexdigest()
 
 

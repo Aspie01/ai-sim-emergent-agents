@@ -23,12 +23,16 @@ from .config import (
     CoalitionDialectConfig,
     IntergenerationalLanguageConfig,
     LanguageContactConfig,
+    CompositionalProtolanguageConfig,
     LexicalEvolutionConfig,
 )
 
 
 LANGUAGE_DOMAIN = "thalren-vale:endogenous-language-v1"
 LEXICAL_EVOLUTION_DOMAIN = "thalren-vale:lexical-evolution-v1"
+COMPOSITIONAL_PROTOLANGUAGE_DOMAIN = (
+    "thalren-vale:compositional-protolanguage-v1"
+)
 PHONEME_COUNT = 8
 MIN_SIGNAL_LENGTH = 2
 MAX_SIGNAL_LENGTH = 4
@@ -69,10 +73,68 @@ class Meaning(str, Enum):
         return value
 
 
+class Modality(str, Enum):
+    """Closed transfer modalities grounded by committed economy contexts."""
+
+    GIFT = "GIFT"
+    EXCHANGE = "EXCHANGE"
+
+    def __hash__(self) -> int:
+        """Return a stable small hash independent of salted string hashing."""
+        value = 0
+        for character in self.name:
+            value = value * 37 + ord(character)
+        return value
+
+
+class CompositeMeaning(str, Enum):
+    """Closed fixed-arity (resource, modality) meanings for composition v1.
+
+    Declared in canonical resource-major order so ``MEANING_ORDER`` indices are
+    stable. Membership is closed: no composite meaning exists that a committed
+    transfer cannot ground.
+    """
+
+    FOOD_GIFT = "FOOD_GIFT"
+    FOOD_EXCHANGE = "FOOD_EXCHANGE"
+    WOOD_GIFT = "WOOD_GIFT"
+    WOOD_EXCHANGE = "WOOD_EXCHANGE"
+    ORE_GIFT = "ORE_GIFT"
+    ORE_EXCHANGE = "ORE_EXCHANGE"
+    STONE_GIFT = "STONE_GIFT"
+    STONE_EXCHANGE = "STONE_EXCHANGE"
+
+    def __hash__(self) -> int:
+        """Return a stable small hash independent of salted string hashing."""
+        value = 0
+        for character in self.name:
+            value = value * 37 + ord(character)
+        return value
+
+
+# Base meanings keep indices 0..3 so previously pinned canonical orderings and
+# state hashes are unchanged. Composite meanings are appended, never renumbered.
 MEANING_ORDER = {meaning: index for index, meaning in enumerate(Meaning)}
+MEANING_ORDER.update({
+    composite: len(Meaning) + index
+    for index, composite in enumerate(CompositeMeaning)
+})
 MAX_INTERGENERATIONAL_ATTEMPTS = (
     MAX_LANGUAGE_COUNTER // (2 * len(Meaning))
 )
+COMPOSITE_MEANING_BY_PARTS = {
+    (meaning, modality): CompositeMeaning[f"{meaning.name}_{modality.name}"]
+    for meaning in Meaning
+    for modality in Modality
+}
+COMPOSITE_MEANING_RESOURCE = {
+    composite: meaning
+    for (meaning, _modality), composite in COMPOSITE_MEANING_BY_PARTS.items()
+}
+COMPOSITE_MEANING_MODALITY = {
+    composite: modality
+    for (_meaning, modality), composite in COMPOSITE_MEANING_BY_PARTS.items()
+}
 RESOURCE_MEANINGS = {
     "food": Meaning.FOOD,
     "wood": Meaning.WOOD,
@@ -87,6 +149,16 @@ class CommunicationContext(str, Enum):
     AID_TRANSFER = "aid_transfer"
     PAID_TRADE = "paid_trade"
     FACTION_TRADE = "faction_trade"
+
+
+# The modality dimension carries only information the economy layer already
+# computes for the committed transfer: whether payment occurred. Mediation
+# identity stays event metadata and is not semantic.
+MODALITY_FOR_CONTEXT = {
+    CommunicationContext.AID_TRANSFER: Modality.GIFT,
+    CommunicationContext.PAID_TRADE: Modality.EXCHANGE,
+    CommunicationContext.FACTION_TRADE: Modality.EXCHANGE,
+}
 
 
 class CommunicationResult(str, Enum):
@@ -248,6 +320,7 @@ class LanguageRuntimeState:
     language_contact_enabled: bool = False
     intergenerational_language_enabled: bool = False
     lexical_evolution_enabled: bool = False
+    compositional_protolanguage_enabled: bool = False
 
 
 @dataclass(slots=True)
@@ -320,6 +393,35 @@ class LexicalEvolutionRuntimeState:
     borrowed_source_mutation_count: int = 0
     maximum_observed_lineage_depth: int = 0
     last_mutation_tick: int | None = None
+
+
+@dataclass(slots=True)
+class CompositionalProtolanguageRuntimeState:
+    """Frozen morpheme controls and synchronized composition observability.
+
+    Counters partition every composed utterance by modality so the two
+    dimensions can be observed independently. Unsaturated state satisfies:
+
+        composed_utterance_count == gift_utterance_count
+                                    + exchange_utterance_count
+        composed_invention_count <= composed_utterance_count
+        0 <= observed_composite_meaning_mask < 2 ** len(CompositeMeaning)
+
+    The observed-meaning mask is a bounded bitmask rather than a set so the
+    runtime stays constant size while still recording how much of the closed
+    composite meaning space a run has actually exercised.
+    """
+
+    seed_domain: str | None = None
+    seed_domain_fingerprint: str | None = None
+    maximum_resource_morpheme_length: int | None = None
+    modality_morpheme_length: int | None = None
+    composed_utterance_count: int = 0
+    gift_utterance_count: int = 0
+    exchange_utterance_count: int = 0
+    composed_invention_count: int = 0
+    observed_composite_meaning_mask: int = 0
+    last_composition_tick: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -719,6 +821,64 @@ def initialize_intergenerational_language_runtime(
     validate_intergenerational_language_runtime(runtime, config=validated)
 
 
+def validate_compositional_protolanguage_config(
+    config: object,
+    *,
+    require_enabled: bool = False,
+) -> CompositionalProtolanguageConfig:
+    """Validate exact effective controls for structured-meaning composition."""
+    if type(require_enabled) is not bool:
+        _raise(
+            "invalid_compositional_protolanguage_config",
+            "require-enabled policy must be boolean",
+        )
+    if type(config) is not CompositionalProtolanguageConfig:
+        _raise(
+            "invalid_compositional_protolanguage_config",
+            "compositional config has an invalid exact type",
+        )
+    if type(config.compositional_protolanguage_enabled) is not bool:
+        _raise(
+            "invalid_compositional_protolanguage_config",
+            "compositional protolanguage setting must be boolean",
+        )
+    if (
+        type(config.maximum_resource_morpheme_length) is not int
+        or not 1
+        <= config.maximum_resource_morpheme_length
+        <= MAX_SIGNAL_LENGTH - 1
+    ):
+        _raise(
+            "invalid_compositional_protolanguage_config",
+            "maximum resource morpheme length must be an integer from 1 to "
+            f"{MAX_SIGNAL_LENGTH - 1}",
+        )
+    if (
+        type(config.modality_morpheme_length) is not int
+        or not 1 <= config.modality_morpheme_length <= MAX_SIGNAL_LENGTH - 1
+    ):
+        _raise(
+            "invalid_compositional_protolanguage_config",
+            "modality morpheme length must be an integer from 1 to "
+            f"{MAX_SIGNAL_LENGTH - 1}",
+        )
+    if (
+        config.maximum_resource_morpheme_length
+        + config.modality_morpheme_length
+        > MAX_SIGNAL_LENGTH
+    ):
+        _raise(
+            "invalid_compositional_protolanguage_config",
+            "composed morpheme lengths must not exceed the signal length cap",
+        )
+    if require_enabled and not config.compositional_protolanguage_enabled:
+        _raise(
+            "compositional_protolanguage_processing_disabled",
+            "operation requires effective compositional processing",
+        )
+    return config
+
+
 def validate_lexical_evolution_config(
     config: object,
     *,
@@ -1034,6 +1194,151 @@ def initialize_lexical_evolution_runtime(
     runtime.maximum_lexical_lineage_depth = (
         validated.maximum_lexical_lineage_depth)
     validate_lexical_evolution_runtime(runtime, config=validated)
+
+
+def compositional_protolanguage_runtime_is_pristine(runtime: object) -> bool:
+    """Return whether a disabled compositional runtime carries no state."""
+    if type(runtime) is not CompositionalProtolanguageRuntimeState:
+        return False
+    return (
+        runtime.seed_domain is None
+        and runtime.seed_domain_fingerprint is None
+        and runtime.maximum_resource_morpheme_length is None
+        and runtime.modality_morpheme_length is None
+        and runtime.composed_utterance_count == 0
+        and runtime.gift_utterance_count == 0
+        and runtime.exchange_utterance_count == 0
+        and runtime.composed_invention_count == 0
+        and runtime.observed_composite_meaning_mask == 0
+        and runtime.last_composition_tick is None
+    )
+
+
+def validate_compositional_protolanguage_runtime(
+    runtime: object,
+    *,
+    config: CompositionalProtolanguageConfig | None = None,
+    language_runtime: LanguageRuntimeState | None = None,
+) -> CompositionalProtolanguageRuntimeState:
+    """Validate frozen controls, seed identity, and counter partitions."""
+    if type(runtime) is not CompositionalProtolanguageRuntimeState:
+        _raise(
+            "invalid_compositional_protolanguage_runtime",
+            "compositional runtime has an invalid exact type",
+        )
+    for field_name in (
+        "composed_utterance_count",
+        "gift_utterance_count",
+        "exchange_utterance_count",
+        "composed_invention_count",
+        "observed_composite_meaning_mask",
+    ):
+        if not _exact_nonnegative_int(getattr(runtime, field_name)):
+            _raise(
+                "invalid_compositional_protolanguage_runtime",
+                f"{field_name} must be an exact nonnegative integer",
+            )
+    if runtime.seed_domain is None:
+        if not compositional_protolanguage_runtime_is_pristine(runtime):
+            _raise(
+                "nonpristine_disabled_compositional_protolanguage_runtime",
+                "uninitialized compositional runtime must be pristine",
+            )
+        return runtime
+    if type(runtime.seed_domain) is not str or not runtime.seed_domain.startswith(
+        f"{COMPOSITIONAL_PROTOLANGUAGE_DOMAIN}|seed="
+    ):
+        _raise(
+            "invalid_compositional_protolanguage_runtime",
+            "compositional seed domain is invalid",
+        )
+    suffix = runtime.seed_domain.split("|seed=", 1)[1]
+    try:
+        if str(int(suffix)) != suffix:
+            raise ValueError
+    except ValueError:
+        _raise(
+            "invalid_compositional_protolanguage_runtime",
+            "compositional seed domain suffix is not a canonical integer",
+        )
+    if runtime.seed_domain_fingerprint != hashlib.sha256(
+        runtime.seed_domain.encode("ascii")
+    ).hexdigest():
+        _raise(
+            "invalid_compositional_protolanguage_runtime",
+            "compositional seed fingerprint does not match its domain",
+        )
+    if (
+        runtime.composed_utterance_count
+        != runtime.gift_utterance_count + runtime.exchange_utterance_count
+    ):
+        _raise(
+            "invalid_compositional_protolanguage_runtime",
+            "modality counters must partition composed utterances",
+        )
+    if runtime.composed_invention_count > runtime.composed_utterance_count:
+        _raise(
+            "invalid_compositional_protolanguage_runtime",
+            "composed inventions cannot exceed composed utterances",
+        )
+    if runtime.observed_composite_meaning_mask >= 2 ** len(CompositeMeaning):
+        _raise(
+            "invalid_compositional_protolanguage_runtime",
+            "observed composite meaning mask exceeds the closed meaning set",
+        )
+    if runtime.last_composition_tick is not None and not _exact_nonnegative_int(
+        runtime.last_composition_tick
+    ):
+        _raise(
+            "invalid_compositional_protolanguage_runtime",
+            "last composition tick must be an exact nonnegative integer",
+        )
+    if config is not None:
+        validated = validate_compositional_protolanguage_config(config)
+        if (
+            runtime.maximum_resource_morpheme_length
+            != validated.maximum_resource_morpheme_length
+            or runtime.modality_morpheme_length
+            != validated.modality_morpheme_length
+        ):
+            _raise(
+                "compositional_protolanguage_runtime_config_mismatch",
+                "frozen morpheme controls must match effective configuration",
+            )
+    if (
+        language_runtime is not None
+        and type(language_runtime) is LanguageRuntimeState
+        and language_runtime.compositional_protolanguage_enabled is not True
+    ):
+        _raise(
+            "compositional_protolanguage_runtime_gate_mismatch",
+            "initialized compositional runtime requires an enabled gate",
+        )
+    return runtime
+
+
+def initialize_compositional_protolanguage_runtime(
+    runtime: CompositionalProtolanguageRuntimeState,
+    config: CompositionalProtolanguageConfig,
+    run_seed: int,
+) -> None:
+    """Freeze morpheme controls and initialize deterministic seed identity."""
+    validate_compositional_protolanguage_runtime(runtime)
+    validated = validate_compositional_protolanguage_config(
+        config, require_enabled=True)
+    if type(run_seed) is not int:
+        _raise(
+            "invalid_compositional_protolanguage_seed",
+            "run seed must be exact",
+        )
+    runtime.seed_domain = (
+        f"{COMPOSITIONAL_PROTOLANGUAGE_DOMAIN}|seed={run_seed}")
+    runtime.seed_domain_fingerprint = hashlib.sha256(
+        runtime.seed_domain.encode("ascii")).hexdigest()
+    runtime.maximum_resource_morpheme_length = (
+        validated.maximum_resource_morpheme_length)
+    runtime.modality_morpheme_length = validated.modality_morpheme_length
+    validate_compositional_protolanguage_runtime(runtime, config=validated)
 
 
 _CONTACT_RESULT_COUNTER_FIELDS = (
@@ -1371,8 +1676,11 @@ def _validate_association(
 ) -> LexicalAssociation:
     if type(association) is not LexicalAssociation:
         _raise("invalid_language_association", "association record type is invalid")
-    if type(association.meaning) is not Meaning:
-        _raise("invalid_language_association", "meaning must be a Meaning")
+    if type(association.meaning) not in (Meaning, CompositeMeaning):
+        _raise(
+            "invalid_language_association",
+            "meaning must be a Meaning or CompositeMeaning",
+        )
     if type(association.signal) is not Signal:
         _raise("invalid_language_association", "signal record type is invalid")
     if len(association.signal.phoneme_ids) > maximum_signal_length:
@@ -1761,7 +2069,7 @@ def validate_agent_language_state(
         if (
             type(key) is not tuple
             or len(key) != 2
-            or type(key[0]) is not Meaning
+            or type(key[0]) not in (Meaning, CompositeMeaning)
             or type(key[1]) is not Signal
         ):
             _raise("invalid_production_key", "production key is not canonical")
@@ -1785,7 +2093,7 @@ def validate_agent_language_state(
             type(key) is not tuple
             or len(key) != 2
             or type(key[0]) is not Signal
-            or type(key[1]) is not Meaning
+            or type(key[1]) not in (Meaning, CompositeMeaning)
         ):
             _raise("invalid_comprehension_key", "comprehension key is not canonical")
         validated = _validate_association(
@@ -1957,6 +2265,7 @@ def initialize_language_runtime(
     language_contact_enabled: bool = False,
     intergenerational_language_enabled: bool = False,
     lexical_evolution_enabled: bool = False,
+    compositional_protolanguage_enabled: bool = False,
 ) -> None:
     """Initialize only the canonical seed domain; no entropy is constructed."""
     validate_language_runtime(runtime, initialized=False)
@@ -1982,6 +2291,11 @@ def initialize_language_runtime(
             "invalid_lexical_evolution_config",
             "language runtime lexical gate must be boolean",
         )
+    if type(compositional_protolanguage_enabled) is not bool:
+        _raise(
+            "invalid_compositional_protolanguage_config",
+            "language runtime compositional gate must be boolean",
+        )
     seed_domain = f"{LANGUAGE_DOMAIN}|seed={run_seed}"
     runtime.seed_domain = seed_domain
     runtime.seed_domain_fingerprint = hashlib.sha256(
@@ -1994,6 +2308,8 @@ def initialize_language_runtime(
     runtime.intergenerational_language_enabled = (
         intergenerational_language_enabled)
     runtime.lexical_evolution_enabled = lexical_evolution_enabled
+    runtime.compositional_protolanguage_enabled = (
+        compositional_protolanguage_enabled)
     validate_language_runtime(runtime, initialized=True)
 
 
@@ -2027,6 +2343,173 @@ def derive_invention_signal(
         maximum_signal_length - MIN_SIGNAL_LENGTH + 1
     )
     return Signal(tuple(digest[index + 1] & 0x07 for index in range(length)))
+
+
+def _compositional_digest(
+    runtime: CompositionalProtolanguageRuntimeState,
+    *,
+    speaker_id: int,
+    component: str,
+    value: str,
+    extent: int,
+) -> bytes:
+    """Return one canonical digest for a speaker-stable morpheme component.
+
+    The record deliberately excludes tick, receiver, invention index, coalition
+    state, and RNG so one speaker's morpheme for a component is stable for the
+    whole run. That stability is what makes the emitted lexicon systematic
+    rather than a set of unrelated whole-signal inventions.
+    """
+    record = (
+        f"{runtime.seed_domain}|speaker_id={speaker_id}"
+        f"|component={component}|value={value}|extent={extent}"
+    )
+    return hashlib.sha256(record.encode("ascii")).digest()
+
+
+def derive_resource_morpheme_length(
+    runtime: CompositionalProtolanguageRuntimeState,
+    *,
+    speaker_id: int,
+    resource: Meaning,
+    maximum_resource_morpheme_length: int,
+) -> int:
+    """Return one speaker's stable morpheme length for a resource."""
+    if type(resource) is not Meaning:
+        _raise("invalid_language_meaning", "resource must be a Meaning")
+    digest = _compositional_digest(
+        runtime,
+        speaker_id=speaker_id,
+        component="resource_length",
+        value=resource.name,
+        extent=maximum_resource_morpheme_length,
+    )
+    return 1 + digest[0] % maximum_resource_morpheme_length
+
+
+def derive_morpheme(
+    runtime: CompositionalProtolanguageRuntimeState,
+    *,
+    speaker_id: int,
+    component: str,
+    value: str,
+    length: int,
+) -> tuple[int, ...]:
+    """Return one speaker-stable morpheme of the requested phoneme length."""
+    digest = _compositional_digest(
+        runtime,
+        speaker_id=speaker_id,
+        component=component,
+        value=value,
+        extent=length,
+    )
+    return tuple(digest[index + 1] & 0x07 for index in range(length))
+
+
+def derive_composed_signal(
+    runtime: CompositionalProtolanguageRuntimeState,
+    *,
+    speaker_id: int,
+    composite_meaning: CompositeMeaning,
+    config: CompositionalProtolanguageConfig,
+) -> Signal:
+    """Compose one signal from a speaker's resource and modality morphemes.
+
+    The same speaker reuses one morpheme per resource across both modalities
+    and one morpheme per modality across all resources, so form structure
+    mirrors meaning structure. Comprehension remains exact-key lookup over the
+    whole composed signal; nothing here parses or generalizes.
+    """
+    if type(composite_meaning) is not CompositeMeaning:
+        _raise(
+            "invalid_language_meaning",
+            "composed signal requires a CompositeMeaning",
+        )
+    if not _exact_nonnegative_int(speaker_id):
+        _raise("invalid_language_identity", "speaker ID is invalid")
+    validated = validate_compositional_protolanguage_config(
+        config, require_enabled=True)
+    resource = COMPOSITE_MEANING_RESOURCE[composite_meaning]
+    modality = COMPOSITE_MEANING_MODALITY[composite_meaning]
+    resource_length = derive_resource_morpheme_length(
+        runtime,
+        speaker_id=speaker_id,
+        resource=resource,
+        maximum_resource_morpheme_length=(
+            validated.maximum_resource_morpheme_length),
+    )
+    resource_morpheme = derive_morpheme(
+        runtime,
+        speaker_id=speaker_id,
+        component="resource",
+        value=resource.name,
+        length=resource_length,
+    )
+    modality_morpheme = derive_morpheme(
+        runtime,
+        speaker_id=speaker_id,
+        component="modality",
+        value=modality.name,
+        length=validated.modality_morpheme_length,
+    )
+    return Signal(resource_morpheme + modality_morpheme)
+
+
+def _effective_communication_meaning(
+    intended_meaning: Meaning,
+    context: CommunicationContext,
+    *,
+    compositional_required: bool,
+) -> Meaning | CompositeMeaning:
+    """Return the meaning key one communication actually uses.
+
+    With composition disabled this is the base resource meaning, so every
+    pre-feature key, cap, and canonical ordering is unchanged. With composition
+    enabled the modality dimension is read from the committed transfer context
+    the economy layer already supplies; nothing is invented here.
+    """
+    if not compositional_required:
+        return intended_meaning
+    modality = MODALITY_FOR_CONTEXT.get(context)
+    if modality is None:
+        _raise(
+            "invalid_language_context",
+            "composed meaning requires an authentic transfer context",
+        )
+    return COMPOSITE_MEANING_BY_PARTS[(intended_meaning, modality)]
+
+
+def _derive_emission_signal(
+    runtime: LanguageRuntimeState,
+    compositional_runtime: CompositionalProtolanguageRuntimeState | None,
+    compositional_config: CompositionalProtolanguageConfig | None,
+    *,
+    sender_id: int,
+    meaning: Meaning | CompositeMeaning,
+    invention_index: int,
+    maximum_signal_length: int,
+    compositional_required: bool,
+) -> Signal:
+    """Derive one emitted signal for either the base or composed lexicon."""
+    if not compositional_required:
+        return derive_invention_signal(
+            runtime,
+            inventor_id=sender_id,
+            meaning=meaning,
+            invention_index=invention_index,
+            maximum_signal_length=maximum_signal_length,
+        )
+    if compositional_runtime is None or compositional_config is None:
+        _raise(
+            "missing_compositional_protolanguage_inputs",
+            "enabled composition requires its runtime and controls",
+        )
+    return derive_composed_signal(
+        compositional_runtime,
+        speaker_id=sender_id,
+        composite_meaning=meaning,
+        config=compositional_config,
+    )
 
 
 def _lexical_derivation_digest(
@@ -2439,6 +2922,56 @@ def _commit_lexical_runtime(
 ) -> None:
     for item in fields(LexicalEvolutionRuntimeState):
         setattr(target, item.name, getattr(proposed, item.name))
+
+
+def _commit_compositional_runtime(
+    target: CompositionalProtolanguageRuntimeState,
+    proposed: CompositionalProtolanguageRuntimeState,
+) -> None:
+    for item in fields(CompositionalProtolanguageRuntimeState):
+        setattr(target, item.name, getattr(proposed, item.name))
+
+
+_COMPOSITE_MEANING_BIT = {
+    composite: 1 << index
+    for index, composite in enumerate(CompositeMeaning)
+}
+
+
+def _record_composition(
+    proposed: CompositionalProtolanguageRuntimeState,
+    meaning: CompositeMeaning,
+    *,
+    tick: int,
+    invented: bool,
+) -> None:
+    """Record one composed utterance in the dedicated bounded runtime.
+
+    Modality counters partition composed utterances, so they advance together
+    with the total or not at all.
+    """
+    modality = COMPOSITE_MEANING_MODALITY[meaning]
+    proposed.composed_utterance_count = _increment(
+        proposed.composed_utterance_count,
+        field_name="composed_utterance_count",
+    )
+    if modality is Modality.GIFT:
+        proposed.gift_utterance_count = _increment(
+            proposed.gift_utterance_count,
+            field_name="gift_utterance_count",
+        )
+    else:
+        proposed.exchange_utterance_count = _increment(
+            proposed.exchange_utterance_count,
+            field_name="exchange_utterance_count",
+        )
+    if invented:
+        proposed.composed_invention_count = _increment(
+            proposed.composed_invention_count,
+            field_name="composed_invention_count",
+        )
+    proposed.observed_composite_meaning_mask |= _COMPOSITE_MEANING_BIT[meaning]
+    proposed.last_composition_tick = tick
 
 
 def _copy_lexical_provenance_if_absent(
@@ -3073,6 +3606,10 @@ def communicate(
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     lexical_config: LexicalEvolutionConfig | None = None,
     lexical_runtime: LexicalEvolutionRuntimeState | None = None,
+    compositional_config: CompositionalProtolanguageConfig | None = None,
+    compositional_runtime: (
+        CompositionalProtolanguageRuntimeState | None
+    ) = None,
 ) -> CommunicationOutcome:
     """Apply one complete communication transaction or leave all state unchanged."""
     contact_required = (
@@ -3096,6 +3633,8 @@ def communicate(
             coalition_membership_snapshot=coalition_membership_snapshot,
             lexical_config=lexical_config,
             lexical_runtime=lexical_runtime,
+            compositional_config=compositional_config,
+            compositional_runtime=compositional_runtime,
         )
     if contact_config is not None or contact_runtime is not None:
         _raise(
@@ -3152,6 +3691,38 @@ def communicate(
     else:
         validated_lexical_config = None
         validated_lexical_runtime = None
+    compositional_required = (
+        validated_runtime.compositional_protolanguage_enabled)
+    if compositional_required:
+        if compositional_config is None or compositional_runtime is None:
+            _raise(
+                "missing_compositional_protolanguage_inputs",
+                "enabled composed communication requires config and runtime",
+            )
+        validated_compositional_config = (
+            validate_compositional_protolanguage_config(
+                compositional_config, require_enabled=True))
+        validated_compositional_runtime = (
+            validate_compositional_protolanguage_runtime(
+                compositional_runtime,
+                config=validated_compositional_config,
+                language_runtime=validated_runtime,
+            ))
+    elif compositional_config is not None or compositional_runtime is not None:
+        _raise(
+            "unexpected_compositional_protolanguage_inputs",
+            "disabled composed communication cannot receive its inputs",
+        )
+    else:
+        validated_compositional_config = None
+        validated_compositional_runtime = None
+    # Rebinding here means every downstream key, cap, competition check, and
+    # canonical ordering uses the effective meaning without duplicating logic.
+    intended_meaning = _effective_communication_meaning(
+        intended_meaning,
+        context,
+        compositional_required=compositional_required,
+    )
     intergenerational_enabled = (
         validated_runtime.intergenerational_language_enabled)
     sender_state = validate_agent_language_state(
@@ -3229,6 +3800,11 @@ def communicate(
     proposed_lexical = (
         replace(validated_lexical_runtime) if lexical_required else None
     )
+    proposed_compositional = (
+        replace(validated_compositional_runtime)
+        if compositional_required else None
+    )
+    composed_invention = False
     selected_production = _select_production(
         proposed_sender, intended_meaning)
     if selected_production is not None and lexical_required:
@@ -3244,13 +3820,17 @@ def communicate(
             receiver_id=receiver_id,
         )
     if selected_production is None and config.language_invention_enabled:
-        signal = derive_invention_signal(
+        signal = _derive_emission_signal(
             proposed_runtime,
-            inventor_id=sender_id,
+            validated_compositional_runtime,
+            validated_compositional_config,
+            sender_id=sender_id,
             meaning=intended_meaning,
             invention_index=proposed_sender.next_invention_index,
             maximum_signal_length=config.maximum_signal_length,
+            compositional_required=compositional_required,
         )
+        composed_invention = compositional_required
         key = (intended_meaning, signal)
         existing = proposed_sender.production.get(key)
         if existing is None:
@@ -3639,6 +4219,22 @@ def communicate(
     original_dialect = (
         replace(dialect_runtime) if proposed_dialect is not None else None
     )
+    original_compositional = (
+        replace(compositional_runtime)
+        if proposed_compositional is not None else None
+    )
+    if proposed_compositional is not None:
+        _record_composition(
+            proposed_compositional,
+            intended_meaning,
+            tick=validated_tick,
+            invented=composed_invention,
+        )
+        validate_compositional_protolanguage_runtime(
+            proposed_compositional,
+            config=validated_compositional_config,
+            language_runtime=proposed_runtime,
+        )
     try:
         sender.language = proposed_sender
         receiver.language = proposed_receiver
@@ -3648,6 +4244,10 @@ def communicate(
             _commit_lexical_runtime(lexical_runtime, proposed_lexical)
         if proposed_dialect is not None:
             _commit_dialect_runtime(dialect_runtime, proposed_dialect)
+        if proposed_compositional is not None:
+            assert compositional_runtime is not None
+            _commit_compositional_runtime(
+                compositional_runtime, proposed_compositional)
     except BaseException:
         sender.language = original_sender
         receiver.language = original_receiver
@@ -3657,6 +4257,10 @@ def communicate(
             _commit_lexical_runtime(lexical_runtime, original_lexical)
         if original_dialect is not None:
             _commit_dialect_runtime(dialect_runtime, original_dialect)
+        if original_compositional is not None:
+            assert compositional_runtime is not None
+            _commit_compositional_runtime(
+                compositional_runtime, original_compositional)
         raise
 
     return CommunicationOutcome(
@@ -3699,6 +4303,10 @@ def _communicate_with_contact(
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None,
     lexical_config: LexicalEvolutionConfig | None,
     lexical_runtime: LexicalEvolutionRuntimeState | None,
+    compositional_config: CompositionalProtolanguageConfig | None = None,
+    compositional_runtime: (
+        CompositionalProtolanguageRuntimeState | None
+    ) = None,
 ) -> CommunicationOutcome:
     """Apply one contact-enabled transaction using one frozen classification."""
     _validate_config(config, require_enabled=True)
@@ -3764,6 +4372,38 @@ def _communicate_with_contact(
     else:
         validated_lexical_config = None
         validated_lexical_runtime = None
+    compositional_required = (
+        validated_runtime.compositional_protolanguage_enabled)
+    if compositional_required:
+        if compositional_config is None or compositional_runtime is None:
+            _raise(
+                "missing_compositional_protolanguage_inputs",
+                "enabled composed communication requires config and runtime",
+            )
+        validated_compositional_config = (
+            validate_compositional_protolanguage_config(
+                compositional_config, require_enabled=True))
+        validated_compositional_runtime = (
+            validate_compositional_protolanguage_runtime(
+                compositional_runtime,
+                config=validated_compositional_config,
+                language_runtime=validated_runtime,
+            ))
+    elif compositional_config is not None or compositional_runtime is not None:
+        _raise(
+            "unexpected_compositional_protolanguage_inputs",
+            "disabled composed communication cannot receive its inputs",
+        )
+    else:
+        validated_compositional_config = None
+        validated_compositional_runtime = None
+    # Rebinding here means every downstream key, cap, competition check, and
+    # canonical ordering uses the effective meaning without duplicating logic.
+    intended_meaning = _effective_communication_meaning(
+        intended_meaning,
+        context,
+        compositional_required=compositional_required,
+    )
 
     dialect_required = validated_runtime.coalition_dialect_influence_enabled
     validated_dialect_runtime = None
@@ -3850,6 +4490,11 @@ def _communicate_with_contact(
     proposed_lexical = (
         replace(validated_lexical_runtime) if lexical_required else None
     )
+    proposed_compositional = (
+        replace(validated_compositional_runtime)
+        if compositional_required else None
+    )
+    composed_invention = False
     selected_production = _select_production(
         proposed_sender, intended_meaning)
     if selected_production is not None and lexical_required:
@@ -3865,13 +4510,17 @@ def _communicate_with_contact(
             receiver_id=receiver_id,
         )
     if selected_production is None and config.language_invention_enabled:
-        signal = derive_invention_signal(
+        signal = _derive_emission_signal(
             proposed_runtime,
-            inventor_id=sender_id,
+            validated_compositional_runtime,
+            validated_compositional_config,
+            sender_id=sender_id,
             meaning=intended_meaning,
             invention_index=proposed_sender.next_invention_index,
             maximum_signal_length=config.maximum_signal_length,
+            compositional_required=compositional_required,
         )
+        composed_invention = compositional_required
         key = (intended_meaning, signal)
         existing = proposed_sender.production.get(key)
         if existing is None:
@@ -4935,6 +5584,116 @@ def intergenerational_language_runtime_record(
             runtime.borrowed_parent_form_transmission_count),
         "last_transmission_tick": runtime.last_transmission_tick,
         "last_transmission_child_id": runtime.last_transmission_child_id,
+    }
+
+
+def compositional_protolanguage_runtime_record(
+    runtime: CompositionalProtolanguageRuntimeState,
+    *,
+    config: CompositionalProtolanguageConfig,
+    language_runtime: LanguageRuntimeState,
+) -> dict[str, object]:
+    """Return canonical composition controls and bounded counters."""
+    validate_compositional_protolanguage_runtime(
+        runtime,
+        config=config,
+        language_runtime=language_runtime,
+    )
+    return {
+        "seed_domain": runtime.seed_domain,
+        "seed_domain_fingerprint": runtime.seed_domain_fingerprint,
+        "maximum_resource_morpheme_length": (
+            runtime.maximum_resource_morpheme_length),
+        "modality_morpheme_length": runtime.modality_morpheme_length,
+        "composed_utterance_count": runtime.composed_utterance_count,
+        "gift_utterance_count": runtime.gift_utterance_count,
+        "exchange_utterance_count": runtime.exchange_utterance_count,
+        "composed_invention_count": runtime.composed_invention_count,
+        "observed_composite_meaning_mask": (
+            runtime.observed_composite_meaning_mask),
+        "last_composition_tick": runtime.last_composition_tick,
+    }
+
+
+def compositional_protolanguage_summary(
+    people: Iterable[LanguageInhabitant],
+    *,
+    runtime: CompositionalProtolanguageRuntimeState,
+    config: CompositionalProtolanguageConfig,
+    language_runtime: LanguageRuntimeState,
+) -> dict[str, object]:
+    """Return one bounded on-demand view of composed vocabulary.
+
+    Consumes the supplied population iterable exactly once with bounded work
+    per inhabitant, performs no population-wide sort, pair enumeration, or
+    morpheme reconstruction, mutates nothing, and consumes no RNG. This is
+    engineering observability, not an approved research endpoint.
+    """
+    validated_config = validate_compositional_protolanguage_config(
+        config, require_enabled=True)
+    validate_compositional_protolanguage_runtime(
+        runtime,
+        config=validated_config,
+        language_runtime=language_runtime,
+    )
+    population = 0
+    composed_carriers = 0
+    composed_production_total = 0
+    composed_comprehension_total = 0
+    usable_composed_production_total = 0
+    per_meaning_production: dict[CompositeMeaning, int] = {
+        composite: 0 for composite in CompositeMeaning
+    }
+    per_modality_production: dict[Modality, int] = {
+        modality: 0 for modality in Modality
+    }
+    for inhabitant in people:
+        population += 1
+        state = getattr(inhabitant, "language", None)
+        if type(state) is not AgentLanguageState:
+            _raise(
+                "invalid_agent_language_state",
+                "compositional summary requires explicit language state",
+            )
+        carries = False
+        for association in state.production.values():
+            meaning = association.meaning
+            if type(meaning) is not CompositeMeaning:
+                continue
+            carries = True
+            composed_production_total += 1
+            per_meaning_production[meaning] += 1
+            per_modality_production[
+                COMPOSITE_MEANING_MODALITY[meaning]] += 1
+            if association.confidence >= MIN_USABLE_CONFIDENCE:
+                usable_composed_production_total += 1
+        for association in state.comprehension.values():
+            if type(association.meaning) is not CompositeMeaning:
+                continue
+            carries = True
+            composed_comprehension_total += 1
+        if carries:
+            composed_carriers += 1
+    return {
+        "population": population,
+        "composed_carriers": composed_carriers,
+        "composed_production_total": composed_production_total,
+        "usable_composed_production_total": (
+            usable_composed_production_total),
+        "composed_comprehension_total": composed_comprehension_total,
+        "production_by_composite_meaning": {
+            composite.name: per_meaning_production[composite]
+            for composite in CompositeMeaning
+        },
+        "production_by_modality": {
+            modality.name: per_modality_production[modality]
+            for modality in Modality
+        },
+        "runtime": compositional_protolanguage_runtime_record(
+            runtime,
+            config=validated_config,
+            language_runtime=language_runtime,
+        ),
     }
 
 

@@ -37,6 +37,7 @@ REQUIRED_PAGES = {
     "systems/language-contact.md",
     "systems/intergenerational-language.md",
     "systems/lexical-evolution.md",
+    "systems/compositional-protolanguage.md",
     "systems/conflict-technology-diplomacy-religion.md",
     "systems/events-observers-and-plugins.md",
     "experiments/runner-and-configurations.md",
@@ -59,7 +60,6 @@ REQUIRED_PAGES = {
 }
 
 PLANNED_LANGUAGE_MILESTONES = (
-    "feature/compositional-protolanguage-v1",
     "feature/grammar-evolution-v1",
     "feature/language-coevolution-v1",
     "feature/language-research-readiness-v1",

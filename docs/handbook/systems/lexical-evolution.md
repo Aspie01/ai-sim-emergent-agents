@@ -509,16 +509,16 @@ Completed engineering milestones are:
 - `feature/coalition-dialects-v1`;
 - `feature/language-contact-v1`;
 - `feature/intergenerational-language-v1`;
-- `feature/lexical-evolution-v1`.
+- `feature/lexical-evolution-v1`;
+- `feature/compositional-protolanguage-v1`.
 
 Planned, not implemented:
 
-- `feature/compositional-protolanguage-v1` — **Planned, not implemented**;
 - `feature/grammar-evolution-v1` — **Planned, not implemented**;
 - `feature/language-coevolution-v1` — **Planned, not implemented**;
 - `feature/language-research-readiness-v1` — **Planned, not implemented**.
 
-The next milestone is `feature/compositional-protolanguage-v1`: **Planned, not implemented**.
+The next milestone is `feature/grammar-evolution-v1`: **Planned, not implemented**.
 
 **Primary implementation:**
 

@@ -74,7 +74,9 @@ from .language import (
     initialize_intergenerational_language_runtime,
     initialize_language_contact_runtime,
     initialize_language_runtime,
+    initialize_compositional_protolanguage_runtime,
     initialize_lexical_evolution_runtime,
+    compositional_protolanguage_runtime_is_pristine,
     intergenerational_runtime_is_pristine,
     language_runtime_is_pristine,
     lexical_evolution_runtime_is_pristine,
@@ -86,6 +88,7 @@ from .language import (
     validate_intergenerational_parent_references,
     validate_language_contact_runtime,
     validate_language_runtime,
+    validate_compositional_protolanguage_runtime,
     validate_lexical_evolution_runtime,
 )
 
@@ -214,6 +217,13 @@ def _validate_reset_language_runtimes(
                 "nonpristine_lexical_evolution_runtime",
                 "disabled language runtime cannot conceal lexical state",
             )
+        if not compositional_protolanguage_runtime_is_pristine(
+            state.compositional_protolanguage
+        ):
+            raise LanguageInvariantError(
+                "nonpristine_compositional_protolanguage_runtime",
+                "disabled language runtime cannot conceal composed state",
+            )
         return None, None, None
 
     validate_language_runtime(state.language, initialized=True)
@@ -304,6 +314,27 @@ def _validate_reset_language_runtimes(
                 "nonpristine_lexical_evolution_runtime",
                 "disabled lexical evolution cannot retain runtime state",
             )
+    if state.language.compositional_protolanguage_enabled:
+        validate_compositional_protolanguage_runtime(
+            state.compositional_protolanguage,
+            config=config.CompositionalProtolanguageConfig(
+                compositional_protolanguage_enabled=True,
+                maximum_resource_morpheme_length=(
+                    state.compositional_protolanguage
+                    .maximum_resource_morpheme_length),
+                modality_morpheme_length=(
+                    state.compositional_protolanguage
+                    .modality_morpheme_length),
+            ),
+            language_runtime=state.language,
+        )
+    elif not compositional_protolanguage_runtime_is_pristine(
+        state.compositional_protolanguage
+    ):
+        raise LanguageInvariantError(
+            "nonpristine_compositional_protolanguage_runtime",
+            "disabled compositional protolanguage cannot retain runtime state",
+        )
     return contact_config, intergenerational_config, lexical_config
 
 
@@ -701,6 +732,9 @@ def economy_layer(
     coalition_config: config.CoalitionConfig | None = None,
     contact_config: config.LanguageContactConfig | None = None,
     lexical_config: config.LexicalEvolutionConfig | None = None,
+    compositional_config: (
+        config.CompositionalProtolanguageConfig | None
+    ) = None,
 ) -> None:
     """Layer 4: currency, pricing, trade, raids, scarcity, wealth."""
     if social_config is None:
@@ -760,6 +794,14 @@ def economy_layer(
             maximum_lexical_lineage_depth=(
                 config.DEFAULT_MAXIMUM_LEXICAL_LINEAGE_DEPTH),
         )
+    if compositional_config is None:
+        compositional_config = config.CompositionalProtolanguageConfig(
+            compositional_protolanguage_enabled=False,
+            maximum_resource_morpheme_length=(
+                config.DEFAULT_MAXIMUM_RESOURCE_MORPHEME_LENGTH),
+            modality_morpheme_length=(
+                config.DEFAULT_MODALITY_MORPHEME_LENGTH),
+        )
     coalition_membership_snapshot = None
     coalition_context_required = (
         dialect_config.coalition_dialect_influence_enabled
@@ -816,6 +858,16 @@ def economy_layer(
             contact_runtime=(
                 state.language_contact
                 if contact_config.language_contact_enabled else None
+            ),
+            compositional_config=(
+                compositional_config
+                if compositional_config.compositional_protolanguage_enabled
+                else None
+            ),
+            compositional_runtime=(
+                state.compositional_protolanguage
+                if compositional_config.compositional_protolanguage_enabled
+                else None
             ),
             lexical_config=(
                 lexical_config if lexical_config.lexical_evolution_enabled
@@ -2292,6 +2344,19 @@ def run() -> None:
     _parser.add_argument(
         '--maximum-lexical-lineage-depth', type=int, default=None,
         help='Maximum bounded lexical direct-lineage depth')
+    _compositional = _parser.add_mutually_exclusive_group()
+    _compositional.add_argument(
+        '--enable-compositional-protolanguage', action='store_true',
+        help='Enable engineering-only structured (resource, modality) meanings')
+    _compositional.add_argument(
+        '--disable-compositional-protolanguage', action='store_true',
+        help='Explicitly leave compositional protolanguage disabled')
+    _parser.add_argument(
+        '--maximum-resource-morpheme-length', type=int, default=None,
+        help='Maximum bounded resource morpheme length in phonemes')
+    _parser.add_argument(
+        '--modality-morpheme-length', type=int, default=None,
+        help='Exact modality morpheme length in phonemes')
     _args = _parser.parse_args()
 
     # ── Validate and apply effective configuration ──────────────────────────
@@ -2351,6 +2416,14 @@ def run() -> None:
                 'warning: lexical evolution was requested without effective '
                 'language evolution; lexical evolution normalized to false '
                 'and the run is not V2-ready\n')
+    for _notice in _run_config.compositional_protolanguage_control_notices:
+        if _notice == (
+            config.COMPOSITIONAL_PROTOLANGUAGE_NOTICE_WITHOUT_LANGUAGE
+        ):
+            sys.stderr.write(
+                'warning: compositional protolanguage was requested without '
+                'effective language evolution; composition normalized to '
+                'false and the run is not V2-ready\n')
     _run_config.apply_legacy_globals()
     TICKS = _run_config.ticks
     POP_CAP = _run_config.population_cap
@@ -2379,6 +2452,8 @@ def run() -> None:
                 _run_config.intergenerational_language_enabled),
             lexical_evolution_enabled=(
                 _run_config.lexical_evolution_enabled),
+            compositional_protolanguage_enabled=(
+                _run_config.compositional_protolanguage_enabled),
         )
         if _run_config.language_contact_enabled:
             initialize_language_contact_runtime(
@@ -2394,6 +2469,12 @@ def run() -> None:
             initialize_lexical_evolution_runtime(
                 state.lexical_evolution,
                 _run_config.lexical_evolution_config,
+                _seed_value,
+            )
+        if _run_config.compositional_protolanguage_enabled:
+            initialize_compositional_protolanguage_runtime(
+                state.compositional_protolanguage,
+                _run_config.compositional_protolanguage_config,
                 _seed_value,
             )
     # Serial mode: guarantees reproducibility by eliminating thread PRNG interleaving
@@ -2533,6 +2614,7 @@ def run() -> None:
                     _run_config.coalition_config,
                     _run_config.language_contact_config,
                     _run_config.lexical_evolution_config,
+                    _run_config.compositional_protolanguage_config,
                 )
             _t_eco = (time.perf_counter() - _t_eco_start) * 1000
 

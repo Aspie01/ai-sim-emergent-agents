@@ -52,7 +52,7 @@ Future milestones:
 
 | Milestone | Status |
 | --- | --- |
-| `feature/compositional-protolanguage-v1` | Planned, not implemented |
+| `feature/compositional-protolanguage-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/grammar-evolution-v1` | Planned, not implemented |
 | `feature/language-coevolution-v1` | Planned, not implemented |
 | `feature/language-research-readiness-v1` | Planned, not implemented |
@@ -72,7 +72,7 @@ association, and retained lexical indices do not reconstruct a full lineage.
 This handbook does not invent hypotheses, estimands, uncertainty rules, or
 research conclusions for these mechanisms.
 
-The next language milestone is `feature/compositional-protolanguage-v1`: **Planned, not implemented**.
+The next language milestone is `feature/grammar-evolution-v1`: **Planned, not implemented**.
 
 ## Core Replication V2 authorization
 

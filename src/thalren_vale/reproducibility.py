@@ -28,6 +28,7 @@ from .artifact_contract import (
 from .events import EVENT_SCHEMA_VERSION
 from .config import (
     CoalitionDialectConfig,
+    CompositionalProtolanguageConfig,
     IntergenerationalLanguageConfig,
     LanguageContactConfig,
     LanguageEvolutionConfig,
@@ -42,6 +43,8 @@ from .coalitions import (
 from .language import (
     AgentLanguageState,
     CoalitionDialectRuntimeState,
+    CompositeMeaning,
+    CompositionalProtolanguageRuntimeState,
     IntergenerationalLanguageRuntimeState,
     LanguageContactRuntimeState,
     LanguageInvariantError,
@@ -49,6 +52,8 @@ from .language import (
     LexicalEvolutionRuntimeState,
     agent_language_record,
     coalition_dialect_runtime_record,
+    compositional_protolanguage_runtime_is_pristine,
+    compositional_protolanguage_runtime_record,
     contact_runtime_is_pristine,
     dialect_runtime_is_pristine,
     intergenerational_language_runtime_record,
@@ -403,6 +408,66 @@ def _require_pristine_disabled_intergenerational_state(state) -> None:
         )
 
 
+def _require_pristine_disabled_compositional_state(state) -> None:
+    """Reject composed meanings omitted from the disabled behavioral payload.
+
+    A disabled feature must be provably absent, not merely unused. Composite
+    meanings are structural rather than attached metadata, so this scans every
+    production and comprehension key across the living and retained-dead
+    cohorts and fails closed on any hidden composed state.
+    """
+    for cohort, inhabitants in (
+        ("living", state.people),
+        ("dead", state.all_dead),
+    ):
+        for index, inhabitant in enumerate(inhabitants):
+            language = getattr(inhabitant, "language", None)
+            if type(language) is not AgentLanguageState:
+                raise LanguageInvariantError(
+                    "missing_disabled_agent_language_state",
+                    "disabled compositional protolanguage requires explicit "
+                    f"agent language state: {cohort}[{index}]",
+                )
+            hidden = [
+                association
+                for store in (
+                    language.production,
+                    language.comprehension,
+                )
+                for association in store.values()
+                if type(getattr(association, "meaning", None))
+                is CompositeMeaning
+            ]
+            hidden_keys = [
+                key
+                for store in (language.production, language.comprehension)
+                for key in store
+                if type(key) is tuple
+                and any(type(part) is CompositeMeaning for part in key)
+            ]
+            if hidden or hidden_keys:
+                inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+                raise LanguageInvariantError(
+                    "nonpristine_disabled_compositional_protolanguage_meaning",
+                    "disabled compositional protolanguage cannot conceal "
+                    f"composed meanings: {cohort}[{index}] "
+                    f"inhabitant_id={inhabitant_id!r}",
+                )
+    runtime = getattr(state, "compositional_protolanguage", None)
+    if type(runtime) is not CompositionalProtolanguageRuntimeState:
+        raise LanguageInvariantError(
+            "missing_disabled_compositional_protolanguage_runtime",
+            "disabled compositional protolanguage requires an explicit "
+            "runtime",
+        )
+    if not compositional_protolanguage_runtime_is_pristine(runtime):
+        raise LanguageInvariantError(
+            "nonpristine_disabled_compositional_protolanguage_runtime",
+            "disabled compositional protolanguage requires pristine runtime "
+            "state",
+        )
+
+
 def _require_pristine_disabled_lexical_state(state) -> None:
     """Reject lexical state omitted from the disabled behavioral payload."""
     for cohort, inhabitants in (
@@ -650,6 +715,49 @@ def _intergenerational_hash_config(
     return result
 
 
+def _compositional_hash_config(
+    configuration: dict,
+) -> CompositionalProtolanguageConfig:
+    """Build exact enabled composition controls for behavioral hashing."""
+    required = (
+        "compositional_protolanguage_enabled",
+        "maximum_resource_morpheme_length",
+        "modality_morpheme_length",
+        "compositional_protolanguage_controls_status",
+        "compositional_protolanguage_control_notices",
+    )
+    missing = [name for name in required if name not in configuration]
+    if missing:
+        raise ValueError(
+            "enabled compositional protolanguage hashing lacks controls: "
+            + ", ".join(missing)
+        )
+    if configuration["compositional_protolanguage_controls_status"] != (
+        "engineering_only_uncontracted"
+    ):
+        raise ValueError(
+            "enabled compositional protolanguage hashing requires "
+            "engineering-only status"
+        )
+    if (
+        type(configuration["compositional_protolanguage_control_notices"])
+        is not list
+        or configuration["compositional_protolanguage_control_notices"]
+    ):
+        raise ValueError(
+            "enabled compositional protolanguage hashing requires exact "
+            "empty notices"
+        )
+    return CompositionalProtolanguageConfig(
+        compositional_protolanguage_enabled=configuration[
+            "compositional_protolanguage_enabled"],
+        maximum_resource_morpheme_length=configuration[
+            "maximum_resource_morpheme_length"],
+        modality_morpheme_length=configuration[
+            "modality_morpheme_length"],
+    )
+
+
 def _lexical_hash_config(configuration: dict) -> LexicalEvolutionConfig:
     """Build exact enabled lexical controls for behavioral hashing."""
     required = (
@@ -730,6 +838,15 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         raise ValueError("lexical evolution setting must be boolean")
     lexical_evolution_enabled = configuration.get(
         "lexical_evolution_enabled", False)
+    if (
+        "compositional_protolanguage_enabled" in configuration
+        and type(configuration["compositional_protolanguage_enabled"])
+        is not bool
+    ):
+        raise ValueError(
+            "compositional protolanguage setting must be boolean")
+    compositional_protolanguage_enabled = configuration.get(
+        "compositional_protolanguage_enabled", False)
     non_behavioral_keys = {
         "condition",
         "log_mode",
@@ -801,6 +918,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         "lexical_evolution_controls_status",
         "lexical_evolution_control_notices",
     }
+    compositional_configuration_keys = {
+        "compositional_protolanguage_enabled",
+        "maximum_resource_morpheme_length",
+        "modality_morpheme_length",
+        "compositional_protolanguage_controls_status",
+        "compositional_protolanguage_control_notices",
+    }
     if not dialect_influence_enabled:
         _require_pristine_disabled_dialect_state(state)
         non_behavioral_keys.update(dialect_configuration_keys)
@@ -825,6 +949,12 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
     elif not language_evolution_enabled:
         raise ValueError(
             "enabled lexical evolution requires language evolution")
+    if not compositional_protolanguage_enabled:
+        _require_pristine_disabled_compositional_state(state)
+        non_behavioral_keys.update(compositional_configuration_keys)
+    elif not language_evolution_enabled:
+        raise ValueError(
+            "enabled compositional protolanguage requires language evolution")
     if not coalition_emergence_enabled:
         _require_empty_disabled_coalition_state(state)
         non_behavioral_keys.update(coalition_configuration_keys)
@@ -853,6 +983,19 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         _lexical_hash_config(configuration)
         if lexical_evolution_enabled else None
     )
+    compositional_hash_config = (
+        _compositional_hash_config(configuration)
+        if compositional_protolanguage_enabled else None
+    )
+    compositional_runtime = None
+    if compositional_protolanguage_enabled:
+        compositional_runtime = getattr(
+            state, "compositional_protolanguage", None)
+        if type(compositional_runtime) is not (
+            CompositionalProtolanguageRuntimeState
+        ):
+            raise ValueError(
+                "enabled compositional protolanguage requires a valid runtime")
     intergenerational_runtime = None
     if intergenerational_language_enabled:
         intergenerational_runtime = getattr(
@@ -1043,6 +1186,15 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             lexical_runtime,
             config=lexical_hash_config,
             language_runtime=state.language,
+        )
+    if compositional_protolanguage_enabled:
+        assert compositional_runtime is not None
+        payload["compositional_protolanguage_state"] = (
+            compositional_protolanguage_runtime_record(
+                compositional_runtime,
+                config=compositional_hash_config,
+                language_runtime=state.language,
+            )
         )
     encoded = json.dumps(
         _json_safe(payload),

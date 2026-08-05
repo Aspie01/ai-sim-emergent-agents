@@ -70,6 +70,11 @@ DEFAULT_LEXICAL_EVOLUTION_ENABLED = False
 DEFAULT_LEXICAL_MUTATION_RATE = 0.05
 DEFAULT_MAXIMUM_LEXICAL_LINEAGE_DEPTH = 8
 MAXIMUM_LEXICAL_LINEAGE_DEPTH = 32
+DEFAULT_COMPOSITIONAL_PROTOLANGUAGE_ENABLED = False
+DEFAULT_MAXIMUM_RESOURCE_MORPHEME_LENGTH = 2
+DEFAULT_MODALITY_MORPHEME_LENGTH = 1
+MAXIMUM_RESOURCE_MORPHEME_LENGTH = 3
+MAXIMUM_MODALITY_MORPHEME_LENGTH = 2
 FACTION_TRUST_THRESHOLD = DEFAULT_FACTION_TRUST_THRESHOLD
 WAR_TENSION_THRESHOLD = DEFAULT_WAR_TENSION_THRESHOLD
 BELIEF_SHARING_PROBABILITY = DEFAULT_BELIEF_SHARING_PROBABILITY
@@ -185,6 +190,18 @@ VALID_LEXICAL_EVOLUTION_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+COMPOSITIONAL_PROTOLANGUAGE_NOTICE_WITHOUT_LANGUAGE = (
+    'compositional_protolanguage_requested_without_language'
+)
+VALID_COMPOSITIONAL_PROTOLANGUAGE_CONTROL_NOTICES = frozenset({
+    COMPOSITIONAL_PROTOLANGUAGE_NOTICE_WITHOUT_LANGUAGE,
+})
+VALID_COMPOSITIONAL_PROTOLANGUAGE_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
 
 @dataclass(frozen=True)
 class SocialMemoryConfig:
@@ -260,6 +277,15 @@ class LexicalEvolutionConfig:
 
 
 @dataclass(frozen=True)
+class CompositionalProtolanguageConfig:
+    """Effective engineering-only structured-meaning composition controls."""
+
+    compositional_protolanguage_enabled: bool
+    maximum_resource_morpheme_length: int
+    modality_morpheme_length: int
+
+
+@dataclass(frozen=True)
 class SimulationConfig:
     """Validated effective configuration for one simulation run."""
 
@@ -329,6 +355,13 @@ class SimulationConfig:
     maximum_lexical_lineage_depth: int = (
         DEFAULT_MAXIMUM_LEXICAL_LINEAGE_DEPTH
     )
+    compositional_protolanguage_enabled: bool = (
+        DEFAULT_COMPOSITIONAL_PROTOLANGUAGE_ENABLED
+    )
+    maximum_resource_morpheme_length: int = (
+        DEFAULT_MAXIMUM_RESOURCE_MORPHEME_LENGTH
+    )
+    modality_morpheme_length: int = DEFAULT_MODALITY_MORPHEME_LENGTH
     social_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     language_control_notices: tuple[str, ...] = field(
@@ -342,6 +375,8 @@ class SimulationConfig:
     intergenerational_language_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     lexical_evolution_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    compositional_protolanguage_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -426,6 +461,21 @@ class SimulationConfig:
             self,
             'lexical_evolution_control_notices',
             tuple(sorted(lexical_notices)),
+        )
+
+        compositional_notices: list[str] = []
+        if (
+            self.compositional_protolanguage_enabled is True
+            and self.language_evolution_enabled is False
+        ):
+            object.__setattr__(
+                self, 'compositional_protolanguage_enabled', False)
+            compositional_notices.append(
+                COMPOSITIONAL_PROTOLANGUAGE_NOTICE_WITHOUT_LANGUAGE)
+        object.__setattr__(
+            self,
+            'compositional_protolanguage_control_notices',
+            tuple(sorted(compositional_notices)),
         )
 
     @classmethod
@@ -642,6 +692,23 @@ class SimulationConfig:
                 if getattr(
                     args, 'maximum_lexical_lineage_depth', None) is None
                 else args.maximum_lexical_lineage_depth
+            ),
+            compositional_protolanguage_enabled=(
+                bool(getattr(
+                    args, 'enable_compositional_protolanguage', False))
+                and not bool(getattr(
+                    args, 'disable_compositional_protolanguage', False))
+            ),
+            maximum_resource_morpheme_length=(
+                DEFAULT_MAXIMUM_RESOURCE_MORPHEME_LENGTH
+                if getattr(
+                    args, 'maximum_resource_morpheme_length', None) is None
+                else args.maximum_resource_morpheme_length
+            ),
+            modality_morpheme_length=(
+                DEFAULT_MODALITY_MORPHEME_LENGTH
+                if getattr(args, 'modality_morpheme_length', None) is None
+                else args.modality_morpheme_length
             ),
         )
         instance.validate()
@@ -916,6 +983,56 @@ class SimulationConfig:
                 'lexical evolution normalization notices require disabled '
                 'lexical evolution')
 
+        if type(self.compositional_protolanguage_enabled) is not bool:
+            raise ValueError(
+                'compositional protolanguage setting must be boolean')
+        if (
+            self.compositional_protolanguage_enabled
+            and not self.language_evolution_enabled
+        ):
+            raise ValueError(
+                'compositional protolanguage requires language evolution')
+        if (
+            type(self.maximum_resource_morpheme_length) is not int
+            or not 1
+            <= self.maximum_resource_morpheme_length
+            <= MAXIMUM_RESOURCE_MORPHEME_LENGTH
+        ):
+            raise ValueError(
+                'maximum resource morpheme length must be an integer from 1 '
+                f'to {MAXIMUM_RESOURCE_MORPHEME_LENGTH}')
+        if (
+            type(self.modality_morpheme_length) is not int
+            or not 1
+            <= self.modality_morpheme_length
+            <= MAXIMUM_MODALITY_MORPHEME_LENGTH
+        ):
+            raise ValueError(
+                'modality morpheme length must be an integer from 1 to '
+                f'{MAXIMUM_MODALITY_MORPHEME_LENGTH}')
+        if (
+            self.compositional_protolanguage_enabled
+            and self.maximum_resource_morpheme_length
+            + self.modality_morpheme_length
+            > self.maximum_signal_length
+        ):
+            raise ValueError(
+                'composed morpheme lengths must not exceed the effective '
+                'maximum signal length')
+        if any(
+            notice not in VALID_COMPOSITIONAL_PROTOLANGUAGE_CONTROL_NOTICES
+            for notice in self.compositional_protolanguage_control_notices
+        ):
+            raise ValueError(
+                'unknown compositional protolanguage normalization notice')
+        if (
+            self.compositional_protolanguage_control_notices
+            and self.compositional_protolanguage_enabled
+        ):
+            raise ValueError(
+                'compositional protolanguage normalization notices require '
+                'disabled compositional protolanguage')
+
     def apply_legacy_globals(self) -> None:
         """Keep modules using legacy constants synchronized during migration."""
         global TICKS, POP_CAP, STARTING_INHABITANTS
@@ -944,6 +1061,7 @@ class SimulationConfig:
         result.pop('language_contact_control_notices', None)
         result.pop('intergenerational_language_control_notices', None)
         result.pop('lexical_evolution_control_notices', None)
+        result.pop('compositional_protolanguage_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
@@ -969,6 +1087,10 @@ class SimulationConfig:
             self.lexical_evolution_control_notices)
         result['lexical_evolution_controls_status'] = (
             self.lexical_evolution_controls_status)
+        result['compositional_protolanguage_control_notices'] = list(
+            self.compositional_protolanguage_control_notices)
+        result['compositional_protolanguage_controls_status'] = (
+            self.compositional_protolanguage_controls_status)
         return result
 
     @property
@@ -1174,4 +1296,32 @@ class SimulationConfig:
             lexical_mutation_rate=self.lexical_mutation_rate,
             maximum_lexical_lineage_depth=(
                 self.maximum_lexical_lineage_depth),
+        )
+
+    @property
+    def compositional_protolanguage_controls_status(self) -> str:
+        """Return provenance status for uncontracted compositional controls."""
+        if self.compositional_protolanguage_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.compositional_protolanguage_enabled
+            or self.maximum_resource_morpheme_length
+            != DEFAULT_MAXIMUM_RESOURCE_MORPHEME_LENGTH
+            or self.modality_morpheme_length
+            != DEFAULT_MODALITY_MORPHEME_LENGTH
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def compositional_protolanguage_config(
+        self,
+    ) -> CompositionalProtolanguageConfig:
+        """Return immutable effective structured-meaning composition controls."""
+        return CompositionalProtolanguageConfig(
+            compositional_protolanguage_enabled=(
+                self.compositional_protolanguage_enabled),
+            maximum_resource_morpheme_length=(
+                self.maximum_resource_morpheme_length),
+            modality_morpheme_length=self.modality_morpheme_length,
         )

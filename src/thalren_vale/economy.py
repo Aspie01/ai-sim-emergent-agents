@@ -32,6 +32,7 @@ from .config import (
     DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
     LanguageContactConfig,
     LanguageEvolutionConfig,
+    CompositionalProtolanguageConfig,
     LexicalEvolutionConfig,
     SocialMemoryConfig,
 )
@@ -46,6 +47,7 @@ from .language import (
     CommunicationContext,
     LanguageContactRuntimeState,
     LanguageRuntimeState,
+    CompositionalProtolanguageRuntimeState,
     LexicalEvolutionRuntimeState,
     communicate,
     meaning_for_resource,
@@ -88,6 +90,10 @@ def _coalition_language_kwargs(
     contact_runtime: LanguageContactRuntimeState | None,
     lexical_config: LexicalEvolutionConfig | None,
     lexical_runtime: LexicalEvolutionRuntimeState | None,
+    compositional_config: CompositionalProtolanguageConfig | None = None,
+    compositional_runtime: (
+        CompositionalProtolanguageRuntimeState | None
+    ) = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None,
 ) -> dict[str, object]:
     """Pass only effective coalition-language owners into communication."""
@@ -107,6 +113,12 @@ def _coalition_language_kwargs(
     if lexical_config is not None and lexical_config.lexical_evolution_enabled:
         result["lexical_config"] = lexical_config
         result["lexical_runtime"] = lexical_runtime
+    if (
+        compositional_config is not None
+        and compositional_config.compositional_protolanguage_enabled
+    ):
+        result["compositional_config"] = compositional_config
+        result["compositional_runtime"] = compositional_runtime
     if coalition_context_required:
         result["coalition_membership_snapshot"] = (
             coalition_membership_snapshot
@@ -230,6 +242,10 @@ def _do_trade(
     contact_runtime: LanguageContactRuntimeState | None = None,
     lexical_config: LexicalEvolutionConfig | None = None,
     lexical_runtime: LexicalEvolutionRuntimeState | None = None,
+    compositional_config: CompositionalProtolanguageConfig | None = None,
+    compositional_runtime: (
+        CompositionalProtolanguageRuntimeState | None
+    ) = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids=frozenset(),
 ):
@@ -321,6 +337,8 @@ def _do_trade(
                 contact_runtime=contact_runtime,
                 lexical_config=lexical_config,
                 lexical_runtime=lexical_runtime,
+                compositional_config=compositional_config,
+                compositional_runtime=compositional_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
             ),
         )
@@ -341,6 +359,10 @@ def _faction_trade(
     contact_runtime: LanguageContactRuntimeState | None = None,
     lexical_config: LexicalEvolutionConfig | None = None,
     lexical_runtime: LexicalEvolutionRuntimeState | None = None,
+    compositional_config: CompositionalProtolanguageConfig | None = None,
+    compositional_runtime: (
+        CompositionalProtolanguageRuntimeState | None
+    ) = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids=frozenset(),
 ):
@@ -382,6 +404,8 @@ def _faction_trade(
                     contact_runtime=contact_runtime,
                     lexical_config=lexical_config,
                     lexical_runtime=lexical_runtime,
+                    compositional_config=compositional_config,
+                    compositional_runtime=compositional_runtime,
                     coalition_membership_snapshot=(
                         coalition_membership_snapshot
                     ),
@@ -399,6 +423,8 @@ def _faction_trade(
                     contact_runtime=contact_runtime,
                     lexical_config=lexical_config,
                     lexical_runtime=lexical_runtime,
+                    compositional_config=compositional_config,
+                    compositional_runtime=compositional_runtime,
                     coalition_membership_snapshot=(
                         coalition_membership_snapshot
                     ),
@@ -499,6 +525,10 @@ def _commit_individual_transfer(
     contact_runtime: LanguageContactRuntimeState | None = None,
     lexical_config: LexicalEvolutionConfig | None = None,
     lexical_runtime: LexicalEvolutionRuntimeState | None = None,
+    compositional_config: CompositionalProtolanguageConfig | None = None,
+    compositional_runtime: (
+        CompositionalProtolanguageRuntimeState | None
+    ) = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
 ) -> None:
@@ -548,6 +578,8 @@ def _commit_individual_transfer(
                 contact_runtime=contact_runtime,
                 lexical_config=lexical_config,
                 lexical_runtime=lexical_runtime,
+                compositional_config=compositional_config,
+                compositional_runtime=compositional_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
             ),
         )
@@ -567,6 +599,10 @@ def _attempt_individual_transfer(
     contact_runtime: LanguageContactRuntimeState | None = None,
     lexical_config: LexicalEvolutionConfig | None = None,
     lexical_runtime: LexicalEvolutionRuntimeState | None = None,
+    compositional_config: CompositionalProtolanguageConfig | None = None,
+    compositional_runtime: (
+        CompositionalProtolanguageRuntimeState | None
+    ) = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
 ) -> bool:
@@ -586,6 +622,8 @@ def _attempt_individual_transfer(
                 contact_runtime=contact_runtime,
                 lexical_config=lexical_config,
                 lexical_runtime=lexical_runtime,
+                compositional_config=compositional_config,
+                compositional_runtime=compositional_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )
@@ -606,6 +644,10 @@ def _historical_barter(
     contact_runtime: LanguageContactRuntimeState | None = None,
     lexical_config: LexicalEvolutionConfig | None = None,
     lexical_runtime: LexicalEvolutionRuntimeState | None = None,
+    compositional_config: CompositionalProtolanguageConfig | None = None,
+    compositional_runtime: (
+        CompositionalProtolanguageRuntimeState | None
+    ) = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
     rng,
@@ -634,6 +676,8 @@ def _historical_barter(
                 contact_runtime=contact_runtime,
                 lexical_config=lexical_config,
                 lexical_runtime=lexical_runtime,
+                compositional_config=compositional_config,
+                compositional_runtime=compositional_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )
@@ -738,6 +782,10 @@ def _relationship_biased_barter(
     contact_runtime: LanguageContactRuntimeState | None = None,
     lexical_config: LexicalEvolutionConfig | None = None,
     lexical_runtime: LexicalEvolutionRuntimeState | None = None,
+    compositional_config: CompositionalProtolanguageConfig | None = None,
+    compositional_runtime: (
+        CompositionalProtolanguageRuntimeState | None
+    ) = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng,
 ) -> frozenset[int]:
@@ -787,6 +835,8 @@ def _relationship_biased_barter(
                     contact_runtime=contact_runtime,
                     lexical_config=lexical_config,
                     lexical_runtime=lexical_runtime,
+                    compositional_config=compositional_config,
+                    compositional_runtime=compositional_runtime,
                     coalition_membership_snapshot=(
                         coalition_membership_snapshot
                     ),
@@ -811,6 +861,8 @@ def _relationship_biased_barter(
                 contact_runtime=contact_runtime,
                 lexical_config=lexical_config,
                 lexical_runtime=lexical_runtime,
+                compositional_config=compositional_config,
+                compositional_runtime=compositional_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=frozen.active_ids,
             )
@@ -833,6 +885,10 @@ def _individual_barter(
     contact_runtime: LanguageContactRuntimeState | None = None,
     lexical_config: LexicalEvolutionConfig | None = None,
     lexical_runtime: LexicalEvolutionRuntimeState | None = None,
+    compositional_config: CompositionalProtolanguageConfig | None = None,
+    compositional_runtime: (
+        CompositionalProtolanguageRuntimeState | None
+    ) = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng=random,
 ) -> frozenset[int]:
@@ -864,6 +920,8 @@ def _individual_barter(
             contact_runtime=contact_runtime,
             lexical_config=lexical_config,
             lexical_runtime=lexical_runtime,
+            compositional_config=compositional_config,
+            compositional_runtime=compositional_runtime,
             coalition_membership_snapshot=coalition_membership_snapshot,
             active_ids=active_ids,
             rng=rng,
@@ -961,6 +1019,10 @@ def economy_tick(
     contact_runtime: LanguageContactRuntimeState | None = None,
     lexical_config: LexicalEvolutionConfig | None = None,
     lexical_runtime: LexicalEvolutionRuntimeState | None = None,
+    compositional_config: CompositionalProtolanguageConfig | None = None,
+    compositional_runtime: (
+        CompositionalProtolanguageRuntimeState | None
+    ) = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng=random,
 ):
@@ -1006,6 +1068,8 @@ def economy_tick(
             contact_runtime=contact_runtime,
             lexical_config=lexical_config,
             lexical_runtime=lexical_runtime,
+            compositional_config=compositional_config,
+            compositional_runtime=compositional_runtime,
             coalition_membership_snapshot=coalition_membership_snapshot,
             rng=rng,
         )
@@ -1028,6 +1092,8 @@ def economy_tick(
                 contact_runtime=contact_runtime,
                 lexical_config=lexical_config,
                 lexical_runtime=lexical_runtime,
+                compositional_config=compositional_config,
+                compositional_runtime=compositional_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )

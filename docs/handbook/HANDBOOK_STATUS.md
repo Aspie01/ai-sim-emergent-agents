@@ -60,7 +60,7 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | Checkpoint, PRNG restoration or event replay | Planned, not implemented |
 | Immutable experiment attempts, ledger, selection and safe resume | Planned, not implemented |
 | Clean-tag/environment/plugin preflight and V2 matrix orchestration | Planned, not implemented |
-| `feature/compositional-protolanguage-v1` | Planned, not implemented |
+| `feature/compositional-protolanguage-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/grammar-evolution-v1` | Planned, not implemented |
 | `feature/language-coevolution-v1` | Planned, not implemented |
 | `feature/language-research-readiness-v1` | Planned, not implemented |
@@ -76,15 +76,15 @@ Completed engineering implementations:
 - `feature/language-contact-v1`
 - `feature/intergenerational-language-v1`
 - `feature/lexical-evolution-v1`
+- `feature/compositional-protolanguage-v1`
 
 Planned, not implemented:
 
-- `feature/compositional-protolanguage-v1` — **Planned, not implemented**
 - `feature/grammar-evolution-v1` — **Planned, not implemented**
 - `feature/language-coevolution-v1` — **Planned, not implemented**
 - `feature/language-research-readiness-v1` — **Planned, not implemented**
 
-The next milestone is `feature/compositional-protolanguage-v1`: **Planned, not implemented**.
+The next milestone is `feature/grammar-evolution-v1`: **Planned, not implemented**.
 
 ## Current branch work
 

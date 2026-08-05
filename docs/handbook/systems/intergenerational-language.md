@@ -445,18 +445,21 @@ schedule, juvenile stage, or language identity.
 This milestone still transmits existing signals unchanged and creates no
 lexical opportunity during birth. Lexical Evolution v1 is now implemented
 independently for authentic committed-transfer communication and supports only
-same-length one-token substitution with bounded direct-edge provenance. Birth
+same-length one-token substitution with bounded direct-edge provenance.
+Compositional Protolanguage v1 is likewise implemented independently: when it
+is effective, the parental forms copied at birth are composed
+`(resource, modality)` signals, and transmission copies them exactly without
+creating a composition opportunity of its own. Birth
 transmission does not add copying errors, shortening, recombination, cognate
 inference, or ancestry reconstruction.
 
 Also **Planned, not implemented**:
 
-- `feature/compositional-protolanguage-v1` — **Planned, not implemented**;
 - `feature/grammar-evolution-v1` — **Planned, not implemented**;
 - `feature/language-coevolution-v1` — **Planned, not implemented**;
 - `feature/language-research-readiness-v1` — **Planned, not implemented**.
 
-The next milestone is `feature/compositional-protolanguage-v1`: **Planned, not implemented**.
+The next milestone is `feature/grammar-evolution-v1`: **Planned, not implemented**.
 
 No research plan, matrix, tier, evidence run, hypothesis, estimand, or
 scientific conclusion is introduced by Intergenerational Language v1.

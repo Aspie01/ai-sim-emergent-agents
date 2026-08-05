@@ -56,6 +56,14 @@ from .config import (
     DEFAULT_COALITION_TRUST_THRESHOLD,
     DEFAULT_INTERGENERATIONAL_LANGUAGE_ENABLED,
     DEFAULT_INTERGENERATIONAL_LEARNING_STRENGTH,
+    COMPOSITIONAL_PROTOLANGUAGE_NOTICE_WITHOUT_LANGUAGE,
+    DEFAULT_COMPOSITIONAL_PROTOLANGUAGE_ENABLED,
+    DEFAULT_MAXIMUM_RESOURCE_MORPHEME_LENGTH,
+    DEFAULT_MODALITY_MORPHEME_LENGTH,
+    MAXIMUM_MODALITY_MORPHEME_LENGTH,
+    MAXIMUM_RESOURCE_MORPHEME_LENGTH,
+    VALID_COMPOSITIONAL_PROTOLANGUAGE_CONTROL_NOTICES,
+    VALID_COMPOSITIONAL_PROTOLANGUAGE_CONTROL_STATUSES,
     DEFAULT_LEXICAL_EVOLUTION_ENABLED,
     DEFAULT_LEXICAL_MUTATION_RATE,
     DEFAULT_MAXIMUM_ACTIVE_COALITIONS,
@@ -1328,6 +1336,181 @@ def _validate_intergenerational_language_configuration(
         _add(
             issues,
             "invalid_intergenerational_language_configuration",
+            message,
+            "manifest",
+        )
+
+
+def _validate_compositional_protolanguage_configuration(
+    config: dict,
+    issues: _IssueCollector,
+) -> None:
+    """Validate every present composition control and dependency fact."""
+    validators = {
+        "compositional_protolanguage_enabled": _is_bool,
+        "maximum_resource_morpheme_length": (
+            lambda value: _is_int(value)
+            and 1 <= value <= MAXIMUM_RESOURCE_MORPHEME_LENGTH
+        ),
+        "modality_morpheme_length": (
+            lambda value: _is_int(value)
+            and 1 <= value <= MAXIMUM_MODALITY_MORPHEME_LENGTH
+        ),
+        "compositional_protolanguage_controls_status": (
+            lambda value: _is_str(value)
+            and value in VALID_COMPOSITIONAL_PROTOLANGUAGE_CONTROL_STATUSES
+        ),
+        "compositional_protolanguage_control_notices": (
+            lambda value: _is_list(value)
+            and all(
+                _is_str(item)
+                and item
+                in VALID_COMPOSITIONAL_PROTOLANGUAGE_CONTROL_NOTICES
+                for item in value
+            )
+            and len(value) == len(set(value))
+            and value == sorted(value)
+        ),
+    }
+    valid_present: set[str] = set()
+    for name, validator in validators.items():
+        if name not in config:
+            continue
+        if not validator(config[name]):
+            _add(
+                issues,
+                "invalid_compositional_protolanguage_configuration",
+                f"{name} is malformed",
+                "manifest",
+            )
+        else:
+            valid_present.add(name)
+
+    enabled_present = (
+        "compositional_protolanguage_enabled" in valid_present)
+    status_present = (
+        "compositional_protolanguage_controls_status" in valid_present)
+    notices_present = (
+        "compositional_protolanguage_control_notices" in valid_present)
+    language_present = (
+        "language_evolution_enabled" in config
+        and _is_bool(config.get("language_evolution_enabled"))
+    )
+    enabled = (
+        config["compositional_protolanguage_enabled"]
+        if enabled_present else None
+    )
+    status = (
+        config["compositional_protolanguage_controls_status"]
+        if status_present else None
+    )
+    notices = (
+        config["compositional_protolanguage_control_notices"]
+        if notices_present else None
+    )
+    errors: list[str] = []
+
+    def add_error(message: str) -> None:
+        if message not in errors:
+            errors.append(message)
+
+    if enabled is True:
+        if language_present and not config["language_evolution_enabled"]:
+            add_error(
+                "enabled compositional protolanguage requires language "
+                "evolution")
+        if notices_present and notices:
+            add_error(
+                "enabled compositional protolanguage conflicts with "
+                "normalization notices")
+        # Composed signals must fit the effective signal-length ceiling.
+        if {
+            "maximum_resource_morpheme_length",
+            "modality_morpheme_length",
+        } <= valid_present and _is_int(
+            config.get("maximum_signal_length")
+        ):
+            if (
+                config["maximum_resource_morpheme_length"]
+                + config["modality_morpheme_length"]
+                > config["maximum_signal_length"]
+            ):
+                add_error(
+                    "composed morpheme lengths exceed the effective maximum "
+                    "signal length")
+
+    if notices_present:
+        assert type(notices) is list
+        language_notice = (
+            COMPOSITIONAL_PROTOLANGUAGE_NOTICE_WITHOUT_LANGUAGE in notices)
+        if enabled is True and notices:
+            add_error(
+                "normalization notices require disabled compositional "
+                "protolanguage")
+        if language_present:
+            if config["language_evolution_enabled"] and language_notice:
+                add_error(
+                    "compositional protolanguage dependency notice conflicts "
+                    "with effective language")
+            if (
+                notices
+                and not config["language_evolution_enabled"]
+                and not language_notice
+            ):
+                add_error(
+                    "normalized compositional protolanguage lacks the "
+                    "language dependency notice")
+
+    defaults = {
+        "compositional_protolanguage_enabled": (
+            DEFAULT_COMPOSITIONAL_PROTOLANGUAGE_ENABLED),
+        "maximum_resource_morpheme_length": (
+            DEFAULT_MAXIMUM_RESOURCE_MORPHEME_LENGTH),
+        "modality_morpheme_length": DEFAULT_MODALITY_MORPHEME_LENGTH,
+    }
+    present_controls = set(defaults).intersection(valid_present)
+    controls_complete = set(defaults) <= valid_present
+    any_nondefault = any(
+        not _exact_equal(config[name], defaults[name])
+        for name in present_controls
+    )
+    if status == "disabled":
+        if any_nondefault:
+            add_error(
+                "disabled compositional protolanguage status conflicts with "
+                "present controls")
+        if notices_present and notices:
+            add_error(
+                "disabled compositional protolanguage status requires exact "
+                "empty notices")
+    elif status == "normalized_uncontracted":
+        if enabled is True:
+            add_error(
+                "normalized compositional protolanguage status requires "
+                "disabled composition")
+        if not notices_present or not notices:
+            add_error(
+                "normalized compositional protolanguage status requires a "
+                "dependency notice")
+    elif status == "engineering_only_uncontracted":
+        if notices_present and notices:
+            add_error(
+                "engineering compositional protolanguage status conflicts "
+                "with normalization notices")
+        if controls_complete and not any_nondefault:
+            add_error(
+                "engineering compositional protolanguage status requires a "
+                "nondefault control")
+    if notices_present and notices and status_present and (
+        status != "normalized_uncontracted"
+    ):
+        add_error(
+            "compositional protolanguage status conflicts with normalization "
+            "notices")
+    for message in errors:
+        _add(
+            issues,
+            "invalid_compositional_protolanguage_configuration",
             message,
             "manifest",
         )
@@ -2805,6 +2988,7 @@ def _validate_strict(
         _validate_language_contact_configuration(config, issues)
         _validate_intergenerational_language_configuration(config, issues)
         _validate_lexical_evolution_configuration(config, issues)
+        _validate_compositional_protolanguage_configuration(config, issues)
     execution_mode = manifest.get("execution_mode")
     if not _is_str(execution_mode) or execution_mode not in {"serial", "threaded"}:
         _add(issues, "invalid_execution_mode", repr(manifest.get("execution_mode")), "manifest")

@@ -17,14 +17,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # The 5-tick baseline never reaches technology research, so its fingerprint is
 # unchanged by the active-research payload repair.
 BASELINE_HASH = "3dcb25d98e634034da0814618bd8c28f3f6289491a536238950e866c5e75bc6f"
-# Repinned by Language Research Readiness v1. The canonical payload previously
-# read `researching` and `research_progress`, which nothing in the simulation
-# ever assigns, so in-progress research was invisible: two factions researching
-# different technologies produced identical fingerprints. The payload now reads
-# the authoritative `active_research` mapping. This 40-tick run reaches
-# research, so its fingerprint moved. Previous value:
+# Repinned by the cross-version determinism fix. Three places turned a set of
+# belief strings into an ordered sequence, and CPython 3.11 replaced SipHash24
+# with SipHash13, so that order differed between 3.10 and 3.11+ even under
+# PYTHONHASHSEED=0: `_faction_name` drew a name from it, the schism path stored
+# it, and the civil-war path sliced `[:2]` off it — that last one gave the
+# splinter faction genuinely different beliefs per interpreter, not merely a
+# different order. Sorting picks one order for every version; it is not the
+# order either version used before, so this 40-tick run's fingerprint moved on
+# both. Verified identical on 3.10.20 and 3.12.2. Previously 3.11+ read
+# b8c26ad01ca38b3c3c5cc706e994ca2f25db870602633d1ba09373072e4dce5e while 3.10
+# read 636cfbdf137b3880c363ac57c9b0a61fd502f53bc47d9eeaeb9a316927a7f68a — the
+# disagreement this fix removes.
+#
+# Repinned before that by Language Research Readiness v1: the canonical payload
+# read `researching` and `research_progress`, which nothing ever assigns, so
+# in-progress research was invisible. Previous value:
 # ef15589175c3c1e48ddab9ba837429626c46423d2637b35e8120189e110a7163
-ANTISTAG_BASELINE_HASH = "b8c26ad01ca38b3c3c5cc706e994ca2f25db870602633d1ba09373072e4dce5e"
+ANTISTAG_BASELINE_HASH = "0430f4a169125c9bd41587781a90763390485a6f30e635a27b3527f3d62ee4f9"
 
 
 def _environment() -> dict[str, str]:

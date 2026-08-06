@@ -86,7 +86,13 @@ _FALLBACK_NOUN = ['Band', 'Few', 'Ones', 'Wanderers']
 def _faction_name(common_cores, existing_names=None):
     """Generate a unique component-based name from shared beliefs."""
     existing_names = existing_names or set()
-    beliefs  = list(common_cores)
+    # Sorted, not list(): `common_cores` is a set of belief strings, and
+    # CPython 3.11 switched the default string hash from SipHash24 to
+    # SipHash13, so set iteration order differs across versions even under
+    # PYTHONHASHSEED=0. That order reaches random.choice below, so the same
+    # RNG draw picked a different faction name on 3.10 than on 3.11+, and the
+    # divergence then cascaded through every name-keyed structure.
+    beliefs  = sorted(common_cores)
     all_adj  = [w for b in beliefs for w in _ADJ_BY_BELIEF.get(b, [])]
     all_noun = [w for b in beliefs for w in _NOUN_BY_BELIEF.get(b, [])]
     if not all_adj:  all_adj  = _FALLBACK_ADJ[:]
@@ -274,7 +280,7 @@ def check_faction_formation(
 
         name      = _faction_name(common, {f.name for f in factions})
         territory = list({(m.r, m.c) for m in trio})
-        faction   = Faction(name, list(trio), list(common), territory, t)
+        faction   = Faction(name, list(trio), sorted(common), territory, t)
 
         for m in trio:
             m.faction = name
@@ -629,7 +635,7 @@ def _try_schism(faction, factions, t, event_log):
         new_name     = _faction_name(seed_cores, existing)
         new_territory= list({(m.r, m.c) for m in minority})
         new_faction  = Faction(new_name, list(minority),
-                               list(min_cores), new_territory, t)
+                               sorted(min_cores), new_territory, t)
         factions.append(new_faction)
         for m in minority:
             m.faction = new_name

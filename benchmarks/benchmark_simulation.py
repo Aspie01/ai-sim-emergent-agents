@@ -44,7 +44,13 @@ def _setup_population(population: int, seed: int) -> None:
         r, c = habitable[index % len(habitable)]
         person = Inhabitant(f"Bench{index:05d}", r, c)
         person.inventory["food"] = 30
+        # Assign an authoritative run ID through the allocator. Without one,
+        # the next `reset_runtime_state()` validates this population and
+        # rejects it, so the second benchmark case always failed.
+        candidate = sim.state.next_inhabitant_id
+        sim.state.stage_inhabitant_id(person, candidate)
         sim.people.append(person)
+        sim.state.commit_inhabitant_id(person, candidate)
         world.grid_add(person)
 
 

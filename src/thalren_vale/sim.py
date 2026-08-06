@@ -1920,7 +1920,11 @@ def disruption_event_layer(t: int) -> None:
             seed_bels = {b for m in split for b in m.beliefs[:2]}
             new_name  = _gen_faction_name(seed_bels, existing_names)
             territory = list({(m.r, m.c) for m in split})
-            new_f     = Faction(new_name, list(split), list(seed_bels)[:2], territory, t)
+            # sorted(), not list(): `seed_bels` is a set of belief strings, so
+            # list() would pick a version-dependent *pair* here, not merely a
+            # version-dependent order — the splinter faction would hold
+            # different beliefs on Python 3.10 than on 3.11+.
+            new_f     = Faction(new_name, list(split), sorted(seed_bels)[:2], territory, t)
             factions.append(new_f)
             gone = {m.name for m in split}
             target.members = [m for m in target.members if m.name not in gone]

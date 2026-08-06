@@ -109,6 +109,43 @@ fresh-root safety and explicit failure classifications. They also intentionally
 prove that every nonempty root is rejected unchanged, including under
 `--resume` or `--overwrite`.
 
+## Structural coverage checks
+
+Most tests here assert behaviour: given this input, the code does that. Three
+milestones in a row shipped a defect those tests could not see, because each
+mechanism reached the layer its author was thinking about and silently missed
+the next one out — composition reached `communicate` but not one barter
+branch; grammar reached the hash but not the disabled-state guard; three
+control families reached artifact validation but not the V2-readiness veto.
+The suite stayed green every time.
+
+`tests/test_feature_registration.py` asserts coverage instead. For every
+control family it checks that the family is declared, that each declared hook
+exists, and that each hook is actually reached by the dispatch site that
+matters:
+
+| Layer | Requirement |
+| --- | --- |
+| Declaration | Every `*_controls_status` manifest key has a registration entry, and no entry is stale |
+| Disabled-state guard | `canonical_state_hash` calls the family's pristine guard |
+| Artifact validation | `_validate_strict` calls the family's configuration validator |
+| Runner containment | Both `_freeze_cell` and `load_plan` call the family's rejector |
+| Readiness gate | The family's status key reaches `_readiness_issues` |
+| Economy threading | No call site drops an owner family its callee accepts |
+
+Each is verified by recreating the corresponding historical defect and
+confirming the check fails. The economy-threading check reproduces the
+original partner-bias omission by name and line.
+
+`docs/handbook/validate_handbook.py` applies the same idea to documentation.
+It maps each milestone to the configuration gate whose presence in source
+proves the mechanism exists, then reports a milestone documented as planned
+while its gate exists, a milestone whose pages contradict each other, a
+milestone slug that appears in the handbook without being declared, and a
+declared gate that no longer exists in `SimulationConfig`. Checking pages
+against each other alone would not catch a status every page agrees on and
+source disproves.
+
 ## Important coverage gaps
 
 Current tests do not establish:
@@ -125,8 +162,8 @@ Current tests do not establish:
 - final language research contracts or planned future language milestones such
   as coevolution and research readiness.
 
-The accepted Grammar Evolution v1 implementation completed the default full
-engineering suite with **1,621 passed**.
+The accepted Language Research Readiness v1 implementation completed the
+default full engineering suite with **1,789 passed**.
 These verify tested software contracts only; they are not simulation runs,
 research tiers, or scientific results.
 

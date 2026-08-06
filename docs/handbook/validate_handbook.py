@@ -59,9 +59,29 @@ REQUIRED_PAGES = {
     "diagrams/experiment-and-artifact-flow.md",
 }
 
-# Every language milestone is implemented. Future work is research
-# authorization rather than an engineering milestone, so this tuple is empty.
-PLANNED_LANGUAGE_MILESTONES = ()
+# Each milestone maps to the configuration gate whose presence in source
+# proves the mechanism exists, or to None when the milestone contracts
+# existing behaviour instead of adding a mechanism. This is what lets the
+# handbook be checked against the code rather than only against itself: a
+# page calling a milestone planned while its gate exists is a false claim,
+# however many other pages agree with it.
+MILESTONE_GATES: dict[str, str | None] = {
+    "feature/endogenous-language-v1": "language_evolution_enabled",
+    "feature/coalition-dialects-v1": "coalition_dialect_influence_enabled",
+    "feature/language-contact-v1": "language_contact_enabled",
+    "feature/intergenerational-language-v1": (
+        "intergenerational_language_enabled"),
+    "feature/lexical-evolution-v1": "lexical_evolution_enabled",
+    "feature/compositional-protolanguage-v1": (
+        "compositional_protolanguage_enabled"),
+    "feature/grammar-evolution-v1": "grammar_evolution_enabled",
+    "feature/language-coevolution-v1": "language_coevolution_enabled",
+    "feature/language-research-readiness-v1": None,
+}
+
+MILESTONE_SLUG = re.compile(r"feature/[a-z-]+-v1")
+PLANNED_CLAIM = re.compile(r"planned,?\s*not\s*implemented", re.IGNORECASE)
+IMPLEMENTED_CLAIM = re.compile(r"\bimplemented\b", re.IGNORECASE)
 
 KNOWN_STALE_DATA = (
     "qtable_pop_300_300.json",
@@ -174,12 +194,6 @@ def _check_status_and_plans(errors: list[str]) -> None:
         for line_number, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):
-            for milestone in PLANNED_LANGUAGE_MILESTONES:
-                if milestone in line and "Planned, not implemented" not in line:
-                    errors.append(
-                        f"planned milestone lacks exact status: {_relative(path)}:"
-                        f"{line_number}: {milestone}"
-                    )
             for stale_name in KNOWN_STALE_DATA:
                 if stale_name in line and not re.search(
                     r"stale|historical|deprecated|nonauthoritative|non-authoritative|"
@@ -191,6 +205,76 @@ def _check_status_and_plans(errors: list[str]) -> None:
                         f"stale data lacks warning on same line: {_relative(path)}:"
                         f"{line_number}: {stale_name}"
                     )
+
+
+def _implemented_gates() -> set[str]:
+    """Return the configuration gates that actually exist in source."""
+    sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
+    try:
+        from thalren_vale.config import SimulationConfig
+    finally:
+        sys.path.pop(0)
+    return {
+        name for name in SimulationConfig.__dataclass_fields__
+        if name.endswith("_enabled")
+    }
+
+
+def _check_milestone_status_claims(errors: list[str]) -> None:
+    """Check documented milestone status against source and for self-consistency.
+
+    Two independent failures are caught. A page may contradict another page,
+    which is what happens when a milestone lands and only some pages are
+    swept. Or every page may agree on a status that source disproves, which a
+    consistency check alone cannot see.
+    """
+    gates = _implemented_gates()
+    for milestone, gate in MILESTONE_GATES.items():
+        if gate is not None and gate not in gates:
+            errors.append(
+                f"milestone gate is absent from SimulationConfig: "
+                f"{milestone} -> {gate}"
+            )
+
+    claims: dict[str, list[tuple[str, str]]] = {}
+    for path in _markdown_files():
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            for milestone in set(MILESTONE_SLUG.findall(line)):
+                if milestone not in MILESTONE_GATES:
+                    errors.append(
+                        f"undeclared milestone: {_relative(path)}:"
+                        f"{line_number}: {milestone}"
+                    )
+                    continue
+                if PLANNED_CLAIM.search(line):
+                    kind = "planned"
+                elif IMPLEMENTED_CLAIM.search(line):
+                    kind = "implemented"
+                else:
+                    continue
+                claims.setdefault(milestone, []).append(
+                    (kind, f"{_relative(path)}:{line_number}")
+                )
+
+    for milestone, entries in sorted(claims.items()):
+        kinds = {kind for kind, _ in entries}
+        if len(kinds) > 1:
+            locations = ", ".join(
+                f"{kind} at {where}" for kind, where in entries)
+            errors.append(
+                f"contradictory milestone status: {milestone}: {locations}"
+            )
+        gate = MILESTONE_GATES[milestone]
+        implemented = gate is None or gate in gates
+        if implemented and "planned" in kinds:
+            planned = ", ".join(
+                where for kind, where in entries if kind == "planned")
+            errors.append(
+                f"milestone is implemented in source but documented as "
+                f"planned: {milestone}: {planned}"
+            )
 
 
 def _check_commands_and_generated_data(errors: list[str]) -> None:
@@ -222,6 +306,7 @@ def main() -> int:
     _check_referenced_repository_paths(errors)
     _check_index(errors)
     _check_status_and_plans(errors)
+    _check_milestone_status_claims(errors)
     _check_commands_and_generated_data(errors)
 
     if errors:

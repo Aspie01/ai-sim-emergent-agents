@@ -793,6 +793,7 @@ def economy_layer(
     ) = None,
     grammar_config: config.GrammarEvolutionConfig | None = None,
     coevolution_config: config.LanguageCoevolutionConfig | None = None,
+    trial_config: config.ProductionTrialConfig | None = None,
 ) -> None:
     """Layer 4: currency, pricing, trade, raids, scarcity, wealth."""
     if social_config is None:
@@ -865,6 +866,12 @@ def economy_layer(
             grammar_evolution_enabled=False,
             order_adoption_threshold=(
                 config.DEFAULT_ORDER_ADOPTION_THRESHOLD),
+        )
+    if trial_config is None:
+        trial_config = config.ProductionTrialConfig(
+            production_trial_enabled=False,
+            production_trial_interval=(
+                config.DEFAULT_PRODUCTION_TRIAL_INTERVAL),
         )
     if coevolution_config is None:
         coevolution_config = config.LanguageCoevolutionConfig(
@@ -954,6 +961,10 @@ def economy_layer(
             coevolution_runtime=(
                 state.language_coevolution
                 if coevolution_config.language_coevolution_enabled else None
+            ),
+            trial_config=(
+                trial_config
+                if trial_config.production_trial_enabled else None
             ),
             lexical_config=(
                 lexical_config if lexical_config.lexical_evolution_enabled
@@ -2485,6 +2496,16 @@ def run() -> None:
     _parser.add_argument(
         '--coalition-intelligibility-threshold', type=float, default=None,
         help='Minimum mutual intelligibility for a coalition edge')
+    _production_trial = _parser.add_mutually_exclusive_group()
+    _production_trial.add_argument(
+        '--enable-production-trial', action='store_true',
+        help='Enable engineering-only runner-up production trials')
+    _production_trial.add_argument(
+        '--disable-production-trial', action='store_true',
+        help='Explicitly leave production trials disabled')
+    _parser.add_argument(
+        '--production-trial-interval', type=int, default=None,
+        help='Roughly one utterance in N trials the runner-up form')
     _parser.add_argument(
         '--plan-identity', type=str, default=None,
         help='Experiment plan identity asserted by the runner')
@@ -2569,6 +2590,12 @@ def run() -> None:
                 'warning: grammar evolution was requested without effective '
                 'compositional protolanguage; grammar normalized to false '
                 'and the run is not V2-ready\n')
+    for _notice in _run_config.production_trial_control_notices:
+        if _notice == config.PRODUCTION_TRIAL_NOTICE_WITHOUT_LANGUAGE:
+            sys.stderr.write(
+                'warning: production trial was requested without effective '
+                'language evolution; trials normalized to false and the run '
+                'is not V2-ready\n')
     for _notice in _run_config.coalition_intelligibility_control_notices:
         if _notice == config.COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COALITIONS:
             sys.stderr.write(
@@ -2802,6 +2829,7 @@ def run() -> None:
                     _run_config.compositional_protolanguage_config,
                     _run_config.grammar_evolution_config,
                     _run_config.language_coevolution_config,
+                    _run_config.production_trial_config,
                 )
             _t_eco = (time.perf_counter() - _t_eco_start) * 1000
 

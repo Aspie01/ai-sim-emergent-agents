@@ -134,6 +134,24 @@ So the original hypothesis is confirmed only in its narrowest form —
 entrenched natives do win selection — but it describes the final step of a
 chain in which promotion has already discarded 210 of 216 opportunities.
 
+**This scenario also contains an artifact, found later.** Resource roles are
+fixed: even-numbered inhabitants always give food and odd always give wood. An
+inhabitant only produces the meaning for what it gives and only hears the
+meaning for what it receives, so every borrowed form here is for a meaning
+that inhabitant never speaks. Across 2,874 production moments, each had
+exactly one usable candidate. The selection contest described above therefore
+could not occur in this scenario at all.
+
+Rotating the roles so each inhabitant both gives and receives every resource
+removes the artifact, and the deadlock still holds: cross-group lexicon
+overlap stays at `0.00`. The finding survives, but this scenario is not
+sufficient evidence for it on its own.
+
+[Production Trial v1](../systems/production-trial.md) breaks the deadlock by
+occasionally uttering the runner-up. Under rotating roles it moves
+`borrowed_production_use_count` from 0 to 245 and cross-group lexicon overlap
+from `0.00` to `0.50`.
+
 ## 5. The negative result
 
 Coalition intelligibility gating changed nothing in this scenario.

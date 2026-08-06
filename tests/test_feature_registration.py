@@ -84,6 +84,14 @@ FAMILY_REGISTRATION = {
         "artifact_validator": "_validate_language_coevolution_configuration",
         "runner_rejector": "_reject_uncontracted_language_coevolution_args",
     },
+    "production_trial": {
+        # Owns no runtime state: each trial occasion is derived per utterance
+        # from a seed domain, so there is nothing to hold pristine.
+        # `test_stateless_families_own_no_runtime_state` proves the claim.
+        "pristine_guard": None,
+        "artifact_validator": "_validate_production_trial_configuration",
+        "runner_rejector": "_reject_uncontracted_production_trial_args",
+    },
     "coalition_intelligibility": {
         # Owns no runtime state: it only reads the intelligibility that
         # coevolution writes, so there is nothing to hold pristine. A vacuous

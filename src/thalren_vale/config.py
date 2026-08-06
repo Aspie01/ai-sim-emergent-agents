@@ -87,6 +87,9 @@ DEFAULT_COALITION_INTELLIGIBILITY_ENABLED = False
 # 113 to 182. A gating default that visibly does nothing is a poor default.
 # Treat this as a starting point, not a tuned value.
 DEFAULT_COALITION_INTELLIGIBILITY_THRESHOLD = 0.50
+DEFAULT_PRODUCTION_TRIAL_ENABLED = False
+DEFAULT_PRODUCTION_TRIAL_INTERVAL = 8
+MAXIMUM_PRODUCTION_TRIAL_INTERVAL = 64
 MAXIMUM_ORDER_ADOPTION_THRESHOLD = 32
 FACTION_TRUST_THRESHOLD = DEFAULT_FACTION_TRUST_THRESHOLD
 WAR_TENSION_THRESHOLD = DEFAULT_WAR_TENSION_THRESHOLD
@@ -276,6 +279,18 @@ VALID_COALITION_INTELLIGIBILITY_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+PRODUCTION_TRIAL_NOTICE_WITHOUT_LANGUAGE = (
+    'production_trial_requested_without_language'
+)
+VALID_PRODUCTION_TRIAL_CONTROL_NOTICES = frozenset({
+    PRODUCTION_TRIAL_NOTICE_WITHOUT_LANGUAGE,
+})
+VALID_PRODUCTION_TRIAL_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
 
 @dataclass(frozen=True)
 class SocialMemoryConfig:
@@ -385,6 +400,14 @@ class CoalitionIntelligibilityConfig:
 
 
 @dataclass(frozen=True)
+class ProductionTrialConfig:
+    """Effective engineering-only runner-up production trial controls."""
+
+    production_trial_enabled: bool
+    production_trial_interval: int
+
+
+@dataclass(frozen=True)
 class SimulationConfig:
     """Validated effective configuration for one simulation run."""
 
@@ -474,6 +497,8 @@ class SimulationConfig:
     coalition_intelligibility_threshold: float = (
         DEFAULT_COALITION_INTELLIGIBILITY_THRESHOLD
     )
+    production_trial_enabled: bool = DEFAULT_PRODUCTION_TRIAL_ENABLED
+    production_trial_interval: int = DEFAULT_PRODUCTION_TRIAL_INTERVAL
     social_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     language_control_notices: tuple[str, ...] = field(
@@ -495,6 +520,8 @@ class SimulationConfig:
     language_coevolution_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     coalition_intelligibility_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    production_trial_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -653,6 +680,19 @@ class SimulationConfig:
             self,
             'coalition_intelligibility_control_notices',
             tuple(sorted(coalition_intelligibility_notices)),
+        )
+
+        production_trial_notices: list[str] = []
+        if self.production_trial_enabled is True:
+            if self.language_evolution_enabled is False:
+                production_trial_notices.append(
+                    PRODUCTION_TRIAL_NOTICE_WITHOUT_LANGUAGE)
+        if production_trial_notices:
+            object.__setattr__(self, 'production_trial_enabled', False)
+        object.__setattr__(
+            self,
+            'production_trial_control_notices',
+            tuple(sorted(production_trial_notices)),
         )
 
     @classmethod
@@ -922,6 +962,15 @@ class SimulationConfig:
                 if getattr(
                     args, 'coalition_intelligibility_threshold', None) is None
                 else args.coalition_intelligibility_threshold
+            ),
+            production_trial_enabled=(
+                bool(getattr(args, 'enable_production_trial', False))
+                and not bool(getattr(args, 'disable_production_trial', False))
+            ),
+            production_trial_interval=(
+                DEFAULT_PRODUCTION_TRIAL_INTERVAL
+                if getattr(args, 'production_trial_interval', None) is None
+                else args.production_trial_interval
             ),
         )
         instance.validate()
@@ -1286,6 +1335,33 @@ class SimulationConfig:
                 and not self.social_partner_bias_enabled):
             raise ValueError(
                 'language coevolution requires social partner bias')
+        if type(self.production_trial_enabled) is not bool:
+            raise ValueError('production trial setting must be boolean')
+        if (
+            type(self.production_trial_interval) is not int
+            or not 2 <= self.production_trial_interval
+            <= MAXIMUM_PRODUCTION_TRIAL_INTERVAL
+        ):
+            # At least 2: an interval of 1 would trial every utterance, which
+            # is substitution rather than variation.
+            raise ValueError(
+                'production trial interval must be an integer from 2 to '
+                f'{MAXIMUM_PRODUCTION_TRIAL_INTERVAL}')
+        if (self.production_trial_enabled
+                and not self.language_evolution_enabled):
+            raise ValueError('production trial requires language evolution')
+        if any(
+            notice not in VALID_PRODUCTION_TRIAL_CONTROL_NOTICES
+            for notice in self.production_trial_control_notices
+        ):
+            raise ValueError('unknown production trial normalization notice')
+        if (
+            self.production_trial_control_notices
+            and self.production_trial_enabled
+        ):
+            raise ValueError(
+                'production trial normalization notices require disabled '
+                'trials')
         if type(self.coalition_intelligibility_enabled) is not bool:
             raise ValueError(
                 'coalition intelligibility setting must be boolean')
@@ -1379,6 +1455,7 @@ class SimulationConfig:
         result.pop('grammar_evolution_control_notices', None)
         result.pop('language_coevolution_control_notices', None)
         result.pop('coalition_intelligibility_control_notices', None)
+        result.pop('production_trial_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
@@ -1420,6 +1497,10 @@ class SimulationConfig:
             self.coalition_intelligibility_control_notices)
         result['coalition_intelligibility_controls_status'] = (
             self.coalition_intelligibility_controls_status)
+        result['production_trial_control_notices'] = list(
+            self.production_trial_control_notices)
+        result['production_trial_controls_status'] = (
+            self.production_trial_controls_status)
         return result
 
     @property
@@ -1673,6 +1754,27 @@ class SimulationConfig:
         ):
             return 'engineering_only_uncontracted'
         return 'disabled'
+
+    @property
+    def production_trial_controls_status(self) -> str:
+        """Return provenance status for uncontracted trial controls."""
+        if self.production_trial_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.production_trial_enabled
+            or self.production_trial_interval
+            != DEFAULT_PRODUCTION_TRIAL_INTERVAL
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def production_trial_config(self) -> ProductionTrialConfig:
+        """Return immutable effective runner-up trial controls."""
+        return ProductionTrialConfig(
+            production_trial_enabled=self.production_trial_enabled,
+            production_trial_interval=self.production_trial_interval,
+        )
 
     @property
     def coalition_intelligibility_controls_status(self) -> str:

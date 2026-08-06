@@ -324,6 +324,10 @@ def make_artifacts(
         "coalition_intelligibility_threshold": 0.50,
         "coalition_intelligibility_controls_status": "disabled",
         "coalition_intelligibility_control_notices": [],
+        "production_trial_enabled": False,
+        "production_trial_interval": 8,
+        "production_trial_controls_status": "disabled",
+        "production_trial_control_notices": [],
     })
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return run_dir, manifest_path

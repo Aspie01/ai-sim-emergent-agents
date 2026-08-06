@@ -1066,6 +1066,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             "coalition intelligibility setting must be boolean")
     coalition_intelligibility_enabled = configuration.get(
         "coalition_intelligibility_enabled", False)
+    if (
+        "production_trial_enabled" in configuration
+        and type(configuration["production_trial_enabled"]) is not bool
+    ):
+        raise ValueError("production trial setting must be boolean")
+    production_trial_enabled = configuration.get(
+        "production_trial_enabled", False)
     social_partner_bias_enabled = configuration.get(
         "social_partner_bias_enabled") is True
     non_behavioral_keys = {
@@ -1158,6 +1165,12 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         "coalition_intelligibility_controls_status",
         "coalition_intelligibility_control_notices",
     }
+    production_trial_configuration_keys = {
+        "production_trial_enabled",
+        "production_trial_interval",
+        "production_trial_controls_status",
+        "production_trial_control_notices",
+    }
     compositional_configuration_keys = {
         "compositional_protolanguage_enabled",
         "maximum_resource_morpheme_length",
@@ -1195,6 +1208,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
     elif not language_evolution_enabled:
         raise ValueError(
             "enabled compositional protolanguage requires language evolution")
+    if not production_trial_enabled:
+        # Trials own no runtime state: the decision is derived per utterance
+        # from a seed domain, so there is nothing to hold pristine.
+        non_behavioral_keys.update(production_trial_configuration_keys)
+    elif not language_evolution_enabled:
+        raise ValueError(
+            "enabled production trial requires language evolution")
     if not coalition_intelligibility_enabled:
         # This family owns no runtime state: it only reads the intelligibility
         # that coevolution writes. There is nothing to hold pristine, so the

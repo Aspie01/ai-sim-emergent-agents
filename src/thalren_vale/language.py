@@ -26,6 +26,7 @@ from .config import (
     CompositionalProtolanguageConfig,
     GrammarEvolutionConfig,
     LanguageCoevolutionConfig,
+    ProductionTrialConfig,
     MAXIMUM_INTELLIGIBILITY_RATE,
     LexicalEvolutionConfig,
 )
@@ -37,6 +38,7 @@ COMPOSITIONAL_PROTOLANGUAGE_DOMAIN = (
     "thalren-vale:compositional-protolanguage-v1"
 )
 GRAMMAR_EVOLUTION_DOMAIN = "thalren-vale:grammar-evolution-v1"
+PRODUCTION_TRIAL_DOMAIN = "thalren-vale:production-trial-v1"
 PHONEME_COUNT = 8
 MIN_SIGNAL_LENGTH = 2
 MAX_SIGNAL_LENGTH = 4
@@ -3377,6 +3379,54 @@ def _select_production(
     )
 
 
+def _select_trial_production(
+    state: AgentLanguageState,
+    meaning: Meaning,
+    *,
+    runtime: LanguageRuntimeState,
+    speaker_id: int,
+    tick: int,
+    trial_interval: int,
+) -> LexicalAssociation | None:
+    """Return the runner-up form on a trial occasion, else None.
+
+    A form earns use-confidence only when it is spoken, and it is spoken only
+    when it already leads on confidence. That is a deadlock: a borrowed form
+    can be acquired, reach production, and still never be uttered, which is
+    exactly what `borrowed_production_use_count` reporting zero describes.
+
+    Occasionally uttering the runner-up breaks it. This is how variation
+    propagates in natural language, and it is self-correcting here: trialing a
+    borrowed form on someone who does not know it fails and costs the speaker
+    confidence, while trialing it on someone who does know it succeeds.
+
+    Trial occasions are derived from a dedicated SHA-256 domain rather than
+    RNG, so the decision is reproducible and consumes no random stream.
+    """
+    candidates = sorted(
+        (
+            association
+            for (candidate_meaning, _signal), association
+            in state.production.items()
+            if candidate_meaning is meaning
+            and association.confidence >= MIN_USABLE_CONFIDENCE
+        ),
+        key=lambda association: (
+            -association.confidence, association.signal.phoneme_ids),
+    )
+    if len(candidates) < 2:
+        return None
+    suffix = runtime.seed_domain.split("|seed=", 1)[1]
+    record = (
+        f"{PRODUCTION_TRIAL_DOMAIN}|seed={suffix}"
+        f"|speaker_id={speaker_id}|meaning={meaning.name}|tick={tick}"
+    )
+    digest = hashlib.sha256(record.encode("ascii")).digest()
+    if digest[0] % trial_interval != 0:
+        return None
+    return candidates[1]
+
+
 def _select_comprehension(
     state: AgentLanguageState,
     signal: Signal,
@@ -4254,6 +4304,7 @@ def communicate(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    trial_config: ProductionTrialConfig | None = None,
 ) -> CommunicationOutcome:
     """Apply one complete communication transaction or leave all state unchanged."""
     contact_required = (
@@ -4281,6 +4332,7 @@ def communicate(
             compositional_runtime=compositional_runtime,
             grammar_config=grammar_config,
             grammar_runtime=grammar_runtime,
+            trial_config=trial_config,
         )
     if contact_config is not None or contact_runtime is not None:
         _raise(
@@ -4499,6 +4551,21 @@ def communicate(
     composed_invention = False
     selected_production = _select_production(
         proposed_sender, intended_meaning)
+    if (
+        trial_config is not None
+        and trial_config.production_trial_enabled
+        and selected_production is not None
+    ):
+        trialed = _select_trial_production(
+            proposed_sender,
+            intended_meaning,
+            runtime=proposed_runtime,
+            speaker_id=sender_id,
+            tick=validated_tick,
+            trial_interval=trial_config.production_trial_interval,
+        )
+        if trialed is not None:
+            selected_production = trialed
     if selected_production is not None and lexical_required:
         assert proposed_lexical is not None
         assert validated_lexical_config is not None
@@ -5061,6 +5128,7 @@ def _communicate_with_contact(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    trial_config: ProductionTrialConfig | None = None,
 ) -> CommunicationOutcome:
     """Apply one contact-enabled transaction using one frozen classification."""
     _validate_config(config, require_enabled=True)
@@ -5297,6 +5365,21 @@ def _communicate_with_contact(
     composed_invention = False
     selected_production = _select_production(
         proposed_sender, intended_meaning)
+    if (
+        trial_config is not None
+        and trial_config.production_trial_enabled
+        and selected_production is not None
+    ):
+        trialed = _select_trial_production(
+            proposed_sender,
+            intended_meaning,
+            runtime=proposed_runtime,
+            speaker_id=sender_id,
+            tick=validated_tick,
+            trial_interval=trial_config.production_trial_interval,
+        )
+        if trialed is not None:
+            selected_production = trialed
     if selected_production is not None and lexical_required:
         assert proposed_lexical is not None
         assert validated_lexical_config is not None

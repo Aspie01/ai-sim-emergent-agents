@@ -3,6 +3,10 @@ name: CI
 on:
   push:
   pull_request:
+  # Manual trigger. Without this the only way to exercise CI is to push, which
+  # makes an outage indistinguishable from "no events fired" and leaves no way
+  # to retry a run that never started.
+  workflow_dispatch:
 
 permissions:
   contents: read

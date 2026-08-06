@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 import os
+import random
 import subprocess
 import sys
 import textwrap
@@ -11,7 +12,7 @@ import textwrap
 import pytest
 
 import run_experiments
-from thalren_vale import language as language_module
+from thalren_vale import economy, language as language_module, world
 from thalren_vale.config import (
     COMPOSITIONAL_PROTOLANGUAGE_NOTICE_WITHOUT_LANGUAGE,
     CompositionalProtolanguageConfig,
@@ -19,6 +20,7 @@ from thalren_vale.config import (
     DEFAULT_MODALITY_MORPHEME_LENGTH,
     LanguageEvolutionConfig,
     SimulationConfig,
+    SocialMemoryConfig,
 )
 from thalren_vale.inhabitants import Inhabitant
 from thalren_vale.language import (
@@ -121,10 +123,32 @@ def test_modality_is_derived_only_from_committed_transfer_context():
 
 
 def test_composite_meaning_hash_is_independent_of_process_hash_seed():
-    expected = 0
-    for character in "FOOD_GIFT":
-        expected = expected * 37 + ord(character)
-    assert hash(CompositeMeaning.FOOD_GIFT) == expected
+    # Member names longer than about twelve characters overflow Py_ssize_t and
+    # are truncated by hash(), so formula equality holds only for short names.
+    # The property that actually matters is seed independence across the whole
+    # closed set, so verify that directly in isolated processes.
+    script = (
+        "from thalren_vale.language import CompositeMeaning\n"
+        "print([hash(member) for member in CompositeMeaning])\n"
+    )
+
+    def run(hash_seed: str) -> str:
+        environment = dict(
+            os.environ,
+            PYTHONHASHSEED=hash_seed,
+            PYTHONPATH=os.path.join(PROJECT_ROOT, "src"),
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=60, env=environment,
+            cwd=PROJECT_ROOT,
+        )
+        assert completed.returncode == 0, completed.stderr
+        return completed.stdout.strip()
+
+    first = run("0")
+    assert first
+    assert first == run("7") == run("12345")
 
 
 # ── Configuration ───────────────────────────────────────────────────────────
@@ -768,3 +792,61 @@ def test_composed_morphemes_exceeding_signal_length_are_invalid():
     payload = dict(config.manifest_dict())
     payload["maximum_signal_length"] = 2
     assert collect(payload)
+
+
+# ── Economy reachability across both individual-barter paths ────────────────
+
+def _composed_economy_pass(*, social_partner_bias_enabled: bool) -> dict:
+    """Drive a bounded economy pass and report composition counters.
+
+    ``_individual_barter`` forks on partner bias, so composition owners must
+    reach ``communicate`` down both branches. Exercising only one branch lets
+    the other silently lose an owner and fail closed mid-run.
+    """
+    random.seed(42)
+    world.reseed_world()
+    state = SimulationState()
+    social = SocialMemoryConfig(True, social_partner_bias_enabled, 8, 25)
+    initialize_language_runtime(
+        state.language, 42, compositional_protolanguage_enabled=True)
+    initialize_compositional_protolanguage_runtime(
+        state.compositional_protolanguage, COMPOSITIONAL, 42)
+
+    people = []
+    for index in range(24):
+        inhabitant = person(index)
+        inhabitant.r, inhabitant.c = index % 3, 0
+        inhabitant.inventory = {
+            'food': 3 if index % 2 == 0 else 0,
+            'wood': 3 if index % 2 else 0,
+            'ore': 1, 'stone': 1, 'water': 1,
+        }
+        people.append(inhabitant)
+    state.next_inhabitant_id = len(people)
+    state.people.extend(people)
+
+    event_log: list = []
+    for tick in range(1, 40):
+        economy.economy_tick(
+            people, [], tick, event_log,
+            social_config=social,
+            language_config=LANGUAGE,
+            language_runtime=state.language,
+            compositional_config=COMPOSITIONAL,
+            compositional_runtime=state.compositional_protolanguage,
+            raids_enabled=False,
+        )
+    return asdict(state.compositional_protolanguage)
+
+
+@pytest.mark.parametrize("social_partner_bias_enabled", [False, True])
+def test_composition_reaches_both_individual_barter_paths(
+    social_partner_bias_enabled,
+):
+    runtime = _composed_economy_pass(
+        social_partner_bias_enabled=social_partner_bias_enabled)
+    assert runtime["composed_utterance_count"] > 0
+    assert (
+        runtime["composed_utterance_count"]
+        == runtime["gift_utterance_count"] + runtime["exchange_utterance_count"]
+    )

@@ -940,6 +940,8 @@ def _individual_barter(
         contact_runtime=contact_runtime,
         lexical_config=lexical_config,
         lexical_runtime=lexical_runtime,
+        compositional_config=compositional_config,
+        compositional_runtime=compositional_runtime,
         coalition_membership_snapshot=coalition_membership_snapshot,
         rng=rng,
     )

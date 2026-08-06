@@ -942,3 +942,103 @@ def test_annotated_tag_is_none_outside_a_repository(tmp_path):
     from thalren_vale.reproducibility import _annotated_tag
 
     assert _annotated_tag(tmp_path) is None
+
+
+# ── Cross-version determinism ───────────────────────────────────────────────
+
+def test_faction_naming_ignores_belief_iteration_order():
+    """The same beliefs must name the same faction whatever order they arrive.
+
+    `_faction_name` used to call `list()` on its belief set. CPython 3.11
+    replaced the default string hash (SipHash24 -> SipHash13), so a set of
+    belief strings iterated in a different order on 3.10 than on 3.11+ even
+    under PYTHONHASHSEED=0. That order reached `random.choice`, so one RNG draw
+    produced different faction names on different interpreters, and because
+    faction names enter the canonical state hash the whole run diverged.
+
+    Passing ordered iterables rather than sets is what makes this decisive: a
+    set of fixed contents iterates the same way within one interpreter, so only
+    an explicitly permuted input can expose an order-sensitive implementation.
+    """
+    import random
+
+    from thalren_vale.factions import _faction_name
+
+    beliefs = [
+        "trade_builds_bonds",
+        "the_wise_must_lead",
+        "strength_protects_the_weak",
+        "crowded_lands_breed_conflict",
+    ]
+    permutations = (
+        beliefs,
+        list(reversed(beliefs)),
+        [beliefs[2], beliefs[0], beliefs[3], beliefs[1]],
+        sorted(beliefs),
+    )
+
+    names = []
+    for permutation in permutations:
+        random.seed(20240607)
+        names.append(_faction_name(list(permutation)))
+
+    assert len(set(names)) == 1, (
+        f"belief order changed the faction name: {names}")
+
+
+def test_canonical_hash_sorts_shared_beliefs_it_cannot_assume_are_ordered():
+    """`shared_beliefs` is append-mutated, so the hash must sort defensively.
+
+    It would be tempting to canonicalize the order in `Faction.__init__` and
+    call the problem solved. That would be a false invariant: growth, merge,
+    and absorption all `append` to the list after construction, so no
+    construction-time ordering survives a run. The construction sites are kept
+    deterministic to make the *behaviour* reproducible — mythology truncates
+    the list with `[:4]` and `[:3]` — while the hash sorts because it cannot
+    assume any ordering at all.
+    """
+    from thalren_vale.factions import Faction
+    from thalren_vale.reproducibility import _faction_record
+
+    beliefs = ["trade_builds_bonds", "the_wise_must_lead", "a_belief"]
+    payloads = [
+        _faction_record(Faction("N", [], list(permutation), [], 0))
+        for permutation in (beliefs, list(reversed(beliefs)))
+    ]
+    assert payloads[0]["shared_beliefs"] == payloads[1]["shared_beliefs"]
+
+
+def test_no_string_set_is_ordered_by_iteration_in_the_simulation_core():
+    """Structural guard: `list()` over a set literal or comprehension.
+
+    Sets of *integers or int tuples* are safe — CPython hashes those
+    identically across versions — so this only rejects the conversions that
+    could carry a version-dependent string order into behaviour.
+    """
+    import ast
+
+    source_root = PROJECT_ROOT / "src" / "thalren_vale"
+    offenders = []
+    for path in sorted(source_root.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not (isinstance(node.func, ast.Name) and node.func.id == "list"):
+                continue
+            if len(node.args) != 1:
+                continue
+            argument = node.args[0]
+            if not isinstance(argument, (ast.Set, ast.SetComp)):
+                continue
+            # A set of coordinate tuples is version-stable; a set built from
+            # anything else may be strings.
+            element = (argument.elt if isinstance(argument, ast.SetComp)
+                       else argument.elts[0] if argument.elts else None)
+            if isinstance(element, ast.Tuple):
+                continue
+            offenders.append(f"{path.name}:{node.lineno}")
+
+    assert not offenders, (
+        "list() over a set may order strings differently on Python 3.10 than "
+        f"on 3.11+; use sorted(): {offenders}")

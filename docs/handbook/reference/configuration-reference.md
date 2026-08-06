@@ -156,6 +156,10 @@ Each newer feature family records one of:
 - `disabled`: exact defaults, feature gate false, no notices;
 - `normalized_uncontracted`: an invalid dependency request was normalized off and notices record why;
 - `engineering_only_uncontracted`: a feature is enabled or any control is nondefault, without normalization notices.
+- `contracted`: base language only. Every base-language control holds its
+  approved value and the mechanism is active, so the run may reach V2
+  readiness. See
+  [Language research readiness](../systems/language-research-readiness.md).
 
 These are provenance classifications, not alternate runtime switches. Lexical
 controls use exactly the same statuses:

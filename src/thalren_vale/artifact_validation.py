@@ -84,6 +84,7 @@ from .config import (
     DEFAULT_MAXIMUM_ACTIVE_COALITIONS,
     DEFAULT_MAXIMUM_LEXICAL_LINEAGE_DEPTH,
     DEFAULT_MAXIMUM_PARENTAL_MEANINGS_PER_PARENT,
+    APPROVED_LANGUAGE_CONTROLS,
     DEFAULT_LANGUAGE_EVOLUTION_ENABLED,
     DEFAULT_LANGUAGE_CONTACT_ENABLED,
     DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
@@ -3057,18 +3058,10 @@ def _readiness_issues(
                 f"found {actual!r}",
                 "manifest",
             )
-    safe_language_controls = {
-        "language_evolution_enabled": False,
-        "maximum_language_associations": DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS,
-        "maximum_signal_length": DEFAULT_MAXIMUM_SIGNAL_LENGTH,
-        "language_learning_rate": DEFAULT_LANGUAGE_LEARNING_RATE,
-        "language_reinforcement_rate": DEFAULT_LANGUAGE_REINFORCEMENT_RATE,
-        "language_forgetting_interval": DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
-        "language_invention_enabled": DEFAULT_LANGUAGE_INVENTION_ENABLED,
-        "language_controls_status": "disabled",
-        "language_control_notices": [],
-    }
-    for name, expected in safe_language_controls.items():
+    # Endogenous Language v1 is the one contracted language mechanism. The gate
+    # may take either value so a run can serve as treatment or control; every
+    # other base-language control is pinned to its approved value.
+    for name, expected in APPROVED_LANGUAGE_CONTROLS.items():
         actual = config.get(name)
         if not _exact_equal(actual, expected):
             _add(
@@ -3078,6 +3071,34 @@ def _readiness_issues(
                 f"found {actual!r}",
                 "manifest",
             )
+    language_gate = config.get("language_evolution_enabled")
+    if not _is_bool(language_gate):
+        _add(
+            issues,
+            "language_controls_not_v2_ready",
+            "configuration.language_evolution_enabled: expected a boolean, "
+            f"found {language_gate!r}",
+            "manifest",
+        )
+    language_status = config.get("language_controls_status")
+    expected_status = "contracted" if language_gate is True else "disabled"
+    if not _exact_equal(language_status, expected_status):
+        _add(
+            issues,
+            "language_controls_not_v2_ready",
+            f"configuration.language_controls_status: expected "
+            f"{expected_status!r}, found {language_status!r}",
+            "manifest",
+        )
+    language_notices = config.get("language_control_notices")
+    if not _exact_equal(language_notices, []):
+        _add(
+            issues,
+            "language_controls_not_v2_ready",
+            "configuration.language_control_notices: expected [], "
+            f"found {language_notices!r}",
+            "manifest",
+        )
     safe_coalition_controls = {
         "coalition_emergence_enabled": False,
         "coalition_minimum_size": DEFAULT_COALITION_MINIMUM_SIZE,
@@ -3184,6 +3205,98 @@ def _readiness_issues(
                 f"found {actual!r}",
                 "manifest",
             )
+    safe_compositional_protolanguage_controls = {
+        "compositional_protolanguage_enabled": (
+            DEFAULT_COMPOSITIONAL_PROTOLANGUAGE_ENABLED),
+        "maximum_resource_morpheme_length": (
+            DEFAULT_MAXIMUM_RESOURCE_MORPHEME_LENGTH),
+        "modality_morpheme_length": DEFAULT_MODALITY_MORPHEME_LENGTH,
+        "compositional_protolanguage_controls_status": "disabled",
+        "compositional_protolanguage_control_notices": [],
+    }
+    for name, expected in safe_compositional_protolanguage_controls.items():
+        actual = config.get(name)
+        if not _exact_equal(actual, expected):
+            _add(
+                issues,
+                "compositional_protolanguage_controls_not_v2_ready",
+                f"configuration.{name}: expected {expected!r}, "
+                f"found {actual!r}",
+                "manifest",
+            )
+    safe_grammar_evolution_controls = {
+        "grammar_evolution_enabled": DEFAULT_GRAMMAR_EVOLUTION_ENABLED,
+        "order_adoption_threshold": DEFAULT_ORDER_ADOPTION_THRESHOLD,
+        "grammar_evolution_controls_status": "disabled",
+        "grammar_evolution_control_notices": [],
+    }
+    for name, expected in safe_grammar_evolution_controls.items():
+        actual = config.get(name)
+        if not _exact_equal(actual, expected):
+            _add(
+                issues,
+                "grammar_evolution_controls_not_v2_ready",
+                f"configuration.{name}: expected {expected!r}, "
+                f"found {actual!r}",
+                "manifest",
+            )
+    safe_language_coevolution_controls = {
+        "language_coevolution_enabled": DEFAULT_LANGUAGE_COEVOLUTION_ENABLED,
+        "intelligibility_reward": DEFAULT_INTELLIGIBILITY_REWARD,
+        "intelligibility_penalty": DEFAULT_INTELLIGIBILITY_PENALTY,
+        "language_coevolution_controls_status": "disabled",
+        "language_coevolution_control_notices": [],
+    }
+    for name, expected in safe_language_coevolution_controls.items():
+        actual = config.get(name)
+        if not _exact_equal(actual, expected):
+            _add(
+                issues,
+                "language_coevolution_controls_not_v2_ready",
+                f"configuration.{name}: expected {expected!r}, "
+                f"found {actual!r}",
+                "manifest",
+            )
+    # The contracted primary endpoint must be present and internally
+    # consistent. Evidence that does not carry it cannot be V2-ready, which
+    # correctly excludes every artifact recorded before this contract.
+    endpoint = manifest.get("language_endpoint")
+    if not _is_dict(endpoint):
+        _add(
+            issues,
+            "missing_language_endpoint",
+            f"language_endpoint must be an object, found {endpoint!r}",
+            "manifest",
+        )
+    else:
+        if not _exact_equal(
+            endpoint.get("name"), "comprehension_success_rate"
+        ):
+            _add(
+                issues,
+                "invalid_language_endpoint",
+                f"unexpected endpoint name {endpoint.get('name')!r}",
+                "manifest",
+            )
+        attempts = endpoint.get("communication_attempt_count")
+        successes = endpoint.get("successful_interpretation_count")
+        rate = endpoint.get("comprehension_success_rate")
+        if not _is_int(attempts) or attempts < 0:
+            _add(issues, "invalid_language_endpoint",
+                 f"communication_attempt_count invalid: {attempts!r}",
+                 "manifest")
+        elif not _is_int(successes) or not 0 <= successes <= attempts:
+            _add(issues, "invalid_language_endpoint",
+                 f"successful_interpretation_count invalid: {successes!r}",
+                 "manifest")
+        elif attempts == 0:
+            if rate is not None:
+                _add(issues, "invalid_language_endpoint",
+                     "an unattempted run has no comprehension rate, "
+                     f"found {rate!r}", "manifest")
+        elif type(rate) is not float or not 0.0 <= rate <= 1.0:
+            _add(issues, "invalid_language_endpoint",
+                 f"comprehension_success_rate invalid: {rate!r}", "manifest")
     if contract is None:
         _add(issues, "missing_expected_run_contract", "no complete external expected-run contract was supplied", "manifest")
         return issues.materialize()

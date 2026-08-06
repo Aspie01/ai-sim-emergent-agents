@@ -229,6 +229,18 @@ def make_artifacts(
         "configuration": {"ticks": requested_ticks, "condition": CONDITION},
         "log_mode": "metrics_only",
         "execution_mode": "serial",
+        "language_endpoint": {
+            "name": "comprehension_success_rate",
+            "definition": (
+                "successful_interpretation_count / "
+                "communication_attempt_count"
+            ),
+            "communication_attempt_count": 0,
+            "successful_interpretation_count": 0,
+            "comprehension_success_rate": None,
+            "measured_at_tick": 3,
+            "analysis_contract": "unspecified",
+        },
         "state_hash_algorithm": "sha256",
         "state_hash": "a" * 64,
         "required_outputs": [
@@ -294,6 +306,20 @@ def make_artifacts(
         "maximum_lexical_lineage_depth": 8,
         "lexical_evolution_controls_status": "disabled",
         "lexical_evolution_control_notices": [],
+        "compositional_protolanguage_enabled": False,
+        "maximum_resource_morpheme_length": 2,
+        "modality_morpheme_length": 1,
+        "compositional_protolanguage_controls_status": "disabled",
+        "compositional_protolanguage_control_notices": [],
+        "grammar_evolution_enabled": False,
+        "order_adoption_threshold": 3,
+        "grammar_evolution_controls_status": "disabled",
+        "grammar_evolution_control_notices": [],
+        "language_coevolution_enabled": False,
+        "intelligibility_reward": 0.06,
+        "intelligibility_penalty": 0.04,
+        "language_coevolution_controls_status": "disabled",
+        "language_coevolution_control_notices": [],
     })
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return run_dir, manifest_path
@@ -338,6 +364,18 @@ def make_authentic_schema_one_artifacts(root: Path) -> Path:
         "condition": CONDITION,
         "configuration": {"ticks": 1, "condition": CONDITION},
         "execution_mode": "serial",
+        "language_endpoint": {
+            "name": "comprehension_success_rate",
+            "definition": (
+                "successful_interpretation_count / "
+                "communication_attempt_count"
+            ),
+            "communication_attempt_count": 0,
+            "successful_interpretation_count": 0,
+            "comprehension_success_rate": None,
+            "measured_at_tick": 3,
+            "analysis_contract": "unspecified",
+        },
         "state_hash_algorithm": "sha256",
         "state_hash": "a" * 64,
         "code": {"commit": None, "dirty": True},
@@ -3230,3 +3268,138 @@ def test_metrics_row_diagnostics_use_the_shared_cap(tmp_path):
     assert issue.suppressed_count == rows - 3
     assert issue.representative_rows == (2, 3, 4)
     assert issue.representative_messages == ("population",) * 3
+
+
+# ── Readiness veto coverage ─────────────────────────────────────────────────
+
+def _readiness_codes_for(config_overrides):
+    """Return readiness codes for one effective configuration."""
+    from thalren_vale.artifact_validation import _readiness_issues
+    from thalren_vale.config import SimulationConfig
+
+    config = SimulationConfig(**config_overrides)
+    config.validate()
+    manifest = {
+        "configuration": config.manifest_dict(),
+        "language_endpoint": {
+            "name": "comprehension_success_rate",
+            "definition": (
+                "successful_interpretation_count / "
+                "communication_attempt_count"
+            ),
+            "communication_attempt_count": 0,
+            "successful_interpretation_count": 0,
+            "comprehension_success_rate": None,
+            "measured_at_tick": 1,
+            "analysis_contract": "unspecified",
+        },
+    }
+    issues = _readiness_issues(manifest, None)
+    return {issue.code for issue in issues} - {"missing_expected_run_contract"}
+
+
+def test_pristine_defaults_trip_no_control_readiness_veto():
+    assert _readiness_codes_for({}) == set()
+
+
+@pytest.mark.parametrize("overrides, expected_code", [
+    ({"modality_morpheme_length": 2},
+     "compositional_protolanguage_controls_not_v2_ready"),
+    ({"maximum_resource_morpheme_length": 3},
+     "compositional_protolanguage_controls_not_v2_ready"),
+    ({"order_adoption_threshold": 7},
+     "grammar_evolution_controls_not_v2_ready"),
+    ({"intelligibility_reward": 0.2},
+     "language_coevolution_controls_not_v2_ready"),
+    ({"intelligibility_penalty": 0.2},
+     "language_coevolution_controls_not_v2_ready"),
+])
+def test_nondefault_uncontracted_controls_are_not_v2_ready(
+    overrides, expected_code,
+):
+    """A nondefault engineering-only control must never pass the gate.
+
+    These three families were added after the veto was written and were
+    silently exempt: a run could set a nondefault morpheme length, adoption
+    threshold, or feedback rate and still classify as v2_ready.
+    """
+    assert expected_code in _readiness_codes_for(overrides)
+
+
+def test_every_control_family_is_covered_by_the_readiness_veto():
+    """No control family may be exempt from the V2-readiness gate.
+
+    Each language milestone adds a `*_controls_status` manifest key. A family
+    whose key never reaches `_readiness_issues` is invisible to the gate, so
+    this asserts coverage structurally rather than case by case.
+    """
+    import inspect
+
+    from thalren_vale.artifact_validation import _readiness_issues
+    from thalren_vale.config import SimulationConfig
+
+    config = SimulationConfig()
+    config.validate()
+    source = inspect.getsource(_readiness_issues)
+    uncovered = [
+        key for key in config.manifest_dict()
+        if key.endswith("_controls_status") and f'"{key}"' not in source
+    ]
+    assert not uncovered, f"control families outside the veto: {uncovered}"
+
+
+# ── Contracted endpoint readiness ───────────────────────────────────────────
+
+def _readiness_codes_with_endpoint(endpoint):
+    """Return readiness codes for a pristine config plus a given endpoint."""
+    from thalren_vale.artifact_validation import _readiness_issues
+    from thalren_vale.config import SimulationConfig
+
+    config = SimulationConfig()
+    config.validate()
+    manifest = {"configuration": config.manifest_dict()}
+    if endpoint is not _ABSENT:
+        manifest["language_endpoint"] = endpoint
+    issues = _readiness_issues(manifest, None)
+    return {issue.code for issue in issues} - {"missing_expected_run_contract"}
+
+
+_ABSENT = object()
+
+_VALID_ENDPOINT = {
+    "name": "comprehension_success_rate",
+    "definition": (
+        "successful_interpretation_count / communication_attempt_count"),
+    "communication_attempt_count": 200,
+    "successful_interpretation_count": 50,
+    "comprehension_success_rate": 0.25,
+    "measured_at_tick": 40,
+    "analysis_contract": "unspecified",
+}
+
+
+def test_valid_endpoint_passes_readiness():
+    assert _readiness_codes_with_endpoint(_VALID_ENDPOINT) == set()
+
+
+def test_absent_endpoint_is_not_v2_ready():
+    """Evidence predating the contract cannot claim to satisfy it."""
+    assert "missing_language_endpoint" in _readiness_codes_with_endpoint(
+        _ABSENT)
+
+
+@pytest.mark.parametrize("override", [
+    {"name": "something_else"},
+    {"communication_attempt_count": -1},
+    {"successful_interpretation_count": 500},        # exceeds attempts
+    {"comprehension_success_rate": 1.5},
+    {"comprehension_success_rate": "0.25"},
+    {"communication_attempt_count": 0,
+     "successful_interpretation_count": 0,
+     "comprehension_success_rate": 0.0},             # fabricated zero rate
+])
+def test_inconsistent_endpoint_is_not_v2_ready(override):
+    endpoint = dict(_VALID_ENDPOINT)
+    endpoint.update(override)
+    assert "invalid_language_endpoint" in _readiness_codes_with_endpoint(
+        endpoint)

@@ -354,12 +354,12 @@ v1, Lexical Evolution v1, Compositional Protolanguage v1, Grammar Evolution v1,
 and Language Coevolution v1 are implemented, and all are causally isolated from
 every system on this page. Coevolution's one reverse edge reaches directed
 relationship ties and partner choice only; it does not touch combat,
-technology, diplomacy, or religion. The future milestones
-are:
+technology, diplomacy, or religion.
 
-- `feature/language-research-readiness-v1` — **Planned, not implemented**.
-
-No final research contract, hypothesis, or research-ready claim is established for the systems on this page.
+No final research contract, hypothesis, or research-ready claim is established
+for the systems on this page. Language Research Readiness v1 contracts base
+language only and does not extend to combat, technology, diplomacy, or
+religion.
 
 ## 20. Implementation evidence
 

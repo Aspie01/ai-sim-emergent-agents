@@ -40,7 +40,7 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | Economy, aid, trade, raids and legacy trust | Implemented but experimental |
 | Directed social memory and partner bias | Implemented but experimental; Disabled by default; Engineering-only |
 | Informal coalitions | Implemented but experimental; Disabled by default; Engineering-only |
-| Endogenous Language v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Endogenous Language v1 | Implemented but experimental; Disabled by default; Contracted for readiness |
 | Coalition Dialects v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Language Contact v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Intergenerational Language v1 | Implemented but experimental; Disabled by default; Engineering-only |
@@ -63,7 +63,7 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | `feature/compositional-protolanguage-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/grammar-evolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/language-coevolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
-| `feature/language-research-readiness-v1` | Planned, not implemented |
+| `feature/language-research-readiness-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 
 No final language research hypotheses, estimands, metrics, evidence contracts, or readiness claims are defined here.
 
@@ -81,9 +81,10 @@ Completed engineering implementations:
 
 Planned, not implemented:
 
-- `feature/language-research-readiness-v1` — **Planned, not implemented**
 
-The next milestone is `feature/language-research-readiness-v1`: **Planned, not implemented**.
+The language milestone sequence is complete. Every further step is a
+research authorization decision rather than an engineering one, and each
+requires separate explicit authorization.
 
 ## Current branch work
 
@@ -229,4 +230,4 @@ Create a new handbook revision after any change to:
 - plugin policy, inventory, or observer behavior;
 - authorization of a new experiment or language milestone.
 
-The later `feature/language-research-readiness-v1` milestone is **Planned, not implemented** and will produce the research-readiness revision; it does not retroactively make this implementation-level handbook unnecessary or scientifically authoritative beyond its recorded scope.
+[Language Research Readiness v1](systems/language-research-readiness.md) is implemented. It contracts Endogenous Language v1 and records one canonical endpoint, but it defines no estimand, estimator, or uncertainty method and authorizes no execution. It does not make this implementation-level handbook scientifically authoritative beyond its recorded scope.

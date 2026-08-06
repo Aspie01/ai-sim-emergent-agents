@@ -14,8 +14,17 @@ from thalren_vale.artifact_validation import inspect_run_outputs
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# The 5-tick baseline never reaches technology research, so its fingerprint is
+# unchanged by the active-research payload repair.
 BASELINE_HASH = "3dcb25d98e634034da0814618bd8c28f3f6289491a536238950e866c5e75bc6f"
-ANTISTAG_BASELINE_HASH = "ef15589175c3c1e48ddab9ba837429626c46423d2637b35e8120189e110a7163"
+# Repinned by Language Research Readiness v1. The canonical payload previously
+# read `researching` and `research_progress`, which nothing in the simulation
+# ever assigns, so in-progress research was invisible: two factions researching
+# different technologies produced identical fingerprints. The payload now reads
+# the authoritative `active_research` mapping. This 40-tick run reaches
+# research, so its fingerprint moved. Previous value:
+# ef15589175c3c1e48ddab9ba837429626c46423d2637b35e8120189e110a7163
+ANTISTAG_BASELINE_HASH = "b8c26ad01ca38b3c3c5cc706e994ca2f25db870602633d1ba09373072e4dce5e"
 
 
 def _environment() -> dict[str, str]:

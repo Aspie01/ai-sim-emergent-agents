@@ -162,7 +162,14 @@ def test_language_controls_default_to_exact_research_safe_values():
     assert manifest["language_control_notices"] == []
 
 
-def test_enabled_or_nondefault_language_controls_are_engineering_only():
+def test_enabled_approved_language_controls_are_contracted():
+    """Endogenous Language v1 at approved values is the contracted mechanism.
+
+    Language Research Readiness v1 contracts this one mechanism, so an
+    enabled run holding every approved value reports `contracted` rather than
+    `engineering_only_uncontracted`. Any other control value falls back to
+    engineering-only and stays vetoed.
+    """
     enabled = SimulationConfig.from_cli(
         cli_args(enable_language_evolution=True))
     nondefault = SimulationConfig.from_cli(cli_args(
@@ -173,11 +180,26 @@ def test_enabled_or_nondefault_language_controls_are_engineering_only():
         language_forgetting_interval=5,
         disable_language_invention=True,
     ))
+    enabled_nondefault = SimulationConfig.from_cli(cli_args(
+        enable_language_evolution=True, language_learning_rate=0.30))
 
     assert enabled.language_evolution_enabled is True
-    assert enabled.language_controls_status == "engineering_only_uncontracted"
+    assert enabled.language_controls_status == "contracted"
     assert nondefault.language_invention_enabled is False
     assert nondefault.language_controls_status == "engineering_only_uncontracted"
+    assert enabled_nondefault.language_controls_status == (
+        "engineering_only_uncontracted")
+
+
+def test_disabled_language_remains_the_untouched_baseline():
+    """The control arm must keep its historical `disabled` status.
+
+    Only enabled runs move to `contracted`; the disabled baseline is what
+    every pre-contract pinned hash was recorded against.
+    """
+    baseline = SimulationConfig.from_cli(cli_args())
+    assert baseline.language_evolution_enabled is False
+    assert baseline.language_controls_status == "disabled"
 
 
 def test_coalition_controls_default_to_exact_research_safe_values():

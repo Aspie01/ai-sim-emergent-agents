@@ -11,7 +11,7 @@ Valid engineering evidence and research-ready evidence are different states:
 | `invalid` | Safety, schema, identity, termination, checksum, writer-health, or cross-artifact contract failed |
 | `legacy` | Readable schema-1 evidence; never V2-ready |
 | `schema2_valid` | Current deep structured contract passes, but the complete external readiness contract is absent or fails |
-| `v2_ready` | Valid schema-2 evidence plus an exact complete `ExpectedRunContract` |
+| `v2_ready` | Valid schema-2 evidence, an exact complete `ExpectedRunContract`, approved controls, and the contracted language endpoint |
 
 Current real runner output cannot reach `v2_ready`: child manifests omit plan identity/hash, code tag, and environment/plugin fingerprint, and the runner does not supply a complete expected contract.
 
@@ -58,7 +58,7 @@ Future milestones:
 | `feature/compositional-protolanguage-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/grammar-evolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/language-coevolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
-| `feature/language-research-readiness-v1` | Planned, not implemented |
+| `feature/language-research-readiness-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 
 Current source implements bounded different-coalition acquisition, exposure,
 and contact-qualified borrowing plus bounded comprehension-only transmission
@@ -80,7 +80,9 @@ association, and retained lexical indices do not reconstruct a full lineage.
 This handbook does not invent hypotheses, estimands, uncertainty rules, or
 research conclusions for these mechanisms.
 
-The next language milestone is `feature/language-research-readiness-v1`: **Planned, not implemented**.
+The language milestone sequence is complete. Every further step is a
+research authorization decision rather than an engineering one, and each
+requires separate explicit authorization.
 
 ## Core Replication V2 authorization
 
@@ -109,15 +111,37 @@ Tests establish implementation contracts such as:
 
 They do not establish natural long-run effect sizes, scientific hypotheses, external validity, full environment portability, or V2 research readiness.
 
-Artifact validation makes missing, enabled, normalized, or nondefault
-intergenerational or lexical controls non-V2-ready, and an
-`ExpectedRunContract` cannot override either veto. The generic runner rejects
-the complete intergenerational and lexical option families before output-root
-or child-process activity. Both parsers retain `allow_abbrev=False`.
+Artifact validation makes missing, normalized, or nondefault controls
+non-V2-ready for **every** control family, and an `ExpectedRunContract` cannot
+override any of those vetoes. A structural test asserts that each
+`*_controls_status` manifest key reaches the readiness gate, so a new family
+cannot be omitted silently.
 
-## Criteria for a future research-readiness revision
+Base language is the one exception: under
+[Language Research Readiness v1](../systems/language-research-readiness.md) it
+is contracted, so `language_evolution_enabled` may take either value while
+every other base-language control stays pinned to its approved value. All
+seven other language and social families remain engineering-only and vetoed.
+The generic runner rejects each engineering-only option family before
+output-root or child-process activity. Both parsers retain
+`allow_abbrev=False`.
 
-The later `feature/language-research-readiness-v1` milestone is **Planned, not implemented** and is expected to update this handbook only after source implements and tests an approved contract. At minimum, documentation would need to record exact approved controls, canonical metrics/artifacts, provenance, validation, estimands, run lifecycle, and authorization status. It must not retroactively reinterpret current engineering summaries as research evidence.
+## What the language contract does and does not settle
+
+[Language Research Readiness v1](../systems/language-research-readiness.md) is
+implemented. It records exact approved controls for Endogenous Language v1, one
+canonical endpoint, its provenance, and its validation.
+
+It settles nothing about analysis. Estimand, contrast, estimator, uncertainty
+method, and multiplicity rules remain **Planned, not implemented**, and the
+recorded endpoint carries `analysis_contract: "unspecified"` rather than
+leaving that omission to be inferred. `v2_ready` certifies evidence integrity
+— provenance, schema, determinism, approved controls — not that an analysis
+plan exists.
+
+It also authorizes nothing. No S0, S1, P1, P2, or Full configuration exists and
+no research cell has been launched. Current engineering summaries must not be
+retroactively reinterpreted as research evidence.
 
 ## Implementation evidence
 

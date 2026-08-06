@@ -53,6 +53,7 @@ The compact visual overview is the [full system map](diagrams/full-system-map.md
 - [Compositional protolanguage](systems/compositional-protolanguage.md)
 - [Grammar evolution](systems/grammar-evolution.md)
 - [Language coevolution](systems/language-coevolution.md)
+- [Language research readiness](systems/language-research-readiness.md)
 - [Combat, technology, diplomacy, and religion](systems/conflict-technology-diplomacy-religion.md)
 - [Events, observers, and plugins](systems/events-observers-and-plugins.md)
 
@@ -109,9 +110,11 @@ authoritative alone.
 | Core Replication V1 | Historical pilot material |
 | Core Replication V2 evidence | Planned, not implemented |
 | `feature/language-coevolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
-| `feature/language-research-readiness-v1` | Planned, not implemented |
+| `feature/language-research-readiness-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 
-The next language milestone is `feature/language-research-readiness-v1`: **Planned, not implemented**.
+The language milestone sequence is complete. Every further step is a
+research authorization decision rather than an engineering one, and each
+requires separate explicit authorization.
 
 ## Evidence standard
 

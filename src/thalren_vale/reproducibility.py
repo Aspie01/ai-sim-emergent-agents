@@ -142,6 +142,29 @@ def _person_record(
     return record
 
 
+def _active_research_record(faction) -> dict | None:
+    """Return one faction's in-progress research in canonical field order.
+
+    `technology.py` owns research state as a dynamically assigned
+    ``active_research`` dict. The earlier payload read ``researching`` and
+    ``research_progress``, which nothing ever assigns, so both fields were
+    permanently ``None`` and in-progress research was invisible to the hash:
+    two factions researching different technologies produced identical
+    fingerprints. Reading the authoritative dict closes that gap.
+    """
+    research = getattr(faction, "active_research", None)
+    if research is None:
+        return None
+    if not isinstance(research, Mapping):
+        raise ValueError("active research must be a mapping or absent")
+    return {
+        "tech": research.get("tech"),
+        "progress": research.get("progress"),
+        "started": research.get("started"),
+        "paused": research.get("paused"),
+    }
+
+
 def _faction_record(faction) -> dict:
     settlement = getattr(faction, "settlement", None)
     return {
@@ -168,8 +191,7 @@ def _faction_record(faction) -> dict:
             if settlement is not None else None
         ),
         "techs": sorted(getattr(faction, "techs", set())),
-        "researching": getattr(faction, "researching", None),
-        "research_progress": getattr(faction, "research_progress", None),
+        "active_research": _active_research_record(faction),
     }
 
 
@@ -647,11 +669,15 @@ def _language_hash_config(configuration: dict) -> LanguageEvolutionConfig:
     if missing:
         raise ValueError(
             "enabled language hashing lacks controls: " + ", ".join(missing))
-    if configuration["language_controls_status"] != (
-        "engineering_only_uncontracted"
+    # Enabled base language is either contracted (approved values) or
+    # engineering-only (any other value). Both are hashable; only the
+    # readiness gate distinguishes them.
+    if configuration["language_controls_status"] not in (
+        "contracted", "engineering_only_uncontracted"
     ):
         raise ValueError(
-            "enabled language hashing requires engineering-only status")
+            "enabled language hashing requires contracted or engineering-only "
+            "status")
     if (
         type(configuration["language_control_notices"]) is not list
         or configuration["language_control_notices"]
@@ -1565,6 +1591,49 @@ def build_artifact_inventory(
     return inventory, errors
 
 
+def language_endpoint_record(
+    language_runtime,
+    *,
+    final_tick: int,
+) -> dict:
+    """Return the contracted primary endpoint for one run.
+
+    Language Research Readiness v1 contracts one endpoint: comprehension
+    success rate, the share of committed-transfer utterances the receiver
+    interpreted correctly, measured at the run's final tick.
+
+    The rate is ``None`` rather than ``0.0`` when no utterance occurred. A
+    control arm with language disabled attempts no communication, so its rate
+    is genuinely undefined; reporting zero would assert a measured failure
+    that never happened.
+
+    This records the endpoint. It defines no estimand, contrast, estimator,
+    uncertainty method, or multiplicity rule; those remain unspecified and are
+    a separate authorization gate.
+    """
+    if type(final_tick) is not int or final_tick < 0:
+        raise ValueError("endpoint final tick must be a nonnegative integer")
+    attempts = getattr(language_runtime, "communication_attempt_count", 0)
+    successes = getattr(
+        language_runtime, "successful_interpretation_count", 0)
+    if type(attempts) is not int or type(successes) is not int:
+        raise ValueError("endpoint counters must be exact integers")
+    if attempts < 0 or successes < 0 or successes > attempts:
+        raise ValueError("endpoint counters violate their partition")
+    rate = None if attempts == 0 else round(successes / attempts, 12)
+    return {
+        "name": "comprehension_success_rate",
+        "definition": (
+            "successful_interpretation_count / communication_attempt_count"
+        ),
+        "communication_attempt_count": attempts,
+        "successful_interpretation_count": successes,
+        "comprehension_success_rate": rate,
+        "measured_at_tick": final_tick,
+        "analysis_contract": "unspecified",
+    }
+
+
 def write_run_manifest(
     output_dir: str,
     *,
@@ -1572,6 +1641,7 @@ def write_run_manifest(
     condition: str,
     configuration: dict,
     state_hash: str,
+    language_endpoint: dict | None = None,
     execution_mode: str,
     requested_ticks: int,
     final_tick: int,
@@ -1630,6 +1700,7 @@ def write_run_manifest(
         "optional_outputs": optional_outputs or {},
         "state_hash_algorithm": "sha256",
         "state_hash": state_hash,
+        "language_endpoint": language_endpoint,
         "writer_health": writer_health,
         "artifact_policy": artifact_policy or {
             "allow_zero_events": ALLOW_ZERO_EVENTS,

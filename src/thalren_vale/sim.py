@@ -34,7 +34,11 @@ from .plugin_api import (
     SpawnInhabitants, AdjustResource,
 )
 from .state import SimulationState
-from .reproducibility import canonical_state_hash, write_run_manifest
+from .reproducibility import (
+    canonical_state_hash,
+    language_endpoint_record,
+    write_run_manifest,
+)
 from .events import StructuredEventLog, emit_event
 from .artifact_contract import BELIEF_SNAPSHOT_INTERVAL
 if hasattr(sys.stdout, 'reconfigure'):
@@ -3337,6 +3341,8 @@ def run() -> None:
                     condition=_args.condition,
                     configuration=_repro_config,
                     state_hash=_state_hash,
+                    language_endpoint=language_endpoint_record(
+                        state.language, final_tick=_last_completed_tick),
                     execution_mode='serial' if _serial_mode else 'threaded',
                     requested_ticks=TICKS,
                     final_tick=_last_completed_tick,

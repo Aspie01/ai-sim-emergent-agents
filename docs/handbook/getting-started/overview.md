@@ -37,7 +37,7 @@ The simulation is not globally transactional. Individual admission, coalition tr
 | Seeded serial execution and schema-2 structured evidence | Stable and verified engineering infrastructure |
 | Social memory and repeated-partner bias | Implemented but experimental; Disabled by default; Engineering-only |
 | Informal coalitions | Implemented but experimental; Disabled by default; Engineering-only |
-| Endogenous Language v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Endogenous Language v1 | Implemented but experimental; Disabled by default; Contracted for readiness |
 | Coalition Dialects v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Language Contact v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Intergenerational Language v1 | Implemented but experimental; Disabled by default; Engineering-only |

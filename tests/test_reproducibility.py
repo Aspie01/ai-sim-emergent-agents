@@ -164,9 +164,7 @@ def test_enabled_language_state_hash_is_stable_across_processes(tmp_path):
     assert first["state_hash"] == second["state_hash"]
     assert first["configuration"] == second["configuration"]
     assert first["configuration"]["language_evolution_enabled"] is True
-    assert first["configuration"]["language_controls_status"] == (
-        "engineering_only_uncontracted"
-    )
+    assert first["configuration"]["language_controls_status"] == "contracted"
     assert first["configuration"]["language_control_notices"] == []
 
 
@@ -631,3 +629,177 @@ def test_source_files_keep_their_committed_byte_order_mark_state():
         if path.read_bytes().startswith(b"\xef\xbb\xbf"):
             offenders.append((name, True))
     assert not offenders, f"unexpected BOM state: {offenders}"
+
+
+# ── Active research payload ─────────────────────────────────────────────────
+
+def _faction_hash_with_research(research):
+    """Hash one otherwise-identical faction holding the given research."""
+    import random
+
+    from thalren_vale import world
+    from thalren_vale.config import SimulationConfig
+    from thalren_vale.factions import Faction
+    from thalren_vale.reproducibility import canonical_state_hash
+    from thalren_vale.state import SimulationState
+
+    random.seed(42)
+    world.reseed_world()
+    config = SimulationConfig()
+    config.validate()
+    state = SimulationState()
+    faction = Faction("Iron Shore", [], set(), set(), 0)
+    faction.techs = {"tools"}
+    faction.active_research = research
+    state.factions.append(faction)
+    return canonical_state_hash(state, world.world, config.manifest_dict())
+
+
+def test_in_progress_research_is_visible_to_the_canonical_hash():
+    """Two factions researching different things must not share a hash.
+
+    The payload previously read `researching` and `research_progress`, which
+    nothing ever assigns, so both were permanently None and every distinct
+    research state collapsed to one fingerprint.
+    """
+    idle = _faction_hash_with_research(None)
+    early = _faction_hash_with_research(
+        {"tech": "oral_tradition", "progress": 5, "started": 10,
+         "paused": False})
+    other = _faction_hash_with_research(
+        {"tech": "masonry", "progress": 5, "started": 10, "paused": False})
+    assert idle != early
+    assert early != other
+
+
+@pytest.mark.parametrize("field, value", [
+    ("progress", 6),
+    ("started", 11),
+    ("paused", True),
+])
+def test_every_research_field_reaches_the_hash(field, value):
+    base = {"tech": "oral_tradition", "progress": 5, "started": 10,
+            "paused": False}
+    changed = dict(base)
+    changed[field] = value
+    assert _faction_hash_with_research(base) != _faction_hash_with_research(
+        changed)
+
+
+def test_absent_research_attribute_is_accepted():
+    """Factions created before technology runs simply have no research."""
+    import random
+
+    from thalren_vale import world
+    from thalren_vale.config import SimulationConfig
+    from thalren_vale.factions import Faction
+    from thalren_vale.reproducibility import canonical_state_hash
+    from thalren_vale.state import SimulationState
+
+    random.seed(42)
+    world.reseed_world()
+    config = SimulationConfig()
+    config.validate()
+    state = SimulationState()
+    faction = Faction("Iron Shore", [], set(), set(), 0)
+    faction.techs = set()
+    state.factions.append(faction)
+    assert canonical_state_hash(state, world.world, config.manifest_dict())
+
+
+# ── Contracted primary endpoint ─────────────────────────────────────────────
+
+class _Runtime:
+    """Minimal stand-in exposing only the two contracted counters."""
+
+    def __init__(self, attempts, successes):
+        self.communication_attempt_count = attempts
+        self.successful_interpretation_count = successes
+
+
+def test_endpoint_reports_the_comprehension_success_rate():
+    from thalren_vale.reproducibility import language_endpoint_record
+
+    record = language_endpoint_record(_Runtime(200, 50), final_tick=40)
+    assert record["name"] == "comprehension_success_rate"
+    assert record["communication_attempt_count"] == 200
+    assert record["successful_interpretation_count"] == 50
+    assert record["comprehension_success_rate"] == pytest.approx(0.25)
+    assert record["measured_at_tick"] == 40
+
+
+def test_unattempted_run_reports_no_rate_rather_than_zero():
+    """A control arm attempts nothing, so its rate is undefined.
+
+    Reporting 0.0 would assert a measured communicative failure that never
+    occurred, which is a different claim from "no measurement exists".
+    """
+    from thalren_vale.reproducibility import language_endpoint_record
+
+    record = language_endpoint_record(_Runtime(0, 0), final_tick=40)
+    assert record["comprehension_success_rate"] is None
+    assert record["communication_attempt_count"] == 0
+
+
+def test_endpoint_records_no_analysis_contract():
+    """Estimand, estimator, and uncertainty method remain unspecified."""
+    from thalren_vale.reproducibility import language_endpoint_record
+
+    record = language_endpoint_record(_Runtime(10, 5), final_tick=1)
+    assert record["analysis_contract"] == "unspecified"
+
+
+@pytest.mark.parametrize("attempts, successes", [
+    (10, 11),      # successes exceed attempts
+    (-1, 0),       # negative attempts
+    (10, -1),      # negative successes
+])
+def test_endpoint_rejects_counters_violating_their_partition(
+    attempts, successes,
+):
+    from thalren_vale.reproducibility import language_endpoint_record
+
+    with pytest.raises(ValueError):
+        language_endpoint_record(_Runtime(attempts, successes), final_tick=1)
+
+
+def test_endpoint_rejects_an_invalid_final_tick():
+    from thalren_vale.reproducibility import language_endpoint_record
+
+    for tick in (-1, 1.0, True, None):
+        with pytest.raises(ValueError):
+            language_endpoint_record(_Runtime(10, 5), final_tick=tick)
+
+
+def test_endpoint_rate_is_deterministic_across_processes():
+    """Floating division must not vary with process state."""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        """
+        from thalren_vale.reproducibility import language_endpoint_record
+
+        class R:
+            communication_attempt_count = 4363
+            successful_interpretation_count = 1237
+
+        print(repr(language_endpoint_record(R(), final_tick=40)))
+        """
+    )
+    project_root = str(Path(__file__).resolve().parents[1])
+
+    def run(hash_seed):
+        env = dict(os.environ, PYTHONHASHSEED=hash_seed,
+                   PYTHONPATH=os.path.join(project_root, "src"))
+        done = subprocess.run([sys.executable, "-c", script],
+                              capture_output=True, text=True, timeout=60,
+                              env=env, cwd=project_root)
+        assert done.returncode == 0, done.stderr
+        return done.stdout.strip()
+
+    first = run("0")
+    assert first
+    assert first == run("7") == run("12345")

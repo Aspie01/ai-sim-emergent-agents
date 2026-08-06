@@ -124,8 +124,21 @@ VALID_SOCIAL_CONTROL_STATUSES = frozenset({
 })
 
 VALID_LANGUAGE_CONTROL_NOTICES = frozenset()
+# Language Research Readiness v1 contracts Endogenous Language v1 only. The
+# gate itself may take either value so a run can serve as treatment or
+# control; every other base-language control is pinned to its approved value.
+# A run outside these values stays engineering-only and cannot be V2-ready.
+APPROVED_LANGUAGE_CONTROLS = {
+    'maximum_language_associations': DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS,
+    'maximum_signal_length': DEFAULT_MAXIMUM_SIGNAL_LENGTH,
+    'language_learning_rate': DEFAULT_LANGUAGE_LEARNING_RATE,
+    'language_reinforcement_rate': DEFAULT_LANGUAGE_REINFORCEMENT_RATE,
+    'language_forgetting_interval': DEFAULT_LANGUAGE_FORGETTING_INTERVAL,
+    'language_invention_enabled': DEFAULT_LANGUAGE_INVENTION_ENABLED,
+}
 VALID_LANGUAGE_CONTROL_STATUSES = frozenset({
     'disabled',
+    'contracted',
     'engineering_only_uncontracted',
 })
 
@@ -1327,21 +1340,19 @@ class SimulationConfig:
 
     @property
     def language_controls_status(self) -> str:
-        """Return provenance status for uncontracted language controls."""
-        if (
-            self.language_evolution_enabled
-            or self.maximum_language_associations
-            != DEFAULT_MAXIMUM_LANGUAGE_ASSOCIATIONS
-            or self.maximum_signal_length != DEFAULT_MAXIMUM_SIGNAL_LENGTH
-            or self.language_learning_rate != DEFAULT_LANGUAGE_LEARNING_RATE
-            or self.language_reinforcement_rate
-            != DEFAULT_LANGUAGE_REINFORCEMENT_RATE
-            or self.language_forgetting_interval
-            != DEFAULT_LANGUAGE_FORGETTING_INTERVAL
-            or self.language_invention_enabled
-            is not DEFAULT_LANGUAGE_INVENTION_ENABLED
-        ):
-            return 'engineering_only_uncontracted'
+        """Return provenance status for the base-language controls.
+
+        ``contracted`` means every non-gate control matches its approved value
+        and the mechanism is active, so the run may reach V2 readiness.
+        ``disabled`` is the untouched historical baseline. Any other value of
+        any control is ``engineering_only_uncontracted`` and stays vetoed.
+        """
+        for name, approved in APPROVED_LANGUAGE_CONTROLS.items():
+            value = getattr(self, name)
+            if type(value) is not type(approved) or value != approved:
+                return 'engineering_only_uncontracted'
+        if self.language_evolution_enabled:
+            return 'contracted'
         return 'disabled'
 
     @property

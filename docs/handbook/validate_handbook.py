@@ -59,9 +59,9 @@ REQUIRED_PAGES = {
     "diagrams/experiment-and-artifact-flow.md",
 }
 
-PLANNED_LANGUAGE_MILESTONES = (
-    "feature/language-research-readiness-v1",
-)
+# Every language milestone is implemented. Future work is research
+# authorization rather than an engineering milestone, so this tuple is empty.
+PLANNED_LANGUAGE_MILESTONES = ()
 
 KNOWN_STALE_DATA = (
     "qtable_pop_300_300.json",

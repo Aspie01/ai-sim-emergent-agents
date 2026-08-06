@@ -355,9 +355,10 @@ Completed engineering implementations:
 
 Planned, not implemented:
 
-- `feature/language-research-readiness-v1` — **Planned, not implemented**.
 
-The next milestone is `feature/language-research-readiness-v1`: **Planned, not implemented**.
+The language milestone sequence is complete. Every further step is a
+research authorization decision rather than an engineering one, and each
+requires separate explicit authorization.
 
 ## 17. Implementation evidence
 

@@ -54,6 +54,7 @@ The compact visual overview is the [full system map](diagrams/full-system-map.md
 - [Grammar evolution](systems/grammar-evolution.md)
 - [Language coevolution](systems/language-coevolution.md)
 - [Language research readiness](systems/language-research-readiness.md)
+- [Coalition intelligibility](systems/coalition-intelligibility.md)
 - [Combat, technology, diplomacy, and religion](systems/conflict-technology-diplomacy-religion.md)
 - [Events, observers, and plugins](systems/events-observers-and-plugins.md)
 

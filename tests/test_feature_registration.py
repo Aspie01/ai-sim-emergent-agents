@@ -84,6 +84,18 @@ FAMILY_REGISTRATION = {
         "artifact_validator": "_validate_language_coevolution_configuration",
         "runner_rejector": "_reject_uncontracted_language_coevolution_args",
     },
+    "coalition_intelligibility": {
+        # Owns no runtime state: it only reads the intelligibility that
+        # coevolution writes, so there is nothing to hold pristine. A vacuous
+        # guard would weaken the check, so the declaration is None and
+        # `test_stateless_families_own_no_runtime_state` proves the claim
+        # rather than taking it on trust.
+        "pristine_guard": None,
+        "artifact_validator": (
+            "_validate_coalition_intelligibility_configuration"),
+        "runner_rejector": (
+            "_reject_uncontracted_coalition_intelligibility_args"),
+    },
 }
 
 REQUIRED_LAYERS = (
@@ -152,13 +164,32 @@ def test_every_family_declares_every_layer():
 
 # ── Each declared hook exists ───────────────────────────────────────────────
 
+def test_stateless_families_own_no_runtime_state():
+    """A family declaring no pristine guard must genuinely own no state.
+
+    Declaring `pristine_guard: None` is how a family opts out of the
+    disabled-state check. That opt-out has to be falsifiable, or it becomes a
+    way to silently skip the guard: any family that later grows runtime state
+    on `SimulationState` must declare a guard for it.
+    """
+    from thalren_vale.state import SimulationState
+
+    owned = set(SimulationState.__dataclass_fields__)
+    offenders = sorted(
+        family for family, hooks in FAMILY_REGISTRATION.items()
+        if hooks["pristine_guard"] is None and family in owned
+    )
+    assert not offenders, (
+        f"families declaring no state but owning runtime state: {offenders}")
+
+
 @pytest.mark.parametrize("family", sorted(FAMILY_REGISTRATION))
 def test_declared_hooks_exist(family):
     hooks = FAMILY_REGISTRATION[family]
     missing = []
-    if hooks["pristine_guard"] not in _defined_functions(
-        "src/thalren_vale/reproducibility.py"
-    ):
+    if hooks["pristine_guard"] is not None and hooks[
+        "pristine_guard"
+    ] not in _defined_functions("src/thalren_vale/reproducibility.py"):
         missing.append(hooks["pristine_guard"])
     if hooks["artifact_validator"] not in _defined_functions(
         "src/thalren_vale/artifact_validation.py"
@@ -177,6 +208,8 @@ def test_declared_hooks_exist(family):
 def test_pristine_guard_is_reached_by_the_hash(family):
     """A guard that exists but is never called protects nothing."""
     guard = FAMILY_REGISTRATION[family]["pristine_guard"]
+    if guard is None:
+        pytest.skip(f"{family} owns no runtime state")
     called = _calls_within(
         "src/thalren_vale/reproducibility.py", "canonical_state_hash")
     assert guard in called, (

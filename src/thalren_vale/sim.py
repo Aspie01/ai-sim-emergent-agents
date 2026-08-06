@@ -987,6 +987,14 @@ def maintain_emergent_state(
                 state.coalitions,
                 tick=t,
                 config=run_config.coalition_config,
+                # Supplied only when gating is effective. Coalitions recompute
+                # here, after this tick's communication has already updated
+                # intelligibility in the economy layer, so the loop is
+                # one-tick-lagged rather than circular within a tick.
+                intelligibility_threshold=(
+                    run_config.coalition_intelligibility_threshold
+                    if run_config.coalition_intelligibility_enabled else None
+                ),
             )
     if run_config.language_evolution_enabled:
         if run_config.coalition_dialect_influence_enabled:
@@ -2467,6 +2475,16 @@ def run() -> None:
     _parser.add_argument(
         '--intelligibility-penalty', type=float, default=None,
         help='Directed tie loss per misunderstood utterance')
+    _coalition_intelligibility = _parser.add_mutually_exclusive_group()
+    _coalition_intelligibility.add_argument(
+        '--enable-coalition-intelligibility', action='store_true',
+        help='Enable engineering-only intelligibility gating of coalitions')
+    _coalition_intelligibility.add_argument(
+        '--disable-coalition-intelligibility', action='store_true',
+        help='Explicitly leave coalition intelligibility gating disabled')
+    _parser.add_argument(
+        '--coalition-intelligibility-threshold', type=float, default=None,
+        help='Minimum mutual intelligibility for a coalition edge')
     _parser.add_argument(
         '--plan-identity', type=str, default=None,
         help='Experiment plan identity asserted by the runner')
@@ -2550,6 +2568,19 @@ def run() -> None:
             sys.stderr.write(
                 'warning: grammar evolution was requested without effective '
                 'compositional protolanguage; grammar normalized to false '
+                'and the run is not V2-ready\n')
+    for _notice in _run_config.coalition_intelligibility_control_notices:
+        if _notice == config.COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COALITIONS:
+            sys.stderr.write(
+                'warning: coalition intelligibility was requested without '
+                'effective coalition emergence; gating normalized to false '
+                'and the run is not V2-ready\n')
+        elif _notice == (
+            config.COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COEVOLUTION
+        ):
+            sys.stderr.write(
+                'warning: coalition intelligibility was requested without '
+                'effective language coevolution; gating normalized to false '
                 'and the run is not V2-ready\n')
     for _notice in _run_config.language_coevolution_control_notices:
         if _notice == config.LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_LANGUAGE:

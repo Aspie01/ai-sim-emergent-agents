@@ -77,6 +77,7 @@ MILESTONE_GATES: dict[str, str | None] = {
     "feature/grammar-evolution-v1": "grammar_evolution_enabled",
     "feature/language-coevolution-v1": "language_coevolution_enabled",
     "feature/language-research-readiness-v1": None,
+    "feature/language-coevolution-v2": "coalition_intelligibility_enabled",
 }
 
 MILESTONE_SLUG = re.compile(r"feature/[a-z-]+-v1")

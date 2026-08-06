@@ -79,6 +79,12 @@ from .config import (
     MAXIMUM_INTELLIGIBILITY_RATE,
     VALID_LANGUAGE_COEVOLUTION_CONTROL_NOTICES,
     VALID_LANGUAGE_COEVOLUTION_CONTROL_STATUSES,
+    COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COALITIONS,
+    COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COEVOLUTION,
+    DEFAULT_COALITION_INTELLIGIBILITY_ENABLED,
+    DEFAULT_COALITION_INTELLIGIBILITY_THRESHOLD,
+    VALID_COALITION_INTELLIGIBILITY_CONTROL_NOTICES,
+    VALID_COALITION_INTELLIGIBILITY_CONTROL_STATUSES,
     DEFAULT_LEXICAL_EVOLUTION_ENABLED,
     DEFAULT_LEXICAL_MUTATION_RATE,
     DEFAULT_MAXIMUM_ACTIVE_COALITIONS,
@@ -1708,6 +1714,191 @@ def _validate_grammar_evolution_configuration(
         )
 
 
+def _validate_coalition_intelligibility_configuration(
+    config: dict,
+    issues: _IssueCollector,
+) -> None:
+    """Validate gating controls and both dependency facts.
+
+    Gating reads the intelligibility that coevolution writes and acts on the
+    coalition graph, so it depends on both and each is reported separately.
+    """
+
+    def threshold(value: object) -> bool:
+        return (
+            type(value) is float
+            and math.isfinite(value)
+            and 0.0 < value <= 1.0
+        )
+
+    validators = {
+        "coalition_intelligibility_enabled": _is_bool,
+        "coalition_intelligibility_threshold": threshold,
+        "coalition_intelligibility_controls_status": (
+            lambda value: _is_str(value)
+            and value in VALID_COALITION_INTELLIGIBILITY_CONTROL_STATUSES
+        ),
+        "coalition_intelligibility_control_notices": (
+            lambda value: _is_list(value)
+            and all(
+                _is_str(item)
+                and item in VALID_COALITION_INTELLIGIBILITY_CONTROL_NOTICES
+                for item in value
+            )
+            and len(value) == len(set(value))
+            and value == sorted(value)
+        ),
+    }
+    valid_present: set[str] = set()
+    for name, validator in validators.items():
+        if name not in config:
+            continue
+        if not validator(config[name]):
+            _add(
+                issues,
+                "invalid_coalition_intelligibility_configuration",
+                f"{name} is malformed",
+                "manifest",
+            )
+        else:
+            valid_present.add(name)
+
+    enabled_present = "coalition_intelligibility_enabled" in valid_present
+    status_present = (
+        "coalition_intelligibility_controls_status" in valid_present)
+    notices_present = (
+        "coalition_intelligibility_control_notices" in valid_present)
+    coalitions_present = (
+        "coalition_emergence_enabled" in config
+        and _is_bool(config.get("coalition_emergence_enabled"))
+    )
+    coevolution_present = (
+        "language_coevolution_enabled" in config
+        and _is_bool(config.get("language_coevolution_enabled"))
+    )
+    enabled = (
+        config["coalition_intelligibility_enabled"]
+        if enabled_present else None
+    )
+    status = (
+        config["coalition_intelligibility_controls_status"]
+        if status_present else None
+    )
+    notices = (
+        config["coalition_intelligibility_control_notices"]
+        if notices_present else None
+    )
+    errors: list[str] = []
+
+    def add_error(message: str) -> None:
+        if message not in errors:
+            errors.append(message)
+
+    if enabled is True:
+        if coalitions_present and not config["coalition_emergence_enabled"]:
+            add_error(
+                "enabled coalition intelligibility requires coalition "
+                "emergence")
+        if coevolution_present and not config["language_coevolution_enabled"]:
+            add_error(
+                "enabled coalition intelligibility requires language "
+                "coevolution")
+        if notices_present and notices:
+            add_error(
+                "enabled coalition intelligibility conflicts with "
+                "normalization notices")
+
+    if notices_present:
+        assert type(notices) is list
+        coalitions_notice = (
+            COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COALITIONS in notices)
+        coevolution_notice = (
+            COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COEVOLUTION in notices)
+        if enabled is True and notices:
+            add_error(
+                "normalization notices require disabled coalition "
+                "intelligibility")
+        if coalitions_present:
+            if config["coalition_emergence_enabled"] and coalitions_notice:
+                add_error(
+                    "coalition dependency notice conflicts with effective "
+                    "coalition emergence")
+            if (
+                notices
+                and not config["coalition_emergence_enabled"]
+                and not coalitions_notice
+            ):
+                add_error(
+                    "normalized coalition intelligibility lacks the "
+                    "coalition dependency notice")
+        if coevolution_present:
+            if config["language_coevolution_enabled"] and coevolution_notice:
+                add_error(
+                    "coevolution dependency notice conflicts with effective "
+                    "coevolution")
+            if (
+                notices
+                and not config["language_coevolution_enabled"]
+                and not coevolution_notice
+            ):
+                add_error(
+                    "normalized coalition intelligibility lacks the "
+                    "coevolution dependency notice")
+
+    defaults = {
+        "coalition_intelligibility_enabled": (
+            DEFAULT_COALITION_INTELLIGIBILITY_ENABLED),
+        "coalition_intelligibility_threshold": (
+            DEFAULT_COALITION_INTELLIGIBILITY_THRESHOLD),
+    }
+    present_controls = set(defaults).intersection(valid_present)
+    controls_complete = set(defaults) <= valid_present
+    any_nondefault = any(
+        not _exact_equal(config[name], defaults[name])
+        for name in present_controls
+    )
+    if status == "disabled":
+        if any_nondefault:
+            add_error(
+                "disabled coalition intelligibility status conflicts with "
+                "present controls")
+        if notices_present and notices:
+            add_error(
+                "disabled coalition intelligibility status requires exact "
+                "empty notices")
+    elif status == "normalized_uncontracted":
+        if enabled is True:
+            add_error(
+                "normalized coalition intelligibility status requires "
+                "disabled gating")
+        if not notices_present or not notices:
+            add_error(
+                "normalized coalition intelligibility status requires a "
+                "dependency notice")
+    elif status == "engineering_only_uncontracted":
+        if notices_present and notices:
+            add_error(
+                "engineering coalition intelligibility status conflicts with "
+                "normalization notices")
+        if controls_complete and not any_nondefault:
+            add_error(
+                "engineering coalition intelligibility status requires a "
+                "nondefault control")
+    if notices_present and notices and status_present and (
+        status != "normalized_uncontracted"
+    ):
+        add_error(
+            "coalition intelligibility status conflicts with normalization "
+            "notices")
+    for message in errors:
+        _add(
+            issues,
+            "invalid_coalition_intelligibility_configuration",
+            message,
+            "manifest",
+        )
+
+
 def _validate_language_coevolution_configuration(
     config: dict,
     issues: _IssueCollector,
@@ -3306,6 +3497,24 @@ def _readiness_issues(
         elif type(rate) is not float or not 0.0 <= rate <= 1.0:
             _add(issues, "invalid_language_endpoint",
                  f"comprehension_success_rate invalid: {rate!r}", "manifest")
+    safe_coalition_intelligibility_controls = {
+        "coalition_intelligibility_enabled": (
+            DEFAULT_COALITION_INTELLIGIBILITY_ENABLED),
+        "coalition_intelligibility_threshold": (
+            DEFAULT_COALITION_INTELLIGIBILITY_THRESHOLD),
+        "coalition_intelligibility_controls_status": "disabled",
+        "coalition_intelligibility_control_notices": [],
+    }
+    for name, expected in safe_coalition_intelligibility_controls.items():
+        actual = config.get(name)
+        if not _exact_equal(actual, expected):
+            _add(
+                issues,
+                "coalition_intelligibility_controls_not_v2_ready",
+                f"configuration.{name}: expected {expected!r}, "
+                f"found {actual!r}",
+                "manifest",
+            )
     if contract is None:
         _add(issues, "missing_expected_run_contract", "no complete external expected-run contract was supplied", "manifest")
         return issues.materialize()
@@ -3484,6 +3693,7 @@ def _validate_strict(
         _validate_compositional_protolanguage_configuration(config, issues)
         _validate_grammar_evolution_configuration(config, issues)
         _validate_language_coevolution_configuration(config, issues)
+        _validate_coalition_intelligibility_configuration(config, issues)
     execution_mode = manifest.get("execution_mode")
     if not _is_str(execution_mode) or execution_mode not in {"serial", "threaded"}:
         _add(issues, "invalid_execution_mode", repr(manifest.get("execution_mode")), "manifest")

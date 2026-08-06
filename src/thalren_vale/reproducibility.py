@@ -1057,6 +1057,15 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         raise ValueError("language coevolution setting must be boolean")
     language_coevolution_enabled = configuration.get(
         "language_coevolution_enabled", False)
+    if (
+        "coalition_intelligibility_enabled" in configuration
+        and type(
+            configuration["coalition_intelligibility_enabled"]) is not bool
+    ):
+        raise ValueError(
+            "coalition intelligibility setting must be boolean")
+    coalition_intelligibility_enabled = configuration.get(
+        "coalition_intelligibility_enabled", False)
     social_partner_bias_enabled = configuration.get(
         "social_partner_bias_enabled") is True
     non_behavioral_keys = {
@@ -1143,6 +1152,12 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         "language_coevolution_controls_status",
         "language_coevolution_control_notices",
     }
+    coalition_intelligibility_configuration_keys = {
+        "coalition_intelligibility_enabled",
+        "coalition_intelligibility_threshold",
+        "coalition_intelligibility_controls_status",
+        "coalition_intelligibility_control_notices",
+    }
     compositional_configuration_keys = {
         "compositional_protolanguage_enabled",
         "maximum_resource_morpheme_length",
@@ -1180,6 +1195,18 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
     elif not language_evolution_enabled:
         raise ValueError(
             "enabled compositional protolanguage requires language evolution")
+    if not coalition_intelligibility_enabled:
+        # This family owns no runtime state: it only reads the intelligibility
+        # that coevolution writes. There is nothing to hold pristine, so the
+        # keys simply leave the behavioural payload.
+        non_behavioral_keys.update(
+            coalition_intelligibility_configuration_keys)
+    elif not coalition_emergence_enabled:
+        raise ValueError(
+            "enabled coalition intelligibility requires coalition emergence")
+    elif not language_coevolution_enabled:
+        raise ValueError(
+            "enabled coalition intelligibility requires language coevolution")
     if not language_coevolution_enabled:
         _require_pristine_disabled_coevolution_state(state)
         non_behavioral_keys.update(coevolution_configuration_keys)

@@ -225,17 +225,24 @@ relationships, vocabularies, factions, and inventories are not erased.
   inventory, or official language exists.
 - No explicit established-coalition merge operation exists.
 - Coalition lifecycle has no direct event artifact or standard metric columns.
-- No language, faction, combat, health, reproduction, or movement feedback is
-  implemented.
+- No faction, combat, health, reproduction, or movement feedback is
+  implemented. Language feedback exists only through
+  [Coalition Intelligibility](coalition-intelligibility.md), which is disabled
+  by default and can only narrow which ties qualify.
 - The feature remains blocked from experiment plans and research readiness.
 
 ## 19. Future extensions
 
-Language-driven coalition formation or lifecycle is **Planned, not
-implemented**. [Language Coevolution v1](language-coevolution.md) is
-implemented, but it feeds intelligibility only into directed relationship ties
-and partner choice; it does not read or write coalition state. No current plan
-authorizes leaders, institutions, diplomacy, coalition-owned resources, or
+Language-driven coalition formation is implemented by
+[Coalition Intelligibility](coalition-intelligibility.md), disabled by default.
+When effective, a reciprocal tie carries a coalition edge only if both
+directions clear an intelligibility threshold, so agents who cannot understand
+each other do not coalesce and a coalition losing mutual intelligibility stops
+qualifying. Gating only ever narrows: trust, familiarity, and grievance still
+gate every edge.
+
+Coalitions remain relationship-defined rather than language-defined. No current
+plan authorizes leaders, institutions, diplomacy, coalition-owned resources, or
 official languages.
 
 ## 20. Implementation evidence

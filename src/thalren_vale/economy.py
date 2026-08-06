@@ -32,6 +32,7 @@ from .config import (
     DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
     GrammarEvolutionConfig,
     LanguageCoevolutionConfig,
+    ProductionTrialConfig,
     LanguageContactConfig,
     LanguageEvolutionConfig,
     CompositionalProtolanguageConfig,
@@ -103,6 +104,7 @@ def _coalition_language_kwargs(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    trial_config: ProductionTrialConfig | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None,
 ) -> dict[str, object]:
     """Pass only effective coalition-language owners into communication."""
@@ -134,6 +136,11 @@ def _coalition_language_kwargs(
     ):
         result["grammar_config"] = grammar_config
         result["grammar_runtime"] = grammar_runtime
+    if (
+        trial_config is not None
+        and trial_config.production_trial_enabled
+    ):
+        result["trial_config"] = trial_config
     if coalition_context_required:
         result["coalition_membership_snapshot"] = (
             coalition_membership_snapshot
@@ -263,6 +270,7 @@ def _do_trade(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    trial_config: ProductionTrialConfig | None = None,
     coevolution_config: LanguageCoevolutionConfig | None = None,
     coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
@@ -360,6 +368,7 @@ def _do_trade(
                 compositional_runtime=compositional_runtime,
                 grammar_config=grammar_config,
                 grammar_runtime=grammar_runtime,
+                trial_config=trial_config,
                 coalition_membership_snapshot=coalition_membership_snapshot,
             ),
         )
@@ -395,6 +404,7 @@ def _faction_trade(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    trial_config: ProductionTrialConfig | None = None,
     coevolution_config: LanguageCoevolutionConfig | None = None,
     coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
@@ -442,6 +452,7 @@ def _faction_trade(
                     compositional_runtime=compositional_runtime,
                     grammar_config=grammar_config,
                     grammar_runtime=grammar_runtime,
+                    trial_config=trial_config,
                     coevolution_config=coevolution_config,
                     coevolution_runtime=coevolution_runtime,
                     coalition_membership_snapshot=(
@@ -465,6 +476,7 @@ def _faction_trade(
                     compositional_runtime=compositional_runtime,
                     grammar_config=grammar_config,
                     grammar_runtime=grammar_runtime,
+                    trial_config=trial_config,
                     coevolution_config=coevolution_config,
                     coevolution_runtime=coevolution_runtime,
                     coalition_membership_snapshot=(
@@ -629,6 +641,7 @@ def _commit_individual_transfer(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    trial_config: ProductionTrialConfig | None = None,
     coevolution_config: LanguageCoevolutionConfig | None = None,
     coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
@@ -684,6 +697,7 @@ def _commit_individual_transfer(
                 compositional_runtime=compositional_runtime,
                 grammar_config=grammar_config,
                 grammar_runtime=grammar_runtime,
+                trial_config=trial_config,
                 coalition_membership_snapshot=coalition_membership_snapshot,
             ),
         )
@@ -718,6 +732,7 @@ def _attempt_individual_transfer(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    trial_config: ProductionTrialConfig | None = None,
     coevolution_config: LanguageCoevolutionConfig | None = None,
     coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
@@ -743,6 +758,7 @@ def _attempt_individual_transfer(
                 compositional_runtime=compositional_runtime,
                 grammar_config=grammar_config,
                 grammar_runtime=grammar_runtime,
+                trial_config=trial_config,
                 coevolution_config=coevolution_config,
                 coevolution_runtime=coevolution_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
@@ -771,6 +787,7 @@ def _historical_barter(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    trial_config: ProductionTrialConfig | None = None,
     coevolution_config: LanguageCoevolutionConfig | None = None,
     coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
@@ -805,6 +822,7 @@ def _historical_barter(
                 compositional_runtime=compositional_runtime,
                 grammar_config=grammar_config,
                 grammar_runtime=grammar_runtime,
+                trial_config=trial_config,
                 coevolution_config=coevolution_config,
                 coevolution_runtime=coevolution_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
@@ -917,6 +935,7 @@ def _relationship_biased_barter(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    trial_config: ProductionTrialConfig | None = None,
     coevolution_config: LanguageCoevolutionConfig | None = None,
     coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
@@ -972,6 +991,7 @@ def _relationship_biased_barter(
                     compositional_runtime=compositional_runtime,
                     grammar_config=grammar_config,
                     grammar_runtime=grammar_runtime,
+                    trial_config=trial_config,
                     coevolution_config=coevolution_config,
                     coevolution_runtime=coevolution_runtime,
                     coalition_membership_snapshot=(
@@ -1002,6 +1022,7 @@ def _relationship_biased_barter(
                 compositional_runtime=compositional_runtime,
                 grammar_config=grammar_config,
                 grammar_runtime=grammar_runtime,
+                trial_config=trial_config,
                 coevolution_config=coevolution_config,
                 coevolution_runtime=coevolution_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
@@ -1032,6 +1053,7 @@ def _individual_barter(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    trial_config: ProductionTrialConfig | None = None,
     coevolution_config: LanguageCoevolutionConfig | None = None,
     coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
@@ -1069,6 +1091,7 @@ def _individual_barter(
             compositional_runtime=compositional_runtime,
             grammar_config=grammar_config,
             grammar_runtime=grammar_runtime,
+            trial_config=trial_config,
             coevolution_config=coevolution_config,
             coevolution_runtime=coevolution_runtime,
             coalition_membership_snapshot=coalition_membership_snapshot,
@@ -1093,6 +1116,7 @@ def _individual_barter(
         compositional_runtime=compositional_runtime,
         grammar_config=grammar_config,
         grammar_runtime=grammar_runtime,
+        trial_config=trial_config,
         coevolution_config=coevolution_config,
         coevolution_runtime=coevolution_runtime,
         coalition_membership_snapshot=coalition_membership_snapshot,
@@ -1180,6 +1204,7 @@ def economy_tick(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    trial_config: ProductionTrialConfig | None = None,
     coevolution_config: LanguageCoevolutionConfig | None = None,
     coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
@@ -1231,6 +1256,7 @@ def economy_tick(
             compositional_runtime=compositional_runtime,
             grammar_config=grammar_config,
             grammar_runtime=grammar_runtime,
+            trial_config=trial_config,
             coevolution_config=coevolution_config,
             coevolution_runtime=coevolution_runtime,
             coalition_membership_snapshot=coalition_membership_snapshot,
@@ -1259,6 +1285,7 @@ def economy_tick(
                 compositional_runtime=compositional_runtime,
                 grammar_config=grammar_config,
                 grammar_runtime=grammar_runtime,
+                trial_config=trial_config,
                 coevolution_config=coevolution_config,
                 coevolution_runtime=coevolution_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,

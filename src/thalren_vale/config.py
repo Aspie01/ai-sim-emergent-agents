@@ -81,6 +81,20 @@ DEFAULT_LANGUAGE_COEVOLUTION_ENABLED = False
 DEFAULT_INTELLIGIBILITY_REWARD = 0.06
 DEFAULT_INTELLIGIBILITY_PENALTY = 0.04
 MAXIMUM_INTELLIGIBILITY_RATE = 0.25
+DEFAULT_COALITION_INTELLIGIBILITY_ENABLED = False
+# Measured on a synthetic 12-agent scenario: 0.10 prunes edges without
+# changing when coalitions form, while 0.50 delays first formation from tick
+# 113 to 182. A gating default that visibly does nothing is a poor default.
+# Treat this as a starting point, not a tuned value.
+DEFAULT_COALITION_INTELLIGIBILITY_THRESHOLD = 0.50
+DEFAULT_FACTION_RELATIONSHIP_TRUST_ENABLED = False
+# Legacy faction trust requires an interaction count strictly above 5. Aid
+# adds +0.08 of Relationship trust per interaction, so ~0.40 is the nearest
+# equivalent. It is an equivalence chosen by arithmetic, not a tuned value.
+DEFAULT_FACTION_RELATIONSHIP_TRUST_THRESHOLD = 0.40
+DEFAULT_PRODUCTION_TRIAL_ENABLED = False
+DEFAULT_PRODUCTION_TRIAL_INTERVAL = 8
+MAXIMUM_PRODUCTION_TRIAL_INTERVAL = 64
 MAXIMUM_ORDER_ADOPTION_THRESHOLD = 32
 FACTION_TRUST_THRESHOLD = DEFAULT_FACTION_TRUST_THRESHOLD
 WAR_TENSION_THRESHOLD = DEFAULT_WAR_TENSION_THRESHOLD
@@ -254,6 +268,46 @@ VALID_LANGUAGE_COEVOLUTION_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COALITIONS = (
+    'coalition_intelligibility_requested_without_coalitions'
+)
+COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COEVOLUTION = (
+    'coalition_intelligibility_requested_without_coevolution'
+)
+VALID_COALITION_INTELLIGIBILITY_CONTROL_NOTICES = frozenset({
+    COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COALITIONS,
+    COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COEVOLUTION,
+})
+VALID_COALITION_INTELLIGIBILITY_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
+FACTION_RELATIONSHIP_TRUST_NOTICE_WITHOUT_SOCIAL = (
+    'faction_relationship_trust_requested_without_social_memory'
+)
+VALID_FACTION_RELATIONSHIP_TRUST_CONTROL_NOTICES = frozenset({
+    FACTION_RELATIONSHIP_TRUST_NOTICE_WITHOUT_SOCIAL,
+})
+VALID_FACTION_RELATIONSHIP_TRUST_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
+PRODUCTION_TRIAL_NOTICE_WITHOUT_LANGUAGE = (
+    'production_trial_requested_without_language'
+)
+VALID_PRODUCTION_TRIAL_CONTROL_NOTICES = frozenset({
+    PRODUCTION_TRIAL_NOTICE_WITHOUT_LANGUAGE,
+})
+VALID_PRODUCTION_TRIAL_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
 
 @dataclass(frozen=True)
 class SocialMemoryConfig:
@@ -355,6 +409,30 @@ class LanguageCoevolutionConfig:
 
 
 @dataclass(frozen=True)
+class CoalitionIntelligibilityConfig:
+    """Effective engineering-only coalition intelligibility gating."""
+
+    coalition_intelligibility_enabled: bool
+    coalition_intelligibility_threshold: float
+
+
+@dataclass(frozen=True)
+class FactionRelationshipTrustConfig:
+    """Effective engineering-only faction social-model selection."""
+
+    faction_relationship_trust_enabled: bool
+    faction_relationship_trust_threshold: float
+
+
+@dataclass(frozen=True)
+class ProductionTrialConfig:
+    """Effective engineering-only runner-up production trial controls."""
+
+    production_trial_enabled: bool
+    production_trial_interval: int
+
+
+@dataclass(frozen=True)
 class SimulationConfig:
     """Validated effective configuration for one simulation run."""
 
@@ -438,6 +516,20 @@ class SimulationConfig:
     )
     intelligibility_reward: float = DEFAULT_INTELLIGIBILITY_REWARD
     intelligibility_penalty: float = DEFAULT_INTELLIGIBILITY_PENALTY
+    coalition_intelligibility_enabled: bool = (
+        DEFAULT_COALITION_INTELLIGIBILITY_ENABLED
+    )
+    coalition_intelligibility_threshold: float = (
+        DEFAULT_COALITION_INTELLIGIBILITY_THRESHOLD
+    )
+    faction_relationship_trust_enabled: bool = (
+        DEFAULT_FACTION_RELATIONSHIP_TRUST_ENABLED
+    )
+    faction_relationship_trust_threshold: float = (
+        DEFAULT_FACTION_RELATIONSHIP_TRUST_THRESHOLD
+    )
+    production_trial_enabled: bool = DEFAULT_PRODUCTION_TRIAL_ENABLED
+    production_trial_interval: int = DEFAULT_PRODUCTION_TRIAL_INTERVAL
     social_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     language_control_notices: tuple[str, ...] = field(
@@ -457,6 +549,12 @@ class SimulationConfig:
     grammar_evolution_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     language_coevolution_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    coalition_intelligibility_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    production_trial_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    faction_relationship_trust_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -594,6 +692,57 @@ class SimulationConfig:
             self,
             'language_coevolution_control_notices',
             tuple(sorted(coevolution_notices)),
+        )
+
+        # Runs after coevolution so an implicitly disabled coevolution
+        # cascades. Coalition gating reads the intelligibility that
+        # coevolution writes, so without it every tie would sit at zero and
+        # the gate would silently forbid every coalition.
+        coalition_intelligibility_notices: list[str] = []
+        if self.coalition_intelligibility_enabled is True:
+            if self.coalition_emergence_enabled is False:
+                coalition_intelligibility_notices.append(
+                    COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COALITIONS)
+            if self.language_coevolution_enabled is False:
+                coalition_intelligibility_notices.append(
+                    COALITION_INTELLIGIBILITY_NOTICE_WITHOUT_COEVOLUTION)
+        if coalition_intelligibility_notices:
+            object.__setattr__(
+                self, 'coalition_intelligibility_enabled', False)
+        object.__setattr__(
+            self,
+            'coalition_intelligibility_control_notices',
+            tuple(sorted(coalition_intelligibility_notices)),
+        )
+
+        production_trial_notices: list[str] = []
+        if self.production_trial_enabled is True:
+            if self.language_evolution_enabled is False:
+                production_trial_notices.append(
+                    PRODUCTION_TRIAL_NOTICE_WITHOUT_LANGUAGE)
+        if production_trial_notices:
+            object.__setattr__(self, 'production_trial_enabled', False)
+        object.__setattr__(
+            self,
+            'production_trial_control_notices',
+            tuple(sorted(production_trial_notices)),
+        )
+
+        # Relationship records exist only when social memory is effective. A
+        # faction layer reading them without it would find every tie absent
+        # and no faction would ever form.
+        faction_trust_notices: list[str] = []
+        if self.faction_relationship_trust_enabled is True:
+            if self.social_memory_enabled is False:
+                faction_trust_notices.append(
+                    FACTION_RELATIONSHIP_TRUST_NOTICE_WITHOUT_SOCIAL)
+        if faction_trust_notices:
+            object.__setattr__(
+                self, 'faction_relationship_trust_enabled', False)
+        object.__setattr__(
+            self,
+            'faction_relationship_trust_control_notices',
+            tuple(sorted(faction_trust_notices)),
         )
 
     @classmethod
@@ -852,6 +1001,38 @@ class SimulationConfig:
                 DEFAULT_INTELLIGIBILITY_PENALTY
                 if getattr(args, 'intelligibility_penalty', None) is None
                 else args.intelligibility_penalty
+            ),
+            coalition_intelligibility_enabled=(
+                bool(getattr(args, 'enable_coalition_intelligibility', False))
+                and not bool(getattr(
+                    args, 'disable_coalition_intelligibility', False))
+            ),
+            coalition_intelligibility_threshold=(
+                DEFAULT_COALITION_INTELLIGIBILITY_THRESHOLD
+                if getattr(
+                    args, 'coalition_intelligibility_threshold', None) is None
+                else args.coalition_intelligibility_threshold
+            ),
+            faction_relationship_trust_enabled=(
+                bool(getattr(
+                    args, 'enable_faction_relationship_trust', False))
+                and not bool(getattr(
+                    args, 'disable_faction_relationship_trust', False))
+            ),
+            faction_relationship_trust_threshold=(
+                DEFAULT_FACTION_RELATIONSHIP_TRUST_THRESHOLD
+                if getattr(
+                    args, 'faction_relationship_trust_threshold', None) is None
+                else args.faction_relationship_trust_threshold
+            ),
+            production_trial_enabled=(
+                bool(getattr(args, 'enable_production_trial', False))
+                and not bool(getattr(args, 'disable_production_trial', False))
+            ),
+            production_trial_interval=(
+                DEFAULT_PRODUCTION_TRIAL_INTERVAL
+                if getattr(args, 'production_trial_interval', None) is None
+                else args.production_trial_interval
             ),
         )
         instance.validate()
@@ -1216,6 +1397,97 @@ class SimulationConfig:
                 and not self.social_partner_bias_enabled):
             raise ValueError(
                 'language coevolution requires social partner bias')
+        if type(self.faction_relationship_trust_enabled) is not bool:
+            raise ValueError(
+                'faction relationship trust setting must be boolean')
+        faction_threshold = self.faction_relationship_trust_threshold
+        if (
+            type(faction_threshold) is not float
+            or not math.isfinite(faction_threshold)
+            or not 0.0 < faction_threshold <= 1.0
+        ):
+            raise ValueError(
+                'faction relationship trust threshold must be a finite float '
+                'greater than 0.0 and at most 1.0')
+        if (self.faction_relationship_trust_enabled
+                and not self.social_memory_enabled):
+            raise ValueError(
+                'faction relationship trust requires social memory')
+        if any(
+            notice not in VALID_FACTION_RELATIONSHIP_TRUST_CONTROL_NOTICES
+            for notice in self.faction_relationship_trust_control_notices
+        ):
+            raise ValueError(
+                'unknown faction relationship trust normalization notice')
+        if (
+            self.faction_relationship_trust_control_notices
+            and self.faction_relationship_trust_enabled
+        ):
+            raise ValueError(
+                'faction relationship trust normalization notices require '
+                'the legacy model')
+        if type(self.production_trial_enabled) is not bool:
+            raise ValueError('production trial setting must be boolean')
+        if (
+            type(self.production_trial_interval) is not int
+            or not 2 <= self.production_trial_interval
+            <= MAXIMUM_PRODUCTION_TRIAL_INTERVAL
+        ):
+            # At least 2: an interval of 1 would trial every utterance, which
+            # is substitution rather than variation.
+            raise ValueError(
+                'production trial interval must be an integer from 2 to '
+                f'{MAXIMUM_PRODUCTION_TRIAL_INTERVAL}')
+        if (self.production_trial_enabled
+                and not self.language_evolution_enabled):
+            raise ValueError('production trial requires language evolution')
+        if any(
+            notice not in VALID_PRODUCTION_TRIAL_CONTROL_NOTICES
+            for notice in self.production_trial_control_notices
+        ):
+            raise ValueError('unknown production trial normalization notice')
+        if (
+            self.production_trial_control_notices
+            and self.production_trial_enabled
+        ):
+            raise ValueError(
+                'production trial normalization notices require disabled '
+                'trials')
+        if type(self.coalition_intelligibility_enabled) is not bool:
+            raise ValueError(
+                'coalition intelligibility setting must be boolean')
+        threshold = self.coalition_intelligibility_threshold
+        if (
+            type(threshold) is not float
+            or not math.isfinite(threshold)
+            or not 0.0 < threshold <= 1.0
+        ):
+            # Strictly positive: a tie with no communication history sits at
+            # exactly 0.0, and silence must not count as understanding.
+            raise ValueError(
+                'coalition intelligibility threshold must be a finite float '
+                'greater than 0.0 and at most 1.0')
+        if (self.coalition_intelligibility_enabled
+                and not self.coalition_emergence_enabled):
+            raise ValueError(
+                'coalition intelligibility requires coalition emergence')
+        if (self.coalition_intelligibility_enabled
+                and not self.language_coevolution_enabled):
+            raise ValueError(
+                'coalition intelligibility requires language coevolution')
+        if any(
+            notice not in VALID_COALITION_INTELLIGIBILITY_CONTROL_NOTICES
+            for notice in self.coalition_intelligibility_control_notices
+        ):
+            raise ValueError(
+                'unknown coalition intelligibility normalization notice')
+        if (
+            self.coalition_intelligibility_control_notices
+            and self.coalition_intelligibility_enabled
+        ):
+            raise ValueError(
+                'coalition intelligibility normalization notices require '
+                'disabled gating')
         if any(
             notice not in VALID_LANGUAGE_COEVOLUTION_CONTROL_NOTICES
             for notice in self.language_coevolution_control_notices
@@ -1273,6 +1545,9 @@ class SimulationConfig:
         result.pop('compositional_protolanguage_control_notices', None)
         result.pop('grammar_evolution_control_notices', None)
         result.pop('language_coevolution_control_notices', None)
+        result.pop('coalition_intelligibility_control_notices', None)
+        result.pop('production_trial_control_notices', None)
+        result.pop('faction_relationship_trust_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
@@ -1310,6 +1585,18 @@ class SimulationConfig:
             self.language_coevolution_control_notices)
         result['language_coevolution_controls_status'] = (
             self.language_coevolution_controls_status)
+        result['coalition_intelligibility_control_notices'] = list(
+            self.coalition_intelligibility_control_notices)
+        result['coalition_intelligibility_controls_status'] = (
+            self.coalition_intelligibility_controls_status)
+        result['production_trial_control_notices'] = list(
+            self.production_trial_control_notices)
+        result['production_trial_controls_status'] = (
+            self.production_trial_controls_status)
+        result['faction_relationship_trust_control_notices'] = list(
+            self.faction_relationship_trust_control_notices)
+        result['faction_relationship_trust_controls_status'] = (
+            self.faction_relationship_trust_controls_status)
         return result
 
     @property
@@ -1563,6 +1850,77 @@ class SimulationConfig:
         ):
             return 'engineering_only_uncontracted'
         return 'disabled'
+
+    @property
+    def faction_relationship_trust_controls_status(self) -> str:
+        """Return provenance status for uncontracted faction-model controls."""
+        if self.faction_relationship_trust_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.faction_relationship_trust_enabled
+            or self.faction_relationship_trust_threshold
+            != DEFAULT_FACTION_RELATIONSHIP_TRUST_THRESHOLD
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def faction_relationship_trust_config(
+        self,
+    ) -> FactionRelationshipTrustConfig:
+        """Return immutable effective faction social-model controls."""
+        return FactionRelationshipTrustConfig(
+            faction_relationship_trust_enabled=(
+                self.faction_relationship_trust_enabled),
+            faction_relationship_trust_threshold=(
+                self.faction_relationship_trust_threshold),
+        )
+
+    @property
+    def production_trial_controls_status(self) -> str:
+        """Return provenance status for uncontracted trial controls."""
+        if self.production_trial_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.production_trial_enabled
+            or self.production_trial_interval
+            != DEFAULT_PRODUCTION_TRIAL_INTERVAL
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def production_trial_config(self) -> ProductionTrialConfig:
+        """Return immutable effective runner-up trial controls."""
+        return ProductionTrialConfig(
+            production_trial_enabled=self.production_trial_enabled,
+            production_trial_interval=self.production_trial_interval,
+        )
+
+    @property
+    def coalition_intelligibility_controls_status(self) -> str:
+        """Return provenance status for uncontracted gating controls."""
+        if self.coalition_intelligibility_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.coalition_intelligibility_enabled
+            or self.coalition_intelligibility_threshold
+            != DEFAULT_COALITION_INTELLIGIBILITY_THRESHOLD
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def coalition_intelligibility_config(
+        self,
+    ) -> CoalitionIntelligibilityConfig:
+        """Return immutable effective coalition gating controls."""
+        return CoalitionIntelligibilityConfig(
+            coalition_intelligibility_enabled=(
+                self.coalition_intelligibility_enabled),
+            coalition_intelligibility_threshold=(
+                self.coalition_intelligibility_threshold),
+        )
 
     @property
     def language_coevolution_config(self) -> LanguageCoevolutionConfig:

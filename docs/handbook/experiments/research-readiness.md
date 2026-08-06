@@ -70,10 +70,11 @@ and a per-speaker constituent-order rule that a hearer can infer from a minimal
 pair it has already learned. It does not implement complete vocabulary
 inheritance, deletion/insertion, ancestry reconstruction, phonology, cognates,
 comprehension-time segmentation, parsing, syntax, agreement, inflection,
-language-to-coalition feedback, language-driven faction or coalition
-lifecycle, or a finalized language research contract. Language-to-social
-feedback is implemented, but only as bounded intelligibility feeding partner
-choice. On-demand contact, intergenerational, lexical, compositional, grammar,
+language-driven faction formation or lifecycle, or a finalized language
+research contract. Language-to-social feedback is implemented as bounded
+intelligibility feeding partner choice, and language-to-coalition feedback as
+an intelligibility threshold that can only narrow which reciprocal ties carry
+a coalition edge. Both are disabled by default and vetoed from readiness. On-demand contact, intergenerational, lexical, compositional, grammar,
 and coevolution summaries are not approved research endpoints. Retained parental exposure does not prove uninterrupted
 inheritance because later ordinary communication may reinforce the same
 association, and retained lexical indices do not reconstruct a full lineage.

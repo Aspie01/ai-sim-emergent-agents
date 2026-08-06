@@ -320,6 +320,18 @@ def make_artifacts(
         "intelligibility_penalty": 0.04,
         "language_coevolution_controls_status": "disabled",
         "language_coevolution_control_notices": [],
+        "coalition_intelligibility_enabled": False,
+        "coalition_intelligibility_threshold": 0.50,
+        "coalition_intelligibility_controls_status": "disabled",
+        "coalition_intelligibility_control_notices": [],
+        "production_trial_enabled": False,
+        "production_trial_interval": 8,
+        "production_trial_controls_status": "disabled",
+        "production_trial_control_notices": [],
+        "faction_relationship_trust_enabled": False,
+        "faction_relationship_trust_threshold": 0.40,
+        "faction_relationship_trust_controls_status": "disabled",
+        "faction_relationship_trust_control_notices": [],
     })
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return run_dir, manifest_path

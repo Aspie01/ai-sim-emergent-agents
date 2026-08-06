@@ -410,8 +410,21 @@ def _records_qualify(
     first: Relationship,
     second: Relationship,
     config: CoalitionConfig,
+    intelligibility_threshold: float | None = None,
 ) -> bool:
-    return (
+    """Report whether one reciprocal tie may carry a coalition edge.
+
+    ``intelligibility_threshold`` is supplied only when coalition
+    intelligibility gating is effective. Both directions must clear it, so a
+    pair that cannot understand each other does not coalesce, and a coalition
+    whose members lose mutual intelligibility stops qualifying and dissolves
+    through the ordinary persistence path rather than a separate teardown.
+
+    The threshold is strictly positive by configuration, so a tie with no
+    communication history sits at exactly 0.0 and silence never counts as
+    understanding.
+    """
+    if not (
         first.interaction_count > 0
         and second.interaction_count > 0
         and first.trust >= config.coalition_trust_threshold
@@ -420,6 +433,13 @@ def _records_qualify(
         and second.familiarity >= config.coalition_familiarity_threshold
         and first.grievance <= config.coalition_maximum_grievance
         and second.grievance <= config.coalition_maximum_grievance
+    ):
+        return False
+    if intelligibility_threshold is None:
+        return True
+    return (
+        first.intelligibility >= intelligibility_threshold
+        and second.intelligibility >= intelligibility_threshold
     )
 
 
@@ -428,6 +448,7 @@ def build_qualifying_reciprocal_graph(
     *,
     tick: int,
     config: CoalitionConfig,
+    intelligibility_threshold: float | None = None,
 ) -> ReciprocalGraph:
     """Validate and build the canonical threshold-qualified reciprocal graph."""
     _validate_config(config)
@@ -446,7 +467,9 @@ def build_qualifying_reciprocal_graph(
             if reciprocal is None:
                 continue
             first = owner.relationships[target_id]
-            if not _records_qualify(first, reciprocal, config):
+            if not _records_qualify(
+                first, reciprocal, config, intelligibility_threshold
+            ):
                 continue
             edge = (owner_id, target_id)
             adjacency_sets[owner_id].add(target_id)
@@ -998,8 +1021,13 @@ def validate_proposed_coalition_state(
     config: CoalitionConfig,
     graph: ReciprocalGraph | None = None,
     previous_state: CoalitionRuntimeState | None = None,
+    intelligibility_threshold: float | None = None,
 ) -> None:
-    """Fail closed unless proposed state is canonical and vertex-biconnected."""
+    """Fail closed unless proposed state is canonical and vertex-biconnected.
+
+    ``intelligibility_threshold`` must match the value the transition used, or
+    the rebuilt graph would differ from the one that produced the state.
+    """
     _validate_config(config)
     by_id = _validate_people_and_relationships(
         people, observation_tick=tick)
@@ -1015,7 +1043,8 @@ def validate_proposed_coalition_state(
     if runtime.last_active_inhabitant_ids != tuple(sorted(active_ids)):
         _raise("invalid_active_id_snapshot", "proposed active IDs are not canonical")
     current_graph = graph or build_qualifying_reciprocal_graph(
-        people, tick=tick, config=config)
+        people, tick=tick, config=config,
+        intelligibility_threshold=intelligibility_threshold)
     if runtime.last_qualifying_reciprocal_edge_count != current_graph.edge_count:
         _raise(
             "coalition_edge_count_mismatch",
@@ -1114,6 +1143,7 @@ def transition_informal_coalitions(
     *,
     tick: int,
     config: CoalitionConfig,
+    intelligibility_threshold: float | None = None,
 ) -> CoalitionRuntimeState:
     """Return one validated proposed state without mutating current state."""
     _validate_config(config)
@@ -1131,7 +1161,8 @@ def transition_informal_coalitions(
         )
 
     graph = build_qualifying_reciprocal_graph(
-        people, tick=tick, config=config)
+        people, tick=tick, config=config,
+        intelligibility_threshold=intelligibility_threshold)
     active_ids = frozenset(graph.adjacency)
     prior_ids = frozenset(current_state.last_active_inhabitant_ids)
     _validate_runtime_structure(

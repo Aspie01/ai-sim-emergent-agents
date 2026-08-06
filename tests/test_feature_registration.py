@@ -84,6 +84,35 @@ FAMILY_REGISTRATION = {
         "artifact_validator": "_validate_language_coevolution_configuration",
         "runner_rejector": "_reject_uncontracted_language_coevolution_args",
     },
+    "faction_relationship_trust": {
+        # Selecting the social model owns no runtime state; it only chooses
+        # which existing store the faction layer reads.
+        "pristine_guard": None,
+        "artifact_validator": (
+            "_validate_faction_relationship_trust_configuration"),
+        "runner_rejector": (
+            "_reject_uncontracted_faction_relationship_trust_args"),
+    },
+    "production_trial": {
+        # Owns no runtime state: each trial occasion is derived per utterance
+        # from a seed domain, so there is nothing to hold pristine.
+        # `test_stateless_families_own_no_runtime_state` proves the claim.
+        "pristine_guard": None,
+        "artifact_validator": "_validate_production_trial_configuration",
+        "runner_rejector": "_reject_uncontracted_production_trial_args",
+    },
+    "coalition_intelligibility": {
+        # Owns no runtime state: it only reads the intelligibility that
+        # coevolution writes, so there is nothing to hold pristine. A vacuous
+        # guard would weaken the check, so the declaration is None and
+        # `test_stateless_families_own_no_runtime_state` proves the claim
+        # rather than taking it on trust.
+        "pristine_guard": None,
+        "artifact_validator": (
+            "_validate_coalition_intelligibility_configuration"),
+        "runner_rejector": (
+            "_reject_uncontracted_coalition_intelligibility_args"),
+    },
 }
 
 REQUIRED_LAYERS = (
@@ -152,13 +181,32 @@ def test_every_family_declares_every_layer():
 
 # ── Each declared hook exists ───────────────────────────────────────────────
 
+def test_stateless_families_own_no_runtime_state():
+    """A family declaring no pristine guard must genuinely own no state.
+
+    Declaring `pristine_guard: None` is how a family opts out of the
+    disabled-state check. That opt-out has to be falsifiable, or it becomes a
+    way to silently skip the guard: any family that later grows runtime state
+    on `SimulationState` must declare a guard for it.
+    """
+    from thalren_vale.state import SimulationState
+
+    owned = set(SimulationState.__dataclass_fields__)
+    offenders = sorted(
+        family for family, hooks in FAMILY_REGISTRATION.items()
+        if hooks["pristine_guard"] is None and family in owned
+    )
+    assert not offenders, (
+        f"families declaring no state but owning runtime state: {offenders}")
+
+
 @pytest.mark.parametrize("family", sorted(FAMILY_REGISTRATION))
 def test_declared_hooks_exist(family):
     hooks = FAMILY_REGISTRATION[family]
     missing = []
-    if hooks["pristine_guard"] not in _defined_functions(
-        "src/thalren_vale/reproducibility.py"
-    ):
+    if hooks["pristine_guard"] is not None and hooks[
+        "pristine_guard"
+    ] not in _defined_functions("src/thalren_vale/reproducibility.py"):
         missing.append(hooks["pristine_guard"])
     if hooks["artifact_validator"] not in _defined_functions(
         "src/thalren_vale/artifact_validation.py"
@@ -177,6 +225,8 @@ def test_declared_hooks_exist(family):
 def test_pristine_guard_is_reached_by_the_hash(family):
     """A guard that exists but is never called protects nothing."""
     guard = FAMILY_REGISTRATION[family]["pristine_guard"]
+    if guard is None:
+        pytest.skip(f"{family} owns no runtime state")
     called = _calls_within(
         "src/thalren_vale/reproducibility.py", "canonical_state_hash")
     assert guard in called, (
@@ -283,3 +333,99 @@ def _economy_owner_gaps() -> list[str]:
 def test_economy_call_sites_forward_every_owner_their_callee_accepts():
     gaps = _economy_owner_gaps()
     assert not gaps, "economy owner threading gaps:\n  " + "\n  ".join(gaps)
+
+
+# ── Owner forwarding through delegation ─────────────────────────────────────
+
+# Feature-owner families. `social_config` is deliberately absent: it is the
+# structural gate every barter path carries, so its presence would not signal
+# that a call is forwarding language owners.
+OWNER_FAMILIES = (
+    "language", "dialect", "contact", "lexical", "compositional",
+    "grammar", "coevolution", "trial", "intergenerational",
+)
+
+OWNER_FORWARDING_MODULES = (
+    "src/thalren_vale/language.py",
+    "src/thalren_vale/economy.py",
+    "src/thalren_vale/sim.py",
+    "src/thalren_vale/coalitions.py",
+    "src/thalren_vale/social.py",
+    "src/thalren_vale/reproducibility.py",
+)
+
+# (caller, callee, parameter) triples that legitimately do not forward, each
+# with the reason it is safe. Anything not listed here is reported.
+KNOWN_NON_FORWARDING = {
+    # `communicate` raises if contact inputs are present on this path, so
+    # `contact_config` is provably None and forwarding it would be noise.
+    ("communicate", "validate_agent_language_state", "contact_config"),
+}
+
+
+def _owner_parameters(node: ast.FunctionDef) -> set[str]:
+    names = {a.arg for a in node.args.args}
+    names |= {a.arg for a in node.args.kwonlyargs}
+    return {
+        name for name in names
+        if name.endswith(("_config", "_runtime"))
+        and any(name.startswith(family) for family in OWNER_FAMILIES)
+    }
+
+
+def _owner_forwarding_gaps() -> list[str]:
+    """Return calls that forward some feature owners but drop others.
+
+    A function that accepts an owner and hands work to another function
+    accepting the same owner must pass it, or the feature silently does
+    nothing on that path. This has happened five times: composition missing
+    the partner-bias barter branch, grammar missing the disabled-state guard,
+    three control families missing the readiness veto, maintenance dropping
+    the coalition threshold, and `communicate` dropping an owner when it
+    delegates to the contact variant.
+
+    Calls forwarding *none* of the shared owners are skipped: those are the
+    deliberate feature-disabled fast paths. Calls using `**` unpacking are
+    skipped because their keywords are not statically known.
+    """
+    gaps: list[str] = []
+    for relative in OWNER_FORWARDING_MODULES:
+        tree = _module_tree(relative)
+        accepts = {
+            node.name: _owner_parameters(node)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and _owner_parameters(node)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            mine = _owner_parameters(node)
+            if not mine:
+                continue
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call):
+                    continue
+                if not isinstance(call.func, ast.Name):
+                    continue
+                callee = call.func.id
+                if callee not in accepts or callee == node.name:
+                    continue
+                if any(keyword.arg is None for keyword in call.keywords):
+                    continue
+                passed = {k.arg for k in call.keywords if k.arg}
+                shared = mine & accepts[callee]
+                forwarded = shared & passed
+                missing = {
+                    name for name in shared - passed
+                    if (node.name, callee, name) not in KNOWN_NON_FORWARDING
+                }
+                if forwarded and missing:
+                    gaps.append(
+                        f"{relative}:{call.lineno} {node.name}() -> "
+                        f"{callee}() drops {sorted(missing)}")
+    return gaps
+
+
+def test_delegated_calls_forward_every_feature_owner():
+    gaps = _owner_forwarding_gaps()
+    assert not gaps, "owner forwarding gaps:\n  " + "\n  ".join(gaps)

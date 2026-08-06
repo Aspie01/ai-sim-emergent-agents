@@ -7,7 +7,7 @@
 | World/resources | Seed, population pressure, season, technology, events/plugins | Needs, movement, beliefs, economy, settlements, metrics |
 | Inhabitants | World, settlement/faction/religion/technology state | Beliefs, factions, economy, combat population, metrics |
 | Beliefs | Agent experience, legacy trust, position, RNG | Formal factions, technology, diplomacy, religion, combat modifiers |
-| Formal factions | Beliefs, legacy trust, proximity, rivalry | Reserves, settlements, economy, combat, technology, diplomacy, religion |
+| Formal factions | Beliefs, legacy trust or `Relationship.trust` (see [faction social model](../systems/faction-social-model.md)), proximity, rivalry | Reserves, settlements, economy, combat, technology, diplomacy, religion |
 | Economy | Inventories, positions, formal factions, wars/treaties, RNG | Resources/currency, legacy trust, relationships, language opportunities, rivalry/raids |
 | Directed relationships | Committed Layer-4 transfers | Optional partner bias, informal-coalition graph |
 | Informal coalitions | Reciprocal relationship topology | Prior-membership dialect context and enabled hash |

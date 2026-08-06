@@ -21,6 +21,14 @@ authentic different-coalition communication
 -> measurable contact-driven convergence or continued divergence
 ```
 
+A borrowed form reaching production is not the same as a borrowed form being
+**spoken**. Production selects the highest-confidence usable form, and a
+freshly borrowed one rarely outranks an entrenched native, so
+`borrowed_production_use_count` can sit at zero while
+`borrowing_promotion_count` climbs. That was measured: 14 promotions and zero
+uses in one scenario. [Production Trial v1](production-trial.md) is the
+disabled-by-default extension that lets borrowed forms actually be uttered.
+
 Language Contact v1 applies only to
 `DIFFERENT_ACTIVE_COALITIONS`. Assigned/unassigned and both-unassigned
 communication remain base-rate Language v1 behavior. Same-coalition

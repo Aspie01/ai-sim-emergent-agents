@@ -316,3 +316,99 @@ def _economy_owner_gaps() -> list[str]:
 def test_economy_call_sites_forward_every_owner_their_callee_accepts():
     gaps = _economy_owner_gaps()
     assert not gaps, "economy owner threading gaps:\n  " + "\n  ".join(gaps)
+
+
+# ── Owner forwarding through delegation ─────────────────────────────────────
+
+# Feature-owner families. `social_config` is deliberately absent: it is the
+# structural gate every barter path carries, so its presence would not signal
+# that a call is forwarding language owners.
+OWNER_FAMILIES = (
+    "language", "dialect", "contact", "lexical", "compositional",
+    "grammar", "coevolution", "trial", "intergenerational",
+)
+
+OWNER_FORWARDING_MODULES = (
+    "src/thalren_vale/language.py",
+    "src/thalren_vale/economy.py",
+    "src/thalren_vale/sim.py",
+    "src/thalren_vale/coalitions.py",
+    "src/thalren_vale/social.py",
+    "src/thalren_vale/reproducibility.py",
+)
+
+# (caller, callee, parameter) triples that legitimately do not forward, each
+# with the reason it is safe. Anything not listed here is reported.
+KNOWN_NON_FORWARDING = {
+    # `communicate` raises if contact inputs are present on this path, so
+    # `contact_config` is provably None and forwarding it would be noise.
+    ("communicate", "validate_agent_language_state", "contact_config"),
+}
+
+
+def _owner_parameters(node: ast.FunctionDef) -> set[str]:
+    names = {a.arg for a in node.args.args}
+    names |= {a.arg for a in node.args.kwonlyargs}
+    return {
+        name for name in names
+        if name.endswith(("_config", "_runtime"))
+        and any(name.startswith(family) for family in OWNER_FAMILIES)
+    }
+
+
+def _owner_forwarding_gaps() -> list[str]:
+    """Return calls that forward some feature owners but drop others.
+
+    A function that accepts an owner and hands work to another function
+    accepting the same owner must pass it, or the feature silently does
+    nothing on that path. This has happened five times: composition missing
+    the partner-bias barter branch, grammar missing the disabled-state guard,
+    three control families missing the readiness veto, maintenance dropping
+    the coalition threshold, and `communicate` dropping an owner when it
+    delegates to the contact variant.
+
+    Calls forwarding *none* of the shared owners are skipped: those are the
+    deliberate feature-disabled fast paths. Calls using `**` unpacking are
+    skipped because their keywords are not statically known.
+    """
+    gaps: list[str] = []
+    for relative in OWNER_FORWARDING_MODULES:
+        tree = _module_tree(relative)
+        accepts = {
+            node.name: _owner_parameters(node)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and _owner_parameters(node)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            mine = _owner_parameters(node)
+            if not mine:
+                continue
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call):
+                    continue
+                if not isinstance(call.func, ast.Name):
+                    continue
+                callee = call.func.id
+                if callee not in accepts or callee == node.name:
+                    continue
+                if any(keyword.arg is None for keyword in call.keywords):
+                    continue
+                passed = {k.arg for k in call.keywords if k.arg}
+                shared = mine & accepts[callee]
+                forwarded = shared & passed
+                missing = {
+                    name for name in shared - passed
+                    if (node.name, callee, name) not in KNOWN_NON_FORWARDING
+                }
+                if forwarded and missing:
+                    gaps.append(
+                        f"{relative}:{call.lineno} {node.name}() -> "
+                        f"{callee}() drops {sorted(missing)}")
+    return gaps
+
+
+def test_delegated_calls_forward_every_feature_owner():
+    gaps = _owner_forwarding_gaps()
+    assert not gaps, "owner forwarding gaps:\n  " + "\n  ".join(gaps)

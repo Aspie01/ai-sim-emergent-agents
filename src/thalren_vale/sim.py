@@ -1,4 +1,4 @@
-﻿# (c) 2026 (KriaetvAspie / AspieTheBard)
+# (c) 2026 (KriaetvAspie / AspieTheBard)
 # Licensed under the Polyform Noncommercial License 1.0.0
 """
 sim.py — Single entry point for the emergent civilization simulation.
@@ -76,7 +76,9 @@ from .language import (
     initialize_language_runtime,
     initialize_compositional_protolanguage_runtime,
     initialize_grammar_evolution_runtime,
+    initialize_language_coevolution_runtime,
     grammar_evolution_runtime_is_pristine,
+    language_coevolution_runtime_is_pristine,
     initialize_lexical_evolution_runtime,
     compositional_protolanguage_runtime_is_pristine,
     intergenerational_runtime_is_pristine,
@@ -92,6 +94,7 @@ from .language import (
     validate_language_runtime,
     validate_compositional_protolanguage_runtime,
     validate_grammar_evolution_runtime,
+    validate_language_coevolution_runtime,
     validate_lexical_evolution_runtime,
 )
 
@@ -232,6 +235,13 @@ def _validate_reset_language_runtimes(
                 "nonpristine_grammar_evolution_runtime",
                 "disabled language runtime cannot conceal order state",
             )
+        if not language_coevolution_runtime_is_pristine(
+            state.language_coevolution
+        ):
+            raise LanguageInvariantError(
+                "nonpristine_language_coevolution_runtime",
+                "disabled language runtime cannot conceal feedback state",
+            )
         return None, None, None
 
     validate_language_runtime(state.language, initialized=True)
@@ -357,6 +367,25 @@ def _validate_reset_language_runtimes(
         raise LanguageInvariantError(
             "nonpristine_grammar_evolution_runtime",
             "disabled grammar evolution cannot retain runtime state",
+        )
+    if state.language.language_coevolution_enabled:
+        validate_language_coevolution_runtime(
+            state.language_coevolution,
+            config=config.LanguageCoevolutionConfig(
+                language_coevolution_enabled=True,
+                intelligibility_reward=(
+                    state.language_coevolution.intelligibility_reward),
+                intelligibility_penalty=(
+                    state.language_coevolution.intelligibility_penalty),
+            ),
+            language_runtime=state.language,
+        )
+    elif not language_coevolution_runtime_is_pristine(
+        state.language_coevolution
+    ):
+        raise LanguageInvariantError(
+            "nonpristine_language_coevolution_runtime",
+            "disabled language coevolution cannot retain runtime state",
         )
     return contact_config, intergenerational_config, lexical_config
 
@@ -759,6 +788,7 @@ def economy_layer(
         config.CompositionalProtolanguageConfig | None
     ) = None,
     grammar_config: config.GrammarEvolutionConfig | None = None,
+    coevolution_config: config.LanguageCoevolutionConfig | None = None,
 ) -> None:
     """Layer 4: currency, pricing, trade, raids, scarcity, wealth."""
     if social_config is None:
@@ -831,6 +861,12 @@ def economy_layer(
             grammar_evolution_enabled=False,
             order_adoption_threshold=(
                 config.DEFAULT_ORDER_ADOPTION_THRESHOLD),
+        )
+    if coevolution_config is None:
+        coevolution_config = config.LanguageCoevolutionConfig(
+            language_coevolution_enabled=False,
+            intelligibility_reward=config.DEFAULT_INTELLIGIBILITY_REWARD,
+            intelligibility_penalty=config.DEFAULT_INTELLIGIBILITY_PENALTY,
         )
     coalition_membership_snapshot = None
     coalition_context_required = (
@@ -906,6 +942,14 @@ def economy_layer(
             grammar_runtime=(
                 state.grammar_evolution
                 if grammar_config.grammar_evolution_enabled else None
+            ),
+            coevolution_config=(
+                coevolution_config
+                if coevolution_config.language_coevolution_enabled else None
+            ),
+            coevolution_runtime=(
+                state.language_coevolution
+                if coevolution_config.language_coevolution_enabled else None
             ),
             lexical_config=(
                 lexical_config if lexical_config.lexical_evolution_enabled
@@ -2405,6 +2449,20 @@ def run() -> None:
     _parser.add_argument(
         '--order-adoption-threshold', type=int, default=None,
         help='Consecutive conflicting observations before adopting an order')
+    _coevolution = _parser.add_mutually_exclusive_group()
+    _coevolution.add_argument(
+        '--enable-language-coevolution', action='store_true',
+        help='Enable engineering-only intelligibility feedback into '
+             'partner choice')
+    _coevolution.add_argument(
+        '--disable-language-coevolution', action='store_true',
+        help='Explicitly leave language coevolution disabled')
+    _parser.add_argument(
+        '--intelligibility-reward', type=float, default=None,
+        help='Directed tie gain per understood utterance')
+    _parser.add_argument(
+        '--intelligibility-penalty', type=float, default=None,
+        help='Directed tie loss per misunderstood utterance')
     _args = _parser.parse_args()
 
     # ── Validate and apply effective configuration ──────────────────────────
@@ -2483,6 +2541,19 @@ def run() -> None:
                 'warning: grammar evolution was requested without effective '
                 'compositional protolanguage; grammar normalized to false '
                 'and the run is not V2-ready\n')
+    for _notice in _run_config.language_coevolution_control_notices:
+        if _notice == config.LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_LANGUAGE:
+            sys.stderr.write(
+                'warning: language coevolution was requested without '
+                'effective language evolution; coevolution normalized to '
+                'false and the run is not V2-ready\n')
+        elif _notice == (
+            config.LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_PARTNER_BIAS
+        ):
+            sys.stderr.write(
+                'warning: language coevolution was requested without '
+                'effective social partner bias; coevolution normalized to '
+                'false and the run is not V2-ready\n')
     _run_config.apply_legacy_globals()
     TICKS = _run_config.ticks
     POP_CAP = _run_config.population_cap
@@ -2515,6 +2586,8 @@ def run() -> None:
                 _run_config.compositional_protolanguage_enabled),
             grammar_evolution_enabled=(
                 _run_config.grammar_evolution_enabled),
+            language_coevolution_enabled=(
+                _run_config.language_coevolution_enabled),
         )
         if _run_config.language_contact_enabled:
             initialize_language_contact_runtime(
@@ -2542,6 +2615,11 @@ def run() -> None:
             initialize_grammar_evolution_runtime(
                 state.grammar_evolution,
                 _run_config.grammar_evolution_config,
+            )
+        if _run_config.language_coevolution_enabled:
+            initialize_language_coevolution_runtime(
+                state.language_coevolution,
+                _run_config.language_coevolution_config,
             )
     # Serial mode: guarantees reproducibility by eliminating thread PRNG interleaving
     _serial_mode = (_args.seed is not None)
@@ -2682,6 +2760,7 @@ def run() -> None:
                     _run_config.lexical_evolution_config,
                     _run_config.compositional_protolanguage_config,
                     _run_config.grammar_evolution_config,
+                    _run_config.language_coevolution_config,
                 )
             _t_eco = (time.perf_counter() - _t_eco_start) * 1000
 

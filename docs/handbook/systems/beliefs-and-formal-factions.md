@@ -264,7 +264,7 @@ At tick 10, three unaffiliated inhabitants are all within Manhattan distance 2 o
 
 ## 19. Future extensions
 
-Language-driven faction formation, faction languages, diplomacy through language, and language-coevolution feedback are **Planned, not implemented**. The named future language milestones, including `feature/language-coevolution-v1` and `feature/language-research-readiness-v1`, are **Planned, not implemented** and must not be inferred from current faction behavior.
+Language-driven faction formation, faction languages, and diplomacy through language are **Planned, not implemented**. [Language Coevolution v1](language-coevolution.md) is implemented but touches only directed relationship ties and partner choice; it does not read or write faction state. `feature/language-research-readiness-v1` remains **Planned, not implemented** and must not be inferred from current faction behavior.
 
 ## 20. Implementation evidence
 

@@ -596,3 +596,38 @@ def test_enabled_coalition_runtime_changes_canonical_hash():
     formed_hash = canonical_state_hash(state, world, configuration)
 
     assert candidate_hash != formed_hash
+
+
+# ── Source encoding discipline ──────────────────────────────────────────────
+
+def test_source_files_keep_their_committed_byte_order_mark_state():
+    """Reject accidental BOM drift introduced by rewriting whole files.
+
+    A tool that reads with ``utf-8-sig`` and writes with ``utf-8-sig`` adds a
+    BOM to files that never had one. Python still imports such a file, so the
+    change is invisible to every behavioral test; only ``ast.parse`` on raw
+    text fails. `economy.py` is the one module that legitimately carries a BOM.
+    """
+    import pathlib
+
+    project_root = pathlib.Path(__file__).resolve().parents[1]
+    # The legacy modules that have carried a BOM since before the language
+    # milestones. Every other module is plain UTF-8.
+    expected_bom = {
+        "civilization.py",
+        "combat.py",
+        "diplomacy.py",
+        "economy.py",
+        "factions.py",
+        "mythology.py",
+    }
+    offenders = []
+    for path in sorted((project_root / "src").rglob("*.py")):
+        has_bom = path.read_bytes().startswith(b"\xef\xbb\xbf")
+        if has_bom != (path.name in expected_bom):
+            offenders.append((str(path.relative_to(project_root)), has_bom))
+    for name in ("run_experiments.py",):
+        path = project_root / name
+        if path.read_bytes().startswith(b"\xef\xbb\xbf"):
+            offenders.append((name, True))
+    assert not offenders, f"unexpected BOM state: {offenders}"

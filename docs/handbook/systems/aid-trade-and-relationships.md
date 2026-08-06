@@ -240,8 +240,14 @@ case the corresponding language occurrence happens after the food has moved.
 
 No broader social mechanism is authorized by the current implementation. Any
 new interaction kind, institutional relationship, or research endpoint requires
-a separately reviewed milestone. Language feedback into relationships or partner
-choice belongs to `feature/language-coevolution-v1`: **Planned, not implemented**.
+a separately reviewed milestone.
+
+Language feedback into relationships and partner choice is implemented by
+[Language Coevolution v1](language-coevolution.md), which is disabled by
+default. When effective it adds one bounded `intelligibility` value per
+directed tie and one term to `relationship_preference_score`; while disabled
+that value is provably zero and every score is unchanged. No other language
+feedback into relationships exists.
 
 ## 20. Implementation evidence
 

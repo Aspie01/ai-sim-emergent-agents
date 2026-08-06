@@ -62,7 +62,7 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | Clean-tag/environment/plugin preflight and V2 matrix orchestration | Planned, not implemented |
 | `feature/compositional-protolanguage-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/grammar-evolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
-| `feature/language-coevolution-v1` | Planned, not implemented |
+| `feature/language-coevolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/language-research-readiness-v1` | Planned, not implemented |
 
 No final language research hypotheses, estimands, metrics, evidence contracts, or readiness claims are defined here.
@@ -81,10 +81,9 @@ Completed engineering implementations:
 
 Planned, not implemented:
 
-- `feature/language-coevolution-v1` — **Planned, not implemented**
 - `feature/language-research-readiness-v1` — **Planned, not implemented**
 
-The next milestone is `feature/language-coevolution-v1`: **Planned, not implemented**.
+The next milestone is `feature/language-research-readiness-v1`: **Planned, not implemented**.
 
 ## Current branch work
 

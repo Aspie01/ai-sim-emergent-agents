@@ -31,6 +31,7 @@ from .config import (
     DEFAULT_MAXIMUM_SOCIAL_TIES,
     DEFAULT_RELATIONSHIP_DECAY_INTERVAL,
     GrammarEvolutionConfig,
+    LanguageCoevolutionConfig,
     LanguageContactConfig,
     LanguageEvolutionConfig,
     CompositionalProtolanguageConfig,
@@ -47,13 +48,17 @@ from .language import (
     CoalitionDialectRuntimeState,
     CommunicationContext,
     GrammarEvolutionRuntimeState,
+    LanguageCoevolutionRuntimeState,
     LanguageContactRuntimeState,
     LanguageRuntimeState,
     CompositionalProtolanguageRuntimeState,
     LexicalEvolutionRuntimeState,
+    CommunicationResult,
     communicate,
     meaning_for_resource,
+    record_intelligibility_outcome,
 )
+from .social import apply_intelligibility_feedback
 
 # ── Module-level state ─────────────────────────────────────────────────────
 faction_currencies: dict  = {}           # faction_name → {'name': str}
@@ -258,6 +263,8 @@ def _do_trade(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    coevolution_config: LanguageCoevolutionConfig | None = None,
+    coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids=frozenset(),
 ):
@@ -333,7 +340,7 @@ def _do_trade(
     if language_config.language_evolution_enabled:
         if language_runtime is None:
             raise ValueError('enabled language trade requires a runtime')
-        communicate(
+        outcome = communicate(
             donor,
             taker,
             meaning_for_resource(res),
@@ -355,6 +362,15 @@ def _do_trade(
                 grammar_runtime=grammar_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
             ),
+        )
+        _apply_language_coevolution(
+            donor,
+            taker,
+            outcome=outcome,
+            t=t,
+            active_ids=active_ids,
+            coevolution_config=coevolution_config,
+            coevolution_runtime=coevolution_runtime,
         )
     return True
 
@@ -379,6 +395,8 @@ def _faction_trade(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    coevolution_config: LanguageCoevolutionConfig | None = None,
+    coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids=frozenset(),
 ):
@@ -424,6 +442,8 @@ def _faction_trade(
                     compositional_runtime=compositional_runtime,
                     grammar_config=grammar_config,
                     grammar_runtime=grammar_runtime,
+                    coevolution_config=coevolution_config,
+                    coevolution_runtime=coevolution_runtime,
                     coalition_membership_snapshot=(
                         coalition_membership_snapshot
                     ),
@@ -445,6 +465,8 @@ def _faction_trade(
                     compositional_runtime=compositional_runtime,
                     grammar_config=grammar_config,
                     grammar_runtime=grammar_runtime,
+                    coevolution_config=coevolution_config,
+                    coevolution_runtime=coevolution_runtime,
                     coalition_membership_snapshot=(
                         coalition_membership_snapshot
                     ),
@@ -530,6 +552,62 @@ def _assigned_active_ids(people) -> tuple[frozenset[int], dict[int, object]]:
     return frozenset(active_ids), inhabitant_by_id
 
 
+def _apply_language_coevolution(
+    sender,
+    receiver,
+    *,
+    outcome,
+    t: int,
+    active_ids: frozenset[int],
+    coevolution_config: LanguageCoevolutionConfig | None,
+    coevolution_runtime: LanguageCoevolutionRuntimeState | None,
+) -> None:
+    """Fold one finalized communication outcome back into partner choice.
+
+    Both parties already update their own language state from this outcome, so
+    reading it here adds no information the simulation did not already model.
+    ``NO_SIGNAL`` carries no evidence about mutual intelligibility and is
+    counted as skipped rather than treated as a failure.
+    """
+    if coevolution_config is None or not (
+        coevolution_config.language_coevolution_enabled
+    ):
+        if coevolution_runtime is not None:
+            raise ValueError(
+                'disabled language coevolution cannot receive a runtime')
+        return
+    if coevolution_runtime is None:
+        raise ValueError('enabled language coevolution requires a runtime')
+
+    result = outcome.result
+    if result is CommunicationResult.NO_SIGNAL:
+        record_intelligibility_outcome(
+            coevolution_runtime,
+            config=coevolution_config,
+            understood=False,
+            applied=False,
+            tick=t,
+        )
+        return
+    understood = result is CommunicationResult.SUCCESS
+    applied = apply_intelligibility_feedback(
+        sender,
+        receiver,
+        understood=understood,
+        tick=t,
+        reward=coevolution_config.intelligibility_reward,
+        penalty=coevolution_config.intelligibility_penalty,
+        active_ids=active_ids,
+    )
+    record_intelligibility_outcome(
+        coevolution_runtime,
+        config=coevolution_config,
+        understood=understood,
+        applied=applied,
+        tick=t,
+    )
+
+
 def _commit_individual_transfer(
     giver,
     recipient,
@@ -551,6 +629,8 @@ def _commit_individual_transfer(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    coevolution_config: LanguageCoevolutionConfig | None = None,
+    coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
 ) -> None:
@@ -581,7 +661,7 @@ def _commit_individual_transfer(
     if language_config.language_evolution_enabled:
         if language_runtime is None:
             raise ValueError('enabled individual language transfer requires a runtime')
-        communicate(
+        outcome = communicate(
             giver,
             recipient,
             meaning_for_resource(res),
@@ -607,6 +687,15 @@ def _commit_individual_transfer(
                 coalition_membership_snapshot=coalition_membership_snapshot,
             ),
         )
+        _apply_language_coevolution(
+            giver,
+            recipient,
+            outcome=outcome,
+            t=t,
+            active_ids=active_ids,
+            coevolution_config=coevolution_config,
+            coevolution_runtime=coevolution_runtime,
+        )
 
 
 def _attempt_individual_transfer(
@@ -629,6 +718,8 @@ def _attempt_individual_transfer(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    coevolution_config: LanguageCoevolutionConfig | None = None,
+    coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
 ) -> bool:
@@ -652,6 +743,8 @@ def _attempt_individual_transfer(
                 compositional_runtime=compositional_runtime,
                 grammar_config=grammar_config,
                 grammar_runtime=grammar_runtime,
+                coevolution_config=coevolution_config,
+                coevolution_runtime=coevolution_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )
@@ -678,6 +771,8 @@ def _historical_barter(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    coevolution_config: LanguageCoevolutionConfig | None = None,
+    coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     active_ids: frozenset[int],
     rng,
@@ -710,6 +805,8 @@ def _historical_barter(
                 compositional_runtime=compositional_runtime,
                 grammar_config=grammar_config,
                 grammar_runtime=grammar_runtime,
+                coevolution_config=coevolution_config,
+                coevolution_runtime=coevolution_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )
@@ -820,6 +917,8 @@ def _relationship_biased_barter(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    coevolution_config: LanguageCoevolutionConfig | None = None,
+    coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng,
 ) -> frozenset[int]:
@@ -873,6 +972,8 @@ def _relationship_biased_barter(
                     compositional_runtime=compositional_runtime,
                     grammar_config=grammar_config,
                     grammar_runtime=grammar_runtime,
+                    coevolution_config=coevolution_config,
+                    coevolution_runtime=coevolution_runtime,
                     coalition_membership_snapshot=(
                         coalition_membership_snapshot
                     ),
@@ -901,6 +1002,8 @@ def _relationship_biased_barter(
                 compositional_runtime=compositional_runtime,
                 grammar_config=grammar_config,
                 grammar_runtime=grammar_runtime,
+                coevolution_config=coevolution_config,
+                coevolution_runtime=coevolution_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=frozen.active_ids,
             )
@@ -929,6 +1032,8 @@ def _individual_barter(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    coevolution_config: LanguageCoevolutionConfig | None = None,
+    coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng=random,
 ) -> frozenset[int]:
@@ -964,6 +1069,8 @@ def _individual_barter(
             compositional_runtime=compositional_runtime,
             grammar_config=grammar_config,
             grammar_runtime=grammar_runtime,
+            coevolution_config=coevolution_config,
+            coevolution_runtime=coevolution_runtime,
             coalition_membership_snapshot=coalition_membership_snapshot,
             active_ids=active_ids,
             rng=rng,
@@ -986,6 +1093,8 @@ def _individual_barter(
         compositional_runtime=compositional_runtime,
         grammar_config=grammar_config,
         grammar_runtime=grammar_runtime,
+        coevolution_config=coevolution_config,
+        coevolution_runtime=coevolution_runtime,
         coalition_membership_snapshot=coalition_membership_snapshot,
         rng=rng,
     )
@@ -1071,6 +1180,8 @@ def economy_tick(
     ) = None,
     grammar_config: GrammarEvolutionConfig | None = None,
     grammar_runtime: GrammarEvolutionRuntimeState | None = None,
+    coevolution_config: LanguageCoevolutionConfig | None = None,
+    coevolution_runtime: LanguageCoevolutionRuntimeState | None = None,
     coalition_membership_snapshot: CoalitionMembershipSnapshot | None = None,
     rng=random,
 ):
@@ -1120,6 +1231,8 @@ def economy_tick(
             compositional_runtime=compositional_runtime,
             grammar_config=grammar_config,
             grammar_runtime=grammar_runtime,
+            coevolution_config=coevolution_config,
+            coevolution_runtime=coevolution_runtime,
             coalition_membership_snapshot=coalition_membership_snapshot,
             rng=rng,
         )
@@ -1146,6 +1259,8 @@ def economy_tick(
                 compositional_runtime=compositional_runtime,
                 grammar_config=grammar_config,
                 grammar_runtime=grammar_runtime,
+                coevolution_config=coevolution_config,
+                coevolution_runtime=coevolution_runtime,
                 coalition_membership_snapshot=coalition_membership_snapshot,
                 active_ids=active_ids,
             )

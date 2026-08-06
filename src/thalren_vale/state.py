@@ -8,6 +8,7 @@ from .language import (
     CompositionalProtolanguageRuntimeState,
     GrammarEvolutionRuntimeState,
     IntergenerationalLanguageRuntimeState,
+    LanguageCoevolutionRuntimeState,
     LanguageContactRuntimeState,
     LanguageRuntimeState,
     LexicalEvolutionRuntimeState,
@@ -62,6 +63,8 @@ class SimulationState:
         default_factory=CompositionalProtolanguageRuntimeState)
     grammar_evolution: GrammarEvolutionRuntimeState = field(
         default_factory=GrammarEvolutionRuntimeState)
+    language_coevolution: LanguageCoevolutionRuntimeState = field(
+        default_factory=LanguageCoevolutionRuntimeState)
 
     def stage_inhabitant_id(self, inhabitant, candidate: int) -> None:
         """Assign, but do not yet consume, the next authoritative run ID."""
@@ -122,3 +125,4 @@ class SimulationState:
         self.compositional_protolanguage = (
             CompositionalProtolanguageRuntimeState())
         self.grammar_evolution = GrammarEvolutionRuntimeState()
+        self.language_coevolution = LanguageCoevolutionRuntimeState()

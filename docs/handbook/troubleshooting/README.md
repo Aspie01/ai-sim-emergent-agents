@@ -56,8 +56,11 @@ Endogenous Language v1, Coalition Dialects v1, Language Contact v1, and
 Intergenerational Language v1 are implemented engineering features. Lexical
 Evolution v1 is also implemented: it can substitute exactly one token in a
 pre-existing usable form during committed-transfer communication, with no RNG
-or fuzzy comprehension. Compositional protolanguage, grammar, coevolution, and
-research-readiness milestones are **Planned, not implemented**. Contact applies
+or fuzzy comprehension. Compositional Protolanguage v1 and Grammar Evolution v1 are also
+implemented: composition emits fixed-arity `(resource, modality)` signals, and
+grammar lets a speaker hold a constituent-order rule that a hearer can infer
+from a minimal pair it already knows. Coevolution and research-readiness
+milestones are **Planned, not implemented**. Contact applies
 only to authentic different-active-coalitions communication; assigned/unassigned
 communication intentionally remains base Language v1 behavior. Birth
 transmission applies only after successful child admission and creates bounded

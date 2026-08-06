@@ -231,8 +231,10 @@ relationships, vocabularies, factions, and inventories are not erased.
 
 ## 19. Future extensions
 
-Language-driven coalition formation or lifecycle belongs to
-`feature/language-coevolution-v1`: **Planned, not implemented**. No current plan
+Language-driven coalition formation or lifecycle is **Planned, not
+implemented**. [Language Coevolution v1](language-coevolution.md) is
+implemented, but it feeds intelligibility only into directed relationship ties
+and partner choice; it does not read or write coalition state. No current plan
 authorizes leaders, institutions, diplomacy, coalition-owned resources, or
 official languages.
 

@@ -95,7 +95,12 @@ flowchart TB
 - The selected-state hash is computed directly from authoritative state and
   hashed controls; required CSV contents do not produce it.
 - The `COAL -> DIALECT -> LANG` and `COAL/ECON -> CONTACT -> LANG` paths are
-  one-way; no language-to-coalition, social, or material edge exists.
+  one-way; no language-to-coalition or language-to-material edge exists.
+- `LANG -> COEVOLUTION -> SOCIAL -> ECON` is the single reverse edge in the
+  system, and it exists only while language coevolution is effective. A
+  committed utterance's outcome adjusts both directed intelligibility ties,
+  and those ties feed `relationship_preference_score`, so partner choice
+  changes. Every other language path remains one-way.
 - The `AGENT -> INTERGEN -> LANG` path begins only after successful child
   admission. It has no reverse edge into reproduction, population, health,
   resources, factions, or relationships.

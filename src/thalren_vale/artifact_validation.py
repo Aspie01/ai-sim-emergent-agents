@@ -1,4 +1,4 @@
-﻿"""Streaming validation for simulation research artifacts."""
+"""Streaming validation for simulation research artifacts."""
 
 from __future__ import annotations
 
@@ -71,6 +71,14 @@ from .config import (
     MAXIMUM_ORDER_ADOPTION_THRESHOLD,
     VALID_GRAMMAR_EVOLUTION_CONTROL_NOTICES,
     VALID_GRAMMAR_EVOLUTION_CONTROL_STATUSES,
+    LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_LANGUAGE,
+    LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_PARTNER_BIAS,
+    DEFAULT_LANGUAGE_COEVOLUTION_ENABLED,
+    DEFAULT_INTELLIGIBILITY_REWARD,
+    DEFAULT_INTELLIGIBILITY_PENALTY,
+    MAXIMUM_INTELLIGIBILITY_RATE,
+    VALID_LANGUAGE_COEVOLUTION_CONTROL_NOTICES,
+    VALID_LANGUAGE_COEVOLUTION_CONTROL_STATUSES,
     DEFAULT_LEXICAL_EVOLUTION_ENABLED,
     DEFAULT_LEXICAL_MUTATION_RATE,
     DEFAULT_MAXIMUM_ACTIVE_COALITIONS,
@@ -1699,6 +1707,186 @@ def _validate_grammar_evolution_configuration(
         )
 
 
+def _validate_language_coevolution_configuration(
+    config: dict,
+    issues: _IssueCollector,
+) -> None:
+    """Validate every present feedback control and both dependency facts.
+
+    Coevolution depends on language evolution *and* social partner bias:
+    without effective partner bias the intelligibility term never reaches a
+    partner decision, so there is no loop and each dependency is checked and
+    reported independently.
+    """
+
+    def finite_rate(value: object) -> bool:
+        return (
+            type(value) is float
+            and math.isfinite(value)
+            and 0.0 < value <= MAXIMUM_INTELLIGIBILITY_RATE
+        )
+
+    validators = {
+        "language_coevolution_enabled": _is_bool,
+        "intelligibility_reward": finite_rate,
+        "intelligibility_penalty": finite_rate,
+        "language_coevolution_controls_status": (
+            lambda value: _is_str(value)
+            and value in VALID_LANGUAGE_COEVOLUTION_CONTROL_STATUSES
+        ),
+        "language_coevolution_control_notices": (
+            lambda value: _is_list(value)
+            and all(
+                _is_str(item)
+                and item in VALID_LANGUAGE_COEVOLUTION_CONTROL_NOTICES
+                for item in value
+            )
+            and len(value) == len(set(value))
+            and value == sorted(value)
+        ),
+    }
+    valid_present: set[str] = set()
+    for name, validator in validators.items():
+        if name not in config:
+            continue
+        if not validator(config[name]):
+            _add(
+                issues,
+                "invalid_language_coevolution_configuration",
+                f"{name} is malformed",
+                "manifest",
+            )
+        else:
+            valid_present.add(name)
+
+    enabled_present = "language_coevolution_enabled" in valid_present
+    status_present = "language_coevolution_controls_status" in valid_present
+    notices_present = "language_coevolution_control_notices" in valid_present
+    language_present = (
+        "language_evolution_enabled" in config
+        and _is_bool(config.get("language_evolution_enabled"))
+    )
+    bias_present = (
+        "social_partner_bias_enabled" in config
+        and _is_bool(config.get("social_partner_bias_enabled"))
+    )
+    enabled = (
+        config["language_coevolution_enabled"] if enabled_present else None
+    )
+    status = (
+        config["language_coevolution_controls_status"]
+        if status_present else None
+    )
+    notices = (
+        config["language_coevolution_control_notices"]
+        if notices_present else None
+    )
+    errors: list[str] = []
+
+    def add_error(message: str) -> None:
+        if message not in errors:
+            errors.append(message)
+
+    if enabled is True:
+        if language_present and not config["language_evolution_enabled"]:
+            add_error(
+                "enabled language coevolution requires language evolution")
+        if bias_present and not config["social_partner_bias_enabled"]:
+            add_error(
+                "enabled language coevolution requires social partner bias")
+        if notices_present and notices:
+            add_error(
+                "enabled language coevolution conflicts with normalization "
+                "notices")
+
+    if notices_present:
+        assert type(notices) is list
+        language_notice = (
+            LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_LANGUAGE in notices)
+        bias_notice = (
+            LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_PARTNER_BIAS in notices)
+        if enabled is True and notices:
+            add_error(
+                "normalization notices require disabled language coevolution")
+        if language_present:
+            if config["language_evolution_enabled"] and language_notice:
+                add_error(
+                    "language coevolution language notice conflicts with "
+                    "effective language")
+            if (
+                notices
+                and not config["language_evolution_enabled"]
+                and not language_notice
+            ):
+                add_error(
+                    "normalized language coevolution lacks the language "
+                    "dependency notice")
+        if bias_present:
+            if config["social_partner_bias_enabled"] and bias_notice:
+                add_error(
+                    "language coevolution partner-bias notice conflicts with "
+                    "effective partner bias")
+            if (
+                notices
+                and not config["social_partner_bias_enabled"]
+                and not bias_notice
+            ):
+                add_error(
+                    "normalized language coevolution lacks the partner-bias "
+                    "dependency notice")
+
+    defaults = {
+        "language_coevolution_enabled": DEFAULT_LANGUAGE_COEVOLUTION_ENABLED,
+        "intelligibility_reward": DEFAULT_INTELLIGIBILITY_REWARD,
+        "intelligibility_penalty": DEFAULT_INTELLIGIBILITY_PENALTY,
+    }
+    present_controls = set(defaults).intersection(valid_present)
+    controls_complete = set(defaults) <= valid_present
+    any_nondefault = any(
+        not _exact_equal(config[name], defaults[name])
+        for name in present_controls
+    )
+    if status == "disabled":
+        if any_nondefault:
+            add_error(
+                "disabled language coevolution status conflicts with present "
+                "controls")
+        if notices_present and notices:
+            add_error(
+                "disabled language coevolution status requires exact empty "
+                "notices")
+    elif status == "normalized_uncontracted":
+        if enabled is True:
+            add_error(
+                "normalized language coevolution status requires disabled "
+                "coevolution")
+        if not notices_present or not notices:
+            add_error(
+                "normalized language coevolution status requires a "
+                "dependency notice")
+    elif status == "engineering_only_uncontracted":
+        if notices_present and notices:
+            add_error(
+                "engineering language coevolution status conflicts with "
+                "normalization notices")
+        if controls_complete and not any_nondefault:
+            add_error(
+                "engineering language coevolution status requires a "
+                "nondefault control")
+    if notices_present and notices and status_present and (
+        status != "normalized_uncontracted"
+    ):
+        add_error(
+            "language coevolution status conflicts with normalization notices")
+    for message in errors:
+        _add(
+            issues,
+            "invalid_language_coevolution_configuration",
+            message,
+            "manifest",
+        )
+
+
 def _validate_lexical_evolution_configuration(
     config: dict,
     issues: _IssueCollector,
@@ -3173,6 +3361,7 @@ def _validate_strict(
         _validate_lexical_evolution_configuration(config, issues)
         _validate_compositional_protolanguage_configuration(config, issues)
         _validate_grammar_evolution_configuration(config, issues)
+        _validate_language_coevolution_configuration(config, issues)
     execution_mode = manifest.get("execution_mode")
     if not _is_str(execution_mode) or execution_mode not in {"serial", "threaded"}:
         _add(issues, "invalid_execution_mode", repr(manifest.get("execution_mode")), "manifest")

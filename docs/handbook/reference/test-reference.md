@@ -123,11 +123,10 @@ Current tests do not establish:
 - plugin process isolation;
 - performance claims without an authorized controlled benchmark;
 - final language research contracts or planned future language milestones such
-  as composition, grammar, and coevolution.
+  as coevolution and research readiness.
 
-The accepted Lexical Evolution v1 implementation completed the default full
-engineering suite with **1,474 passed** before its bounded summary correction.
-The authoritative current result after that correction is **1,476 passed**.
+The accepted Grammar Evolution v1 implementation completed the default full
+engineering suite with **1,621 passed**.
 These verify tested software contracts only; they are not simulation runs,
 research tiers, or scientific results.
 

@@ -338,16 +338,16 @@ Completed engineering implementations:
 - `feature/lexical-evolution-v1`
 - `feature/compositional-protolanguage-v1`
 - `feature/grammar-evolution-v1`
+- `feature/language-coevolution-v1`
 
 Planned, not implemented:
 
-- `feature/language-coevolution-v1` — **Planned, not implemented**
 - `feature/language-research-readiness-v1` — **Planned, not implemented**
 
 In particular, language-driven coalition lifecycle and relationship feedback are
 part of coevolution, not current dialect behavior.
 
-The next milestone is `feature/language-coevolution-v1`: **Planned, not implemented**.
+The next milestone is `feature/language-research-readiness-v1`: **Planned, not implemented**.
 
 ## 20. Implementation evidence
 

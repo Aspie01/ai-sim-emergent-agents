@@ -276,8 +276,11 @@ mutation, then restores a pristine
 Composition changes which signal is emitted and which key stores it. It cannot
 change the already committed material transfer or any inventory, currency,
 trust, relationship, partner choice, social memory, coalition, faction,
-combat, reproduction, health, survival, movement, or population state. No
-language-to-social or language-to-material feedback was added.
+combat, reproduction, health, survival, movement, or population state. This
+milestone added no language-to-social or language-to-material feedback. The
+single reverse edge in the system belongs to
+[Language Coevolution v1](language-coevolution.md) and is independent of
+composition.
 
 Signals and meanings remain associations owned by individual inhabitants. There
 is no global, coalition, faction, family, generation, or settlement lexicon.
@@ -319,13 +322,13 @@ Completed engineering implementations:
 - `feature/lexical-evolution-v1`
 - `feature/compositional-protolanguage-v1`
 - `feature/grammar-evolution-v1`
+- `feature/language-coevolution-v1`
 
 Remaining milestones:
 
-- `feature/language-coevolution-v1` — **Planned, not implemented**
 - `feature/language-research-readiness-v1` — **Planned, not implemented**
 
-The next milestone is `feature/language-coevolution-v1`: **Planned, not implemented**.
+The next milestone is `feature/language-research-readiness-v1`: **Planned, not implemented**.
 
 ## 16. Implementation evidence
 

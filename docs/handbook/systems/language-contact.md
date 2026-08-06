@@ -336,8 +336,9 @@ Intergenerational transmission is now an independent implemented
 comprehension-only birth extension; it does not change contact classification
 or counters. Lexical Evolution v1 is an independent implemented substitution
 extension whose derivation does not read contact classification. Compositional
-protolanguage, grammar, and language coevolution remain planned rather than
-implemented.
+Protolanguage v1 and Grammar Evolution v1 are likewise independent implemented
+extensions that do not read contact classification. Language coevolution
+remains planned rather than implemented.
 
 ## 16. Language roadmap
 
@@ -349,14 +350,14 @@ Completed engineering implementations:
 - `feature/intergenerational-language-v1`;
 - `feature/lexical-evolution-v1`;
 - `feature/compositional-protolanguage-v1`;
-- `feature/grammar-evolution-v1`.
+- `feature/grammar-evolution-v1`;
+- `feature/language-coevolution-v1`.
 
 Planned, not implemented:
 
-- `feature/language-coevolution-v1` — **Planned, not implemented**;
 - `feature/language-research-readiness-v1` — **Planned, not implemented**.
 
-The next milestone is `feature/language-coevolution-v1`: **Planned, not implemented**.
+The next milestone is `feature/language-research-readiness-v1`: **Planned, not implemented**.
 
 ## 17. Implementation evidence
 

@@ -348,14 +348,15 @@ Suppose rivalry between factions A and B reaches 200. If A has no threshold-chan
 
 ## 19. Future extensions
 
-Language-driven combat, diplomacy, religion, partner choice, formal faction
-identity, or coevolution are **Planned, not implemented**. Language Contact v1,
-Intergenerational Language v1, Lexical Evolution v1, Compositional
-Protolanguage v1, and Grammar Evolution v1 are implemented, but
-all are causally isolated from every system on this page. The future milestones
+Language-driven combat, diplomacy, religion, and formal faction identity are
+**Planned, not implemented**. Language Contact v1, Intergenerational Language
+v1, Lexical Evolution v1, Compositional Protolanguage v1, Grammar Evolution v1,
+and Language Coevolution v1 are implemented, and all are causally isolated from
+every system on this page. Coevolution's one reverse edge reaches directed
+relationship ties and partner choice only; it does not touch combat,
+technology, diplomacy, or religion. The future milestones
 are:
 
-- `feature/language-coevolution-v1` — **Planned, not implemented**;
 - `feature/language-research-readiness-v1` — **Planned, not implemented**.
 
 No final research contract, hypothesis, or research-ready claim is established for the systems on this page.

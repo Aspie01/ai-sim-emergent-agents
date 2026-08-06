@@ -52,6 +52,7 @@ The compact visual overview is the [full system map](diagrams/full-system-map.md
 - [Lexical evolution](systems/lexical-evolution.md)
 - [Compositional protolanguage](systems/compositional-protolanguage.md)
 - [Grammar evolution](systems/grammar-evolution.md)
+- [Language coevolution](systems/language-coevolution.md)
 - [Combat, technology, diplomacy, and religion](systems/conflict-technology-diplomacy-religion.md)
 - [Events, observers, and plugins](systems/events-observers-and-plugins.md)
 
@@ -107,10 +108,10 @@ authoritative alone.
 | Generic experiment runner | Implemented fresh-root engineering runner; not research-ready |
 | Core Replication V1 | Historical pilot material |
 | Core Replication V2 evidence | Planned, not implemented |
-| `feature/language-coevolution-v1` | Planned, not implemented |
+| `feature/language-coevolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/language-research-readiness-v1` | Planned, not implemented |
 
-The next language milestone is `feature/language-coevolution-v1`: **Planned, not implemented**.
+The next language milestone is `feature/language-research-readiness-v1`: **Planned, not implemented**.
 
 ## Evidence standard
 

@@ -25,6 +25,8 @@ from .config import (
     LanguageContactConfig,
     CompositionalProtolanguageConfig,
     GrammarEvolutionConfig,
+    LanguageCoevolutionConfig,
+    MAXIMUM_INTELLIGIBILITY_RATE,
     LexicalEvolutionConfig,
 )
 
@@ -368,6 +370,7 @@ class LanguageRuntimeState:
     lexical_evolution_enabled: bool = False
     compositional_protolanguage_enabled: bool = False
     grammar_evolution_enabled: bool = False
+    language_coevolution_enabled: bool = False
 
 
 @dataclass(slots=True)
@@ -469,6 +472,26 @@ class CompositionalProtolanguageRuntimeState:
     composed_invention_count: int = 0
     observed_composite_meaning_mask: int = 0
     last_composition_tick: int | None = None
+
+
+@dataclass(slots=True)
+class LanguageCoevolutionRuntimeState:
+    """Bounded observability for intelligibility feedback into partner choice.
+
+    Unsaturated state satisfies:
+
+        intelligibility_update_count
+            == reinforcing_update_count + eroding_update_count
+        skipped_outcome_count counts outcomes that carried no evidence
+    """
+
+    intelligibility_reward: float | None = None
+    intelligibility_penalty: float | None = None
+    intelligibility_update_count: int = 0
+    reinforcing_update_count: int = 0
+    eroding_update_count: int = 0
+    skipped_outcome_count: int = 0
+    last_update_tick: int | None = None
 
 
 @dataclass(slots=True)
@@ -624,6 +647,137 @@ def validate_grammar_evolution_config(
             "operation requires effective grammar processing",
         )
     return config
+
+
+def language_coevolution_runtime_is_pristine(
+    runtime: LanguageCoevolutionRuntimeState,
+) -> bool:
+    """Report whether a disabled coevolution runtime holds no state."""
+    if type(runtime) is not LanguageCoevolutionRuntimeState:
+        _raise(
+            "invalid_language_coevolution_runtime",
+            "coevolution runtime must be exact",
+        )
+    return (
+        runtime.intelligibility_reward is None
+        and runtime.intelligibility_penalty is None
+        and runtime.intelligibility_update_count == 0
+        and runtime.reinforcing_update_count == 0
+        and runtime.eroding_update_count == 0
+        and runtime.skipped_outcome_count == 0
+        and runtime.last_update_tick is None
+    )
+
+
+def validate_language_coevolution_config(
+    config: LanguageCoevolutionConfig,
+    *,
+    require_enabled: bool = False,
+) -> LanguageCoevolutionConfig:
+    """Validate exact coevolution controls before any feedback is applied."""
+    if type(config) is not LanguageCoevolutionConfig:
+        _raise(
+            "invalid_language_coevolution_config",
+            "coevolution config must be exact",
+        )
+    if type(config.language_coevolution_enabled) is not bool:
+        _raise(
+            "invalid_language_coevolution_config",
+            "coevolution gate must be boolean",
+        )
+    for name in ("intelligibility_reward", "intelligibility_penalty"):
+        value = getattr(config, name)
+        if (
+            type(value) is not float
+            or not math.isfinite(value)
+            or not 0.0 < value <= MAXIMUM_INTELLIGIBILITY_RATE
+        ):
+            _raise(
+                "invalid_language_coevolution_config",
+                f"{name} must be a finite rate in (0, "
+                f"{MAXIMUM_INTELLIGIBILITY_RATE}]",
+            )
+    if require_enabled and not config.language_coevolution_enabled:
+        _raise(
+            "language_coevolution_disabled",
+            "operation requires effective language coevolution",
+        )
+    return config
+
+
+def validate_language_coevolution_runtime(
+    runtime: LanguageCoevolutionRuntimeState,
+    *,
+    config: LanguageCoevolutionConfig | None = None,
+    language_runtime: LanguageRuntimeState | None = None,
+) -> LanguageCoevolutionRuntimeState:
+    """Validate coevolution runtime identity and counter partitions."""
+    if type(runtime) is not LanguageCoevolutionRuntimeState:
+        _raise(
+            "invalid_language_coevolution_runtime",
+            "coevolution runtime must be exact",
+        )
+    for name in (
+        "intelligibility_update_count",
+        "reinforcing_update_count",
+        "eroding_update_count",
+        "skipped_outcome_count",
+    ):
+        if not _exact_nonnegative_int(getattr(runtime, name)):
+            _raise(
+                "invalid_language_coevolution_runtime",
+                f"{name} must be an exact nonnegative integer",
+            )
+    if runtime.last_update_tick is not None and not _exact_nonnegative_int(
+        runtime.last_update_tick
+    ):
+        _raise(
+            "invalid_language_coevolution_runtime",
+            "last update tick must be exact when present",
+        )
+    if (
+        runtime.intelligibility_update_count
+        != runtime.reinforcing_update_count + runtime.eroding_update_count
+    ):
+        _raise(
+            "language_coevolution_counter_partition_violated",
+            "updates must partition into reinforcing and eroding",
+        )
+    if config is not None:
+        validated = validate_language_coevolution_config(config)
+        if (
+            runtime.intelligibility_reward is not None
+            and runtime.intelligibility_reward
+            != validated.intelligibility_reward
+        ) or (
+            runtime.intelligibility_penalty is not None
+            and runtime.intelligibility_penalty
+            != validated.intelligibility_penalty
+        ):
+            _raise(
+                "language_coevolution_runtime_config_mismatch",
+                "frozen feedback rates must match effective configuration",
+            )
+    if language_runtime is not None:
+        if type(language_runtime) is not LanguageRuntimeState:
+            _raise(
+                "invalid_language_runtime",
+                "coevolution validation requires an exact language runtime",
+            )
+    return runtime
+
+
+def initialize_language_coevolution_runtime(
+    runtime: LanguageCoevolutionRuntimeState,
+    config: LanguageCoevolutionConfig,
+) -> None:
+    """Freeze the feedback rates for one run."""
+    validate_language_coevolution_runtime(runtime)
+    validated = validate_language_coevolution_config(
+        config, require_enabled=True)
+    runtime.intelligibility_reward = validated.intelligibility_reward
+    runtime.intelligibility_penalty = validated.intelligibility_penalty
+    validate_language_coevolution_runtime(runtime, config=validated)
 
 
 def initialize_grammar_evolution_runtime(
@@ -2480,6 +2634,7 @@ def initialize_language_runtime(
     lexical_evolution_enabled: bool = False,
     compositional_protolanguage_enabled: bool = False,
     grammar_evolution_enabled: bool = False,
+    language_coevolution_enabled: bool = False,
 ) -> None:
     """Initialize only the canonical seed domain; no entropy is constructed."""
     validate_language_runtime(runtime, initialized=False)
@@ -2515,6 +2670,11 @@ def initialize_language_runtime(
             "invalid_grammar_evolution_config",
             "language runtime grammar gate must be boolean",
         )
+    if type(language_coevolution_enabled) is not bool:
+        _raise(
+            "invalid_language_coevolution_config",
+            "language runtime coevolution gate must be boolean",
+        )
     if grammar_evolution_enabled and not compositional_protolanguage_enabled:
         _raise(
             "grammar_evolution_requires_composition",
@@ -2535,6 +2695,7 @@ def initialize_language_runtime(
     runtime.compositional_protolanguage_enabled = (
         compositional_protolanguage_enabled)
     runtime.grammar_evolution_enabled = grammar_evolution_enabled
+    runtime.language_coevolution_enabled = language_coevolution_enabled
     validate_language_runtime(runtime, initialized=True)
 
 
@@ -3334,6 +3495,66 @@ def _commit_lexical_runtime(
     proposed: LexicalEvolutionRuntimeState,
 ) -> None:
     for item in fields(LexicalEvolutionRuntimeState):
+        setattr(target, item.name, getattr(proposed, item.name))
+
+
+def record_intelligibility_outcome(
+    runtime: LanguageCoevolutionRuntimeState,
+    *,
+    config: LanguageCoevolutionConfig,
+    understood: bool,
+    applied: bool,
+    tick: int,
+) -> None:
+    """Fold one communication outcome into bounded coevolution counters.
+
+    Uses copy-validate-commit so a counter partition violation cannot leave
+    the runtime in a state the validator would reject. Outcomes that carried
+    no evidence, or whose participants were inactive, are counted as skipped
+    rather than silently dropped.
+    """
+    validated_config = validate_language_coevolution_config(
+        config, require_enabled=True)
+    validate_language_coevolution_runtime(runtime, config=validated_config)
+    if type(understood) is not bool or type(applied) is not bool:
+        _raise(
+            "invalid_language_coevolution_runtime",
+            "outcome flags must be exact booleans",
+        )
+    if not _exact_nonnegative_int(tick):
+        _raise("invalid_language_tick", "tick must be exact and nonnegative")
+
+    proposed = replace(runtime)
+    if not applied:
+        proposed.skipped_outcome_count = _increment(
+            proposed.skipped_outcome_count,
+            field_name="skipped_outcome_count",
+        )
+    else:
+        proposed.intelligibility_update_count = _increment(
+            proposed.intelligibility_update_count,
+            field_name="intelligibility_update_count",
+        )
+        if understood:
+            proposed.reinforcing_update_count = _increment(
+                proposed.reinforcing_update_count,
+                field_name="reinforcing_update_count",
+            )
+        else:
+            proposed.eroding_update_count = _increment(
+                proposed.eroding_update_count,
+                field_name="eroding_update_count",
+            )
+        proposed.last_update_tick = tick
+    validate_language_coevolution_runtime(proposed, config=validated_config)
+    _commit_language_coevolution_runtime(runtime, proposed)
+
+
+def _commit_language_coevolution_runtime(
+    target: LanguageCoevolutionRuntimeState,
+    proposed: LanguageCoevolutionRuntimeState,
+) -> None:
+    for item in fields(LanguageCoevolutionRuntimeState):
         setattr(target, item.name, getattr(proposed, item.name))
 
 
@@ -6291,6 +6512,92 @@ def compositional_protolanguage_summary(
             for modality in Modality
         },
         "runtime": compositional_protolanguage_runtime_record(
+            runtime,
+            config=validated_config,
+            language_runtime=language_runtime,
+        ),
+    }
+
+
+def language_coevolution_runtime_record(
+    runtime: LanguageCoevolutionRuntimeState,
+    *,
+    config: LanguageCoevolutionConfig,
+    language_runtime: LanguageRuntimeState,
+) -> dict[str, object]:
+    """Return canonical feedback rates and bounded counters."""
+    validate_language_coevolution_runtime(
+        runtime,
+        config=config,
+        language_runtime=language_runtime,
+    )
+    return {
+        "intelligibility_reward": runtime.intelligibility_reward,
+        "intelligibility_penalty": runtime.intelligibility_penalty,
+        "intelligibility_update_count": runtime.intelligibility_update_count,
+        "reinforcing_update_count": runtime.reinforcing_update_count,
+        "eroding_update_count": runtime.eroding_update_count,
+        "skipped_outcome_count": runtime.skipped_outcome_count,
+        "last_update_tick": runtime.last_update_tick,
+    }
+
+
+def language_coevolution_summary(
+    people: Iterable[LanguageInhabitant],
+    *,
+    runtime: LanguageCoevolutionRuntimeState,
+    config: LanguageCoevolutionConfig,
+    language_runtime: LanguageRuntimeState,
+) -> dict[str, object]:
+    """Return one bounded on-demand view of intelligibility across ties.
+
+    Consumes the population iterable exactly once with work bounded by the
+    social tie cap per inhabitant, performs no population-wide sort or pair
+    enumeration, mutates nothing, and consumes no RNG. Reports plain counts
+    rather than a convergence ratio so the caller decides what counts as
+    mutual intelligibility. This is engineering observability, not an
+    approved research endpoint.
+    """
+    validated_config = validate_language_coevolution_config(
+        config, require_enabled=True)
+    validate_language_coevolution_runtime(
+        runtime,
+        config=validated_config,
+        language_runtime=language_runtime,
+    )
+    population = 0
+    directed_ties = 0
+    positive_ties = 0
+    negative_ties = 0
+    neutral_ties = 0
+    carriers = 0
+    for inhabitant in people:
+        population += 1
+        relationships = getattr(inhabitant, "relationships", None)
+        if not relationships:
+            continue
+        carries = False
+        for record in relationships.values():
+            directed_ties += 1
+            value = getattr(record, "intelligibility", 0.0)
+            if value > 0.0:
+                positive_ties += 1
+                carries = True
+            elif value < 0.0:
+                negative_ties += 1
+                carries = True
+            else:
+                neutral_ties += 1
+        if carries:
+            carriers += 1
+    return {
+        "population": population,
+        "directed_ties": directed_ties,
+        "intelligible_ties": positive_ties,
+        "unintelligible_ties": negative_ties,
+        "neutral_ties": neutral_ties,
+        "carriers": carriers,
+        "runtime": language_coevolution_runtime_record(
             runtime,
             config=validated_config,
             language_runtime=language_runtime,

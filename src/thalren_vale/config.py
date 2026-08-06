@@ -77,6 +77,10 @@ MAXIMUM_RESOURCE_MORPHEME_LENGTH = 3
 MAXIMUM_MODALITY_MORPHEME_LENGTH = 2
 DEFAULT_GRAMMAR_EVOLUTION_ENABLED = False
 DEFAULT_ORDER_ADOPTION_THRESHOLD = 3
+DEFAULT_LANGUAGE_COEVOLUTION_ENABLED = False
+DEFAULT_INTELLIGIBILITY_REWARD = 0.06
+DEFAULT_INTELLIGIBILITY_PENALTY = 0.04
+MAXIMUM_INTELLIGIBILITY_RATE = 0.25
 MAXIMUM_ORDER_ADOPTION_THRESHOLD = 32
 FACTION_TRUST_THRESHOLD = DEFAULT_FACTION_TRUST_THRESHOLD
 WAR_TENSION_THRESHOLD = DEFAULT_WAR_TENSION_THRESHOLD
@@ -221,6 +225,22 @@ VALID_GRAMMAR_EVOLUTION_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_LANGUAGE = (
+    'language_coevolution_requested_without_language'
+)
+LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_PARTNER_BIAS = (
+    'language_coevolution_requested_without_partner_bias'
+)
+VALID_LANGUAGE_COEVOLUTION_CONTROL_NOTICES = frozenset({
+    LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_LANGUAGE,
+    LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_PARTNER_BIAS,
+})
+VALID_LANGUAGE_COEVOLUTION_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
 
 @dataclass(frozen=True)
 class SocialMemoryConfig:
@@ -313,6 +333,15 @@ class GrammarEvolutionConfig:
 
 
 @dataclass(frozen=True)
+class LanguageCoevolutionConfig:
+    """Effective engineering-only intelligibility feedback controls."""
+
+    language_coevolution_enabled: bool
+    intelligibility_reward: float
+    intelligibility_penalty: float
+
+
+@dataclass(frozen=True)
 class SimulationConfig:
     """Validated effective configuration for one simulation run."""
 
@@ -391,6 +420,11 @@ class SimulationConfig:
     modality_morpheme_length: int = DEFAULT_MODALITY_MORPHEME_LENGTH
     grammar_evolution_enabled: bool = DEFAULT_GRAMMAR_EVOLUTION_ENABLED
     order_adoption_threshold: int = DEFAULT_ORDER_ADOPTION_THRESHOLD
+    language_coevolution_enabled: bool = (
+        DEFAULT_LANGUAGE_COEVOLUTION_ENABLED
+    )
+    intelligibility_reward: float = DEFAULT_INTELLIGIBILITY_REWARD
+    intelligibility_penalty: float = DEFAULT_INTELLIGIBILITY_PENALTY
     social_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     language_control_notices: tuple[str, ...] = field(
@@ -408,6 +442,8 @@ class SimulationConfig:
     compositional_protolanguage_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     grammar_evolution_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    language_coevolution_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -526,6 +562,25 @@ class SimulationConfig:
             self,
             'grammar_evolution_control_notices',
             tuple(sorted(grammar_notices)),
+        )
+
+        # Runs after partner-bias normalization so an implicitly disabled bias
+        # cascades. Coevolution feeds intelligibility into partner choice, so
+        # without effective partner bias there is no loop to close.
+        coevolution_notices: list[str] = []
+        if self.language_coevolution_enabled is True:
+            if self.language_evolution_enabled is False:
+                coevolution_notices.append(
+                    LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_LANGUAGE)
+            if self.social_partner_bias_enabled is False:
+                coevolution_notices.append(
+                    LANGUAGE_COEVOLUTION_NOTICE_WITHOUT_PARTNER_BIAS)
+        if coevolution_notices:
+            object.__setattr__(self, 'language_coevolution_enabled', False)
+        object.__setattr__(
+            self,
+            'language_coevolution_control_notices',
+            tuple(sorted(coevolution_notices)),
         )
 
     @classmethod
@@ -769,6 +824,21 @@ class SimulationConfig:
                 DEFAULT_ORDER_ADOPTION_THRESHOLD
                 if getattr(args, 'order_adoption_threshold', None) is None
                 else args.order_adoption_threshold
+            ),
+            language_coevolution_enabled=(
+                bool(getattr(args, 'enable_language_coevolution', False))
+                and not bool(getattr(
+                    args, 'disable_language_coevolution', False))
+            ),
+            intelligibility_reward=(
+                DEFAULT_INTELLIGIBILITY_REWARD
+                if getattr(args, 'intelligibility_reward', None) is None
+                else args.intelligibility_reward
+            ),
+            intelligibility_penalty=(
+                DEFAULT_INTELLIGIBILITY_PENALTY
+                if getattr(args, 'intelligibility_penalty', None) is None
+                else args.intelligibility_penalty
             ),
         )
         instance.validate()
@@ -1113,6 +1183,39 @@ class SimulationConfig:
             raise ValueError(
                 'order adoption threshold must be an integer from 1 to '
                 f'{MAXIMUM_ORDER_ADOPTION_THRESHOLD}')
+        if type(self.language_coevolution_enabled) is not bool:
+            raise ValueError('language coevolution setting must be boolean')
+        for name in ('intelligibility_reward', 'intelligibility_penalty'):
+            value = getattr(self, name)
+            if (
+                type(value) is not float
+                or not math.isfinite(value)
+                or not 0.0 < value <= MAXIMUM_INTELLIGIBILITY_RATE
+            ):
+                raise ValueError(
+                    f'{name} must be a finite float greater than 0.0 and at '
+                    f'most {MAXIMUM_INTELLIGIBILITY_RATE}')
+        if (self.language_coevolution_enabled
+                and not self.language_evolution_enabled):
+            raise ValueError(
+                'language coevolution requires language evolution')
+        if (self.language_coevolution_enabled
+                and not self.social_partner_bias_enabled):
+            raise ValueError(
+                'language coevolution requires social partner bias')
+        if any(
+            notice not in VALID_LANGUAGE_COEVOLUTION_CONTROL_NOTICES
+            for notice in self.language_coevolution_control_notices
+        ):
+            raise ValueError(
+                'unknown language coevolution normalization notice')
+        if (
+            self.language_coevolution_control_notices
+            and self.language_coevolution_enabled
+        ):
+            raise ValueError(
+                'language coevolution normalization notices require disabled '
+                'coevolution')
         if any(
             notice not in VALID_GRAMMAR_EVOLUTION_CONTROL_NOTICES
             for notice in self.grammar_evolution_control_notices
@@ -1156,6 +1259,7 @@ class SimulationConfig:
         result.pop('lexical_evolution_control_notices', None)
         result.pop('compositional_protolanguage_control_notices', None)
         result.pop('grammar_evolution_control_notices', None)
+        result.pop('language_coevolution_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
@@ -1189,6 +1293,10 @@ class SimulationConfig:
             self.grammar_evolution_control_notices)
         result['grammar_evolution_controls_status'] = (
             self.grammar_evolution_controls_status)
+        result['language_coevolution_control_notices'] = list(
+            self.language_coevolution_control_notices)
+        result['language_coevolution_controls_status'] = (
+            self.language_coevolution_controls_status)
         return result
 
     @property
@@ -1430,6 +1538,28 @@ class SimulationConfig:
         return GrammarEvolutionConfig(
             grammar_evolution_enabled=self.grammar_evolution_enabled,
             order_adoption_threshold=self.order_adoption_threshold,
+        )
+
+    @property
+    def language_coevolution_controls_status(self) -> str:
+        """Return provenance status for uncontracted coevolution controls."""
+        if self.language_coevolution_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.language_coevolution_enabled
+            or self.intelligibility_reward != DEFAULT_INTELLIGIBILITY_REWARD
+            or self.intelligibility_penalty != DEFAULT_INTELLIGIBILITY_PENALTY
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def language_coevolution_config(self) -> LanguageCoevolutionConfig:
+        """Return immutable effective intelligibility feedback controls."""
+        return LanguageCoevolutionConfig(
+            language_coevolution_enabled=self.language_coevolution_enabled,
+            intelligibility_reward=self.intelligibility_reward,
+            intelligibility_penalty=self.intelligibility_penalty,
         )
 
     @property

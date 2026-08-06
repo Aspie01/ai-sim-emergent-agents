@@ -490,8 +490,11 @@ Lexical mutation can change the exact-signal language outcome because the
 descendant is genuinely emitted. It cannot change the already committed
 material transfer or any inventory, currency, trust, relationship, partner
 choice, social memory, coalition, faction, combat, reproduction, health,
-survival, movement, or population state. No language-to-social or
-language-to-material feedback was added.
+survival, movement, or population state. This milestone added no
+language-to-social or language-to-material feedback. The single reverse edge
+in the system belongs to
+[Language Coevolution v1](language-coevolution.md) and is independent of
+lexical mutation.
 
 Signals remain associations owned by individual inhabitants. There is no
 global, coalition, faction, family, generation, or settlement lexicon; no
@@ -511,14 +514,14 @@ Completed engineering milestones are:
 - `feature/intergenerational-language-v1`;
 - `feature/lexical-evolution-v1`;
 - `feature/compositional-protolanguage-v1`;
-- `feature/grammar-evolution-v1`.
+- `feature/grammar-evolution-v1`;
+- `feature/language-coevolution-v1`.
 
 Planned, not implemented:
 
-- `feature/language-coevolution-v1` — **Planned, not implemented**;
 - `feature/language-research-readiness-v1` — **Planned, not implemented**.
 
-The next milestone is `feature/language-coevolution-v1`: **Planned, not implemented**.
+The next milestone is `feature/language-research-readiness-v1`: **Planned, not implemented**.
 
 **Primary implementation:**
 

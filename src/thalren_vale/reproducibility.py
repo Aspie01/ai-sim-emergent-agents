@@ -1,4 +1,4 @@
-﻿"""Canonical simulation fingerprints and run manifests."""
+"""Canonical simulation fingerprints and run manifests."""
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ from .config import (
     CompositionalProtolanguageConfig,
     GrammarEvolutionConfig,
     IntergenerationalLanguageConfig,
+    LanguageCoevolutionConfig,
     LanguageContactConfig,
     LanguageEvolutionConfig,
     LexicalEvolutionConfig,
@@ -48,6 +49,7 @@ from .language import (
     CompositionalProtolanguageRuntimeState,
     GrammarEvolutionRuntimeState,
     IntergenerationalLanguageRuntimeState,
+    LanguageCoevolutionRuntimeState,
     LanguageContactRuntimeState,
     LanguageInvariantError,
     LanguageRuntimeState,
@@ -60,6 +62,8 @@ from .language import (
     dialect_runtime_is_pristine,
     grammar_evolution_runtime_is_pristine,
     grammar_evolution_runtime_record,
+    language_coevolution_runtime_is_pristine,
+    language_coevolution_runtime_record,
     intergenerational_language_runtime_record,
     intergenerational_runtime_is_pristine,
     lexical_evolution_runtime_is_pristine,
@@ -88,6 +92,7 @@ def _person_record(
     include_intergenerational: bool = False,
     include_lexical_evolution: bool = False,
     include_grammar_evolution: bool = False,
+    include_language_coevolution: bool = False,
     language_config=None,
     contact_config=None,
     lexical_config=None,
@@ -114,7 +119,8 @@ def _person_record(
                 "enabled social state requires assigned inhabitant IDs")
         record["inhabitant_id"] = inhabitant_id
     if include_social:
-        record["relationships"] = relationship_records(person)
+        record["relationships"] = relationship_records(
+            person, include_intelligibility=include_language_coevolution)
     if include_language:
         if language_config is None:
             raise ValueError("enabled language hashing requires effective controls")
@@ -411,6 +417,45 @@ def _require_pristine_disabled_intergenerational_state(state) -> None:
         raise LanguageInvariantError(
             "nonpristine_disabled_intergenerational_runtime",
             "disabled intergenerational language requires pristine runtime state",
+        )
+
+
+def _require_pristine_disabled_coevolution_state(state) -> None:
+    """Reject intelligibility feedback while language coevolution is off.
+
+    Intelligibility is directed relationship state rather than language state,
+    so this scans every directed tie across the living and retained-dead
+    cohorts. A nonzero value would silently shift partner choice through
+    ``relationship_preference_score`` while being absent from the payload.
+    """
+    for cohort, inhabitants in (
+        ("living", state.people),
+        ("dead", state.all_dead),
+    ):
+        for index, inhabitant in enumerate(inhabitants):
+            relationships = getattr(inhabitant, "relationships", None)
+            if relationships is None:
+                continue
+            for target_id, record in relationships.items():
+                if getattr(record, "intelligibility", 0.0) != 0.0:
+                    inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+                    raise LanguageInvariantError(
+                        "nonpristine_disabled_language_coevolution_state",
+                        "disabled language coevolution cannot conceal "
+                        f"intelligibility: {cohort}[{index}] "
+                        f"inhabitant_id={inhabitant_id!r} "
+                        f"target_id={target_id!r}",
+                    )
+    runtime = getattr(state, "language_coevolution", None)
+    if type(runtime) is not LanguageCoevolutionRuntimeState:
+        raise LanguageInvariantError(
+            "missing_disabled_language_coevolution_runtime",
+            "disabled language coevolution requires an explicit runtime",
+        )
+    if not language_coevolution_runtime_is_pristine(runtime):
+        raise LanguageInvariantError(
+            "nonpristine_disabled_language_coevolution_runtime",
+            "disabled language coevolution requires pristine runtime state",
         )
 
 
@@ -806,6 +851,47 @@ def _compositional_hash_config(
     )
 
 
+def _coevolution_hash_config(
+    configuration: dict,
+) -> LanguageCoevolutionConfig:
+    """Build exact enabled coevolution controls for behavioral hashing."""
+    required = (
+        "language_coevolution_enabled",
+        "intelligibility_reward",
+        "intelligibility_penalty",
+        "language_coevolution_controls_status",
+        "language_coevolution_control_notices",
+    )
+    missing = [name for name in required if name not in configuration]
+    if missing:
+        raise ValueError(
+            "enabled language coevolution hashing lacks controls: "
+            + ", ".join(missing)
+        )
+    if configuration["language_coevolution_controls_status"] != (
+        "engineering_only_uncontracted"
+    ):
+        raise ValueError(
+            "enabled language coevolution hashing requires engineering-only "
+            "status"
+        )
+    if (
+        type(configuration["language_coevolution_control_notices"])
+        is not list
+        or configuration["language_coevolution_control_notices"]
+    ):
+        raise ValueError(
+            "enabled language coevolution hashing requires exact empty "
+            "notices"
+        )
+    return LanguageCoevolutionConfig(
+        language_coevolution_enabled=configuration[
+            "language_coevolution_enabled"],
+        intelligibility_reward=configuration["intelligibility_reward"],
+        intelligibility_penalty=configuration["intelligibility_penalty"],
+    )
+
+
 def _grammar_hash_config(configuration: dict) -> GrammarEvolutionConfig:
     """Build exact enabled grammar controls for behavioral hashing."""
     required = (
@@ -936,6 +1022,15 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         raise ValueError("grammar evolution setting must be boolean")
     grammar_evolution_enabled = configuration.get(
         "grammar_evolution_enabled", False)
+    if (
+        "language_coevolution_enabled" in configuration
+        and type(configuration["language_coevolution_enabled"]) is not bool
+    ):
+        raise ValueError("language coevolution setting must be boolean")
+    language_coevolution_enabled = configuration.get(
+        "language_coevolution_enabled", False)
+    social_partner_bias_enabled = configuration.get(
+        "social_partner_bias_enabled") is True
     non_behavioral_keys = {
         "condition",
         "log_mode",
@@ -1013,6 +1108,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         "grammar_evolution_controls_status",
         "grammar_evolution_control_notices",
     }
+    coevolution_configuration_keys = {
+        "language_coevolution_enabled",
+        "intelligibility_reward",
+        "intelligibility_penalty",
+        "language_coevolution_controls_status",
+        "language_coevolution_control_notices",
+    }
     compositional_configuration_keys = {
         "compositional_protolanguage_enabled",
         "maximum_resource_morpheme_length",
@@ -1050,6 +1152,15 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
     elif not language_evolution_enabled:
         raise ValueError(
             "enabled compositional protolanguage requires language evolution")
+    if not language_coevolution_enabled:
+        _require_pristine_disabled_coevolution_state(state)
+        non_behavioral_keys.update(coevolution_configuration_keys)
+    elif not language_evolution_enabled:
+        raise ValueError(
+            "enabled language coevolution requires language evolution")
+    elif not social_partner_bias_enabled:
+        raise ValueError(
+            "enabled language coevolution requires social partner bias")
     if not grammar_evolution_enabled:
         _require_pristine_disabled_grammar_state(state)
         non_behavioral_keys.update(grammar_configuration_keys)
@@ -1095,6 +1206,16 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         _grammar_hash_config(configuration)
         if grammar_evolution_enabled else None
     )
+    coevolution_hash_config = (
+        _coevolution_hash_config(configuration)
+        if language_coevolution_enabled else None
+    )
+    coevolution_runtime = None
+    if language_coevolution_enabled:
+        coevolution_runtime = getattr(state, "language_coevolution", None)
+        if type(coevolution_runtime) is not LanguageCoevolutionRuntimeState:
+            raise ValueError(
+                "enabled language coevolution requires a valid runtime")
     compositional_runtime = None
     if compositional_protolanguage_enabled:
         compositional_runtime = getattr(
@@ -1155,6 +1276,7 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             include_intergenerational=intergenerational_language_enabled,
             include_lexical_evolution=lexical_evolution_enabled,
             include_grammar_evolution=grammar_evolution_enabled,
+            include_language_coevolution=language_coevolution_enabled,
             language_config=language_hash_config,
             contact_config=contact_hash_config,
             lexical_config=lexical_hash_config,
@@ -1170,6 +1292,7 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             include_intergenerational=intergenerational_language_enabled,
             include_lexical_evolution=lexical_evolution_enabled,
             include_grammar_evolution=grammar_evolution_enabled,
+            include_language_coevolution=language_coevolution_enabled,
             language_config=language_hash_config,
             contact_config=contact_hash_config,
             lexical_config=lexical_hash_config,
@@ -1264,6 +1387,14 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
                 "language runtime grammar gate disagrees with effective "
                 "controls",
             )
+        if runtime.language_coevolution_enabled is not (
+            language_coevolution_enabled
+        ):
+            raise LanguageInvariantError(
+                "language_coevolution_runtime_gate_mismatch",
+                "language runtime coevolution gate disagrees with effective "
+                "controls",
+            )
         payload["language_state"] = language_runtime_record(runtime)
     if coalition_emergence_enabled:
         runtime = getattr(state, "coalitions", None)
@@ -1324,6 +1455,15 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             grammar_runtime,
             config=grammar_hash_config,
             language_runtime=state.language,
+        )
+    if language_coevolution_enabled:
+        assert coevolution_runtime is not None
+        payload["language_coevolution_state"] = (
+            language_coevolution_runtime_record(
+                coevolution_runtime,
+                config=coevolution_hash_config,
+                language_runtime=state.language,
+            )
         )
     encoded = json.dumps(
         _json_safe(payload),

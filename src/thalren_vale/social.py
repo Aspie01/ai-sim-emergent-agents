@@ -45,6 +45,7 @@ class Relationship:
     grievance: float = 0.0
     obligation: float = 0.0
     familiarity: float = 0.0
+    intelligibility: float = 0.0
     interaction_count: int = 0
     last_interaction_tick: int = 0
 
@@ -70,6 +71,7 @@ _AID_HELPER_DELTA = {
     "affinity": 0.01,
     "familiarity": 0.04,
 }
+INTELLIGIBILITY_PREFERENCE_WEIGHT = 0.40
 _TRADE_DELTA = {
     "trust": 0.03,
     "affinity": 0.01,
@@ -151,6 +153,9 @@ def relationship_preference_score(record: Relationship) -> float:
         + 0.25 * record.familiarity
         + 0.10 * record.affinity
         - 0.50 * record.grievance
+        # Zero unless language coevolution is effective, so this term leaves
+        # every pre-coevolution score bit-identical.
+        + INTELLIGIBILITY_PREFERENCE_WEIGHT * record.intelligibility
     )
 
 
@@ -343,10 +348,63 @@ def maintain_relationships(
         )
 
 
-def relationship_records(inhabitant: SocialInhabitant) -> list[dict[str, int | float]]:
+def apply_intelligibility_feedback(
+    sender: SocialInhabitant,
+    receiver: SocialInhabitant,
+    *,
+    understood: bool,
+    tick: int,
+    reward: float,
+    penalty: float,
+    active_ids: set[int] | frozenset[int],
+) -> bool:
+    """Fold one communication outcome into both directed ties.
+
+    Both parties already update their own language state from this outcome:
+    the sender reinforces or weakens the production form it used, and the
+    receiver updates comprehension. Reading the same outcome here therefore
+    invents no information channel that the simulation did not already model.
+
+    The update is symmetric because intelligibility is a property of the pair
+    and neither side is modeled as having better evidence than the other.
+    Returns whether the ties were updated.
+    """
+    sender_id = _assigned_id(sender, "sender")
+    receiver_id = _assigned_id(receiver, "receiver")
+    if sender_id == receiver_id:
+        raise ValueError("self-communication is not permitted")
+    if type(understood) is not bool:
+        raise TypeError("understood must be an exact boolean")
+    validated_tick = _validate_tick(tick)
+    for name, value in (("reward", reward), ("penalty", penalty)):
+        if type(value) is not float or not 0.0 < value <= 1.0:
+            raise ValueError(f"{name} must be a float in (0.0, 1.0]")
+    if sender_id not in active_ids or receiver_id not in active_ids:
+        return False
+
+    delta = reward if understood else -penalty
+    for owner, target_id in (
+        (sender, receiver_id),
+        (receiver, sender_id),
+    ):
+        record = owner.relationships.get(target_id)
+        if record is None:
+            record = Relationship(last_interaction_tick=validated_tick)
+            owner.relationships[target_id] = record
+        record.intelligibility = _clamp(
+            record.intelligibility + delta, -1.0, 1.0)
+    return True
+
+
+def relationship_records(
+    inhabitant: SocialInhabitant,
+    *,
+    include_intelligibility: bool = False,
+) -> list[dict[str, int | float]]:
     """Return one inhabitant's relationships in canonical target-ID order."""
-    return [
-        {
+    records = []
+    for target_id, record in sorted(inhabitant.relationships.items()):
+        entry: dict[str, int | float] = {
             "target_id": target_id,
             "trust": record.trust,
             "affinity": record.affinity,
@@ -356,8 +414,12 @@ def relationship_records(inhabitant: SocialInhabitant) -> list[dict[str, int | f
             "interaction_count": record.interaction_count,
             "last_interaction_tick": record.last_interaction_tick,
         }
-        for target_id, record in sorted(inhabitant.relationships.items())
-    ]
+        if include_intelligibility:
+            # Emitted only when coevolution is effective, so every pinned
+            # pre-coevolution payload is unchanged.
+            entry["intelligibility"] = record.intelligibility
+        records.append(entry)
+    return records
 
 
 def canonical_relationship_snapshot(

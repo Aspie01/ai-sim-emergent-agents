@@ -1,4 +1,4 @@
-"""Canonical simulation fingerprints and run manifests."""
+﻿"""Canonical simulation fingerprints and run manifests."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from .events import EVENT_SCHEMA_VERSION
 from .config import (
     CoalitionDialectConfig,
     CompositionalProtolanguageConfig,
+    GrammarEvolutionConfig,
     IntergenerationalLanguageConfig,
     LanguageContactConfig,
     LanguageEvolutionConfig,
@@ -45,6 +46,7 @@ from .language import (
     CoalitionDialectRuntimeState,
     CompositeMeaning,
     CompositionalProtolanguageRuntimeState,
+    GrammarEvolutionRuntimeState,
     IntergenerationalLanguageRuntimeState,
     LanguageContactRuntimeState,
     LanguageInvariantError,
@@ -56,6 +58,8 @@ from .language import (
     compositional_protolanguage_runtime_record,
     contact_runtime_is_pristine,
     dialect_runtime_is_pristine,
+    grammar_evolution_runtime_is_pristine,
+    grammar_evolution_runtime_record,
     intergenerational_language_runtime_record,
     intergenerational_runtime_is_pristine,
     lexical_evolution_runtime_is_pristine,
@@ -83,6 +87,7 @@ def _person_record(
     include_contact: bool = False,
     include_intergenerational: bool = False,
     include_lexical_evolution: bool = False,
+    include_grammar_evolution: bool = False,
     language_config=None,
     contact_config=None,
     lexical_config=None,
@@ -121,6 +126,7 @@ def _person_record(
             include_intergenerational=include_intergenerational,
             include_lexical_evolution=include_lexical_evolution,
             lexical_config=lexical_config,
+            include_grammar_evolution=include_grammar_evolution,
         )
         record["language"] = {
             key: value
@@ -405,6 +411,48 @@ def _require_pristine_disabled_intergenerational_state(state) -> None:
         raise LanguageInvariantError(
             "nonpristine_disabled_intergenerational_runtime",
             "disabled intergenerational language requires pristine runtime state",
+        )
+
+
+def _require_pristine_disabled_grammar_state(state) -> None:
+    """Reject constituent-order rule state while grammar evolution is off.
+
+    Order is speaker-level rule state rather than association metadata, so this
+    checks the per-agent fields across the living and retained-dead cohorts.
+    """
+    for cohort, inhabitants in (
+        ("living", state.people),
+        ("dead", state.all_dead),
+    ):
+        for index, inhabitant in enumerate(inhabitants):
+            language = getattr(inhabitant, "language", None)
+            if type(language) is not AgentLanguageState:
+                raise LanguageInvariantError(
+                    "missing_disabled_agent_language_state",
+                    "disabled grammar evolution requires explicit agent "
+                    f"language state: {cohort}[{index}]",
+                )
+            if (
+                language.constituent_order is not None
+                or language.opposing_order_evidence != 0
+            ):
+                inhabitant_id = getattr(inhabitant, "inhabitant_id", None)
+                raise LanguageInvariantError(
+                    "nonpristine_disabled_grammar_evolution_state",
+                    "disabled grammar evolution cannot conceal constituent "
+                    f"order state: {cohort}[{index}] "
+                    f"inhabitant_id={inhabitant_id!r}",
+                )
+    runtime = getattr(state, "grammar_evolution", None)
+    if type(runtime) is not GrammarEvolutionRuntimeState:
+        raise LanguageInvariantError(
+            "missing_disabled_grammar_evolution_runtime",
+            "disabled grammar evolution requires an explicit runtime",
+        )
+    if not grammar_evolution_runtime_is_pristine(runtime):
+        raise LanguageInvariantError(
+            "nonpristine_disabled_grammar_evolution_runtime",
+            "disabled grammar evolution requires pristine runtime state",
         )
 
 
@@ -758,6 +806,40 @@ def _compositional_hash_config(
     )
 
 
+def _grammar_hash_config(configuration: dict) -> GrammarEvolutionConfig:
+    """Build exact enabled grammar controls for behavioral hashing."""
+    required = (
+        "grammar_evolution_enabled",
+        "order_adoption_threshold",
+        "grammar_evolution_controls_status",
+        "grammar_evolution_control_notices",
+    )
+    missing = [name for name in required if name not in configuration]
+    if missing:
+        raise ValueError(
+            "enabled grammar evolution hashing lacks controls: "
+            + ", ".join(missing)
+        )
+    if configuration["grammar_evolution_controls_status"] != (
+        "engineering_only_uncontracted"
+    ):
+        raise ValueError(
+            "enabled grammar evolution hashing requires engineering-only "
+            "status"
+        )
+    if (
+        type(configuration["grammar_evolution_control_notices"]) is not list
+        or configuration["grammar_evolution_control_notices"]
+    ):
+        raise ValueError(
+            "enabled grammar evolution hashing requires exact empty notices"
+        )
+    return GrammarEvolutionConfig(
+        grammar_evolution_enabled=configuration["grammar_evolution_enabled"],
+        order_adoption_threshold=configuration["order_adoption_threshold"],
+    )
+
+
 def _lexical_hash_config(configuration: dict) -> LexicalEvolutionConfig:
     """Build exact enabled lexical controls for behavioral hashing."""
     required = (
@@ -847,6 +929,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             "compositional protolanguage setting must be boolean")
     compositional_protolanguage_enabled = configuration.get(
         "compositional_protolanguage_enabled", False)
+    if (
+        "grammar_evolution_enabled" in configuration
+        and type(configuration["grammar_evolution_enabled"]) is not bool
+    ):
+        raise ValueError("grammar evolution setting must be boolean")
+    grammar_evolution_enabled = configuration.get(
+        "grammar_evolution_enabled", False)
     non_behavioral_keys = {
         "condition",
         "log_mode",
@@ -918,6 +1007,12 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         "lexical_evolution_controls_status",
         "lexical_evolution_control_notices",
     }
+    grammar_configuration_keys = {
+        "grammar_evolution_enabled",
+        "order_adoption_threshold",
+        "grammar_evolution_controls_status",
+        "grammar_evolution_control_notices",
+    }
     compositional_configuration_keys = {
         "compositional_protolanguage_enabled",
         "maximum_resource_morpheme_length",
@@ -955,6 +1050,15 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
     elif not language_evolution_enabled:
         raise ValueError(
             "enabled compositional protolanguage requires language evolution")
+    if not grammar_evolution_enabled:
+        _require_pristine_disabled_grammar_state(state)
+        non_behavioral_keys.update(grammar_configuration_keys)
+    elif not language_evolution_enabled:
+        raise ValueError(
+            "enabled grammar evolution requires language evolution")
+    elif not compositional_protolanguage_enabled:
+        raise ValueError(
+            "enabled grammar evolution requires compositional protolanguage")
     if not coalition_emergence_enabled:
         _require_empty_disabled_coalition_state(state)
         non_behavioral_keys.update(coalition_configuration_keys)
@@ -987,6 +1091,10 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         _compositional_hash_config(configuration)
         if compositional_protolanguage_enabled else None
     )
+    grammar_hash_config = (
+        _grammar_hash_config(configuration)
+        if grammar_evolution_enabled else None
+    )
     compositional_runtime = None
     if compositional_protolanguage_enabled:
         compositional_runtime = getattr(
@@ -996,6 +1104,12 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         ):
             raise ValueError(
                 "enabled compositional protolanguage requires a valid runtime")
+    grammar_runtime = None
+    if grammar_evolution_enabled:
+        grammar_runtime = getattr(state, "grammar_evolution", None)
+        if type(grammar_runtime) is not GrammarEvolutionRuntimeState:
+            raise ValueError(
+                "enabled grammar evolution requires a valid runtime")
     intergenerational_runtime = None
     if intergenerational_language_enabled:
         intergenerational_runtime = getattr(
@@ -1040,6 +1154,7 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             include_contact=language_contact_enabled,
             include_intergenerational=intergenerational_language_enabled,
             include_lexical_evolution=lexical_evolution_enabled,
+            include_grammar_evolution=grammar_evolution_enabled,
             language_config=language_hash_config,
             contact_config=contact_hash_config,
             lexical_config=lexical_hash_config,
@@ -1054,6 +1169,7 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
             include_contact=language_contact_enabled,
             include_intergenerational=intergenerational_language_enabled,
             include_lexical_evolution=lexical_evolution_enabled,
+            include_grammar_evolution=grammar_evolution_enabled,
             language_config=language_hash_config,
             contact_config=contact_hash_config,
             lexical_config=lexical_hash_config,
@@ -1142,6 +1258,12 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
                 "language runtime lexical gate disagrees with effective "
                 "controls",
             )
+        if runtime.grammar_evolution_enabled is not grammar_evolution_enabled:
+            raise LanguageInvariantError(
+                "grammar_evolution_runtime_gate_mismatch",
+                "language runtime grammar gate disagrees with effective "
+                "controls",
+            )
         payload["language_state"] = language_runtime_record(runtime)
     if coalition_emergence_enabled:
         runtime = getattr(state, "coalitions", None)
@@ -1195,6 +1317,13 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
                 config=compositional_hash_config,
                 language_runtime=state.language,
             )
+        )
+    if grammar_evolution_enabled:
+        assert grammar_runtime is not None
+        payload["grammar_evolution_state"] = grammar_evolution_runtime_record(
+            grammar_runtime,
+            config=grammar_hash_config,
+            language_runtime=state.language,
         )
     encoded = json.dumps(
         _json_safe(payload),

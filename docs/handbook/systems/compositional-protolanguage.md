@@ -283,10 +283,17 @@ Signals and meanings remain associations owned by individual inhabitants. There
 is no global, coalition, faction, family, generation, or settlement lexicon.
 
 Compositional Protolanguage v1 does **not** add compositional parsing,
-generalization to unseen combinations, morpheme segmentation by the receiver,
-open or recursive semantic structure, word order, syntax, agreement,
+generalization to unseen combinations, segmentation of a heard signal during
+comprehension, open or recursive semantic structure, syntax, agreement,
 inflection, arity beyond two, prestige, standardization, teaching institutions,
 or research conclusions.
+
+Comprehension remains exact whole-signal key lookup at every stage. A later
+milestone, [Grammar Evolution v1](grammar-evolution.md), lets a hearer compare
+two signals it has **already learned** to infer the constituent order its
+speaker used. That inference reads finalized state and never segments the
+signal being comprehended, so the comprehension non-goal above is unchanged;
+only the blanket "no word order" claim was narrowed.
 
 ## 14. Known limitations
 
@@ -311,14 +318,14 @@ Completed engineering implementations:
 - `feature/intergenerational-language-v1`
 - `feature/lexical-evolution-v1`
 - `feature/compositional-protolanguage-v1`
+- `feature/grammar-evolution-v1`
 
 Remaining milestones:
 
-- `feature/grammar-evolution-v1` — **Planned, not implemented**
 - `feature/language-coevolution-v1` — **Planned, not implemented**
 - `feature/language-research-readiness-v1` — **Planned, not implemented**
 
-The next milestone is `feature/grammar-evolution-v1`: **Planned, not implemented**.
+The next milestone is `feature/language-coevolution-v1`: **Planned, not implemented**.
 
 ## 16. Implementation evidence
 

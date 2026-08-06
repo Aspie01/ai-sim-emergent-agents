@@ -42,12 +42,13 @@ The simulation is not globally transactional. Individual admission, coalition tr
 | Language Contact v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Intergenerational Language v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Lexical Evolution v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Compositional Protolanguage v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Grammar Evolution v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Dashboard, raw narratives, RA tracker, mythology | Optional or diagnostic; not canonical evidence |
 | Generic experiment runner | Fresh-root engineering runner; not V2 research-ready |
 | Core Replication V2 execution and evidence | Planned, not implemented |
 
-Compositional protolanguage, grammar evolution, language coevolution, and
-language research readiness remain
+Language coevolution and language research readiness remain
 **Planned, not implemented** as listed in
 [research readiness](../experiments/research-readiness.md).
 

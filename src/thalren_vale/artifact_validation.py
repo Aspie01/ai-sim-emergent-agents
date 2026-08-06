@@ -1,4 +1,4 @@
-"""Streaming validation for simulation research artifacts."""
+﻿"""Streaming validation for simulation research artifacts."""
 
 from __future__ import annotations
 
@@ -64,6 +64,13 @@ from .config import (
     MAXIMUM_RESOURCE_MORPHEME_LENGTH,
     VALID_COMPOSITIONAL_PROTOLANGUAGE_CONTROL_NOTICES,
     VALID_COMPOSITIONAL_PROTOLANGUAGE_CONTROL_STATUSES,
+    GRAMMAR_EVOLUTION_NOTICE_WITHOUT_COMPOSITION,
+    GRAMMAR_EVOLUTION_NOTICE_WITHOUT_LANGUAGE,
+    DEFAULT_GRAMMAR_EVOLUTION_ENABLED,
+    DEFAULT_ORDER_ADOPTION_THRESHOLD,
+    MAXIMUM_ORDER_ADOPTION_THRESHOLD,
+    VALID_GRAMMAR_EVOLUTION_CONTROL_NOTICES,
+    VALID_GRAMMAR_EVOLUTION_CONTROL_STATUSES,
     DEFAULT_LEXICAL_EVOLUTION_ENABLED,
     DEFAULT_LEXICAL_MUTATION_RATE,
     DEFAULT_MAXIMUM_ACTIVE_COALITIONS,
@@ -1511,6 +1518,182 @@ def _validate_compositional_protolanguage_configuration(
         _add(
             issues,
             "invalid_compositional_protolanguage_configuration",
+            message,
+            "manifest",
+        )
+
+
+def _validate_grammar_evolution_configuration(
+    config: dict,
+    issues: _IssueCollector,
+) -> None:
+    """Validate every present order control and both dependency facts.
+
+    Grammar depends on language *and* composition, so each dependency carries
+    its own notice and each is checked independently. A manifest that names
+    only one of two missing dependencies is itself invalid.
+    """
+    validators = {
+        "grammar_evolution_enabled": _is_bool,
+        "order_adoption_threshold": (
+            lambda value: _is_int(value)
+            and 1 <= value <= MAXIMUM_ORDER_ADOPTION_THRESHOLD
+        ),
+        "grammar_evolution_controls_status": (
+            lambda value: _is_str(value)
+            and value in VALID_GRAMMAR_EVOLUTION_CONTROL_STATUSES
+        ),
+        "grammar_evolution_control_notices": (
+            lambda value: _is_list(value)
+            and all(
+                _is_str(item)
+                and item in VALID_GRAMMAR_EVOLUTION_CONTROL_NOTICES
+                for item in value
+            )
+            and len(value) == len(set(value))
+            and value == sorted(value)
+        ),
+    }
+    valid_present: set[str] = set()
+    for name, validator in validators.items():
+        if name not in config:
+            continue
+        if not validator(config[name]):
+            _add(
+                issues,
+                "invalid_grammar_evolution_configuration",
+                f"{name} is malformed",
+                "manifest",
+            )
+        else:
+            valid_present.add(name)
+
+    enabled_present = "grammar_evolution_enabled" in valid_present
+    status_present = "grammar_evolution_controls_status" in valid_present
+    notices_present = "grammar_evolution_control_notices" in valid_present
+    language_present = (
+        "language_evolution_enabled" in config
+        and _is_bool(config.get("language_evolution_enabled"))
+    )
+    composition_present = (
+        "compositional_protolanguage_enabled" in config
+        and _is_bool(config.get("compositional_protolanguage_enabled"))
+    )
+    enabled = (
+        config["grammar_evolution_enabled"] if enabled_present else None
+    )
+    status = (
+        config["grammar_evolution_controls_status"]
+        if status_present else None
+    )
+    notices = (
+        config["grammar_evolution_control_notices"]
+        if notices_present else None
+    )
+    errors: list[str] = []
+
+    def add_error(message: str) -> None:
+        if message not in errors:
+            errors.append(message)
+
+    if enabled is True:
+        if language_present and not config["language_evolution_enabled"]:
+            add_error("enabled grammar evolution requires language evolution")
+        if composition_present and not config[
+            "compositional_protolanguage_enabled"
+        ]:
+            add_error(
+                "enabled grammar evolution requires compositional "
+                "protolanguage")
+        if notices_present and notices:
+            add_error(
+                "enabled grammar evolution conflicts with normalization "
+                "notices")
+
+    if notices_present:
+        assert type(notices) is list
+        language_notice = GRAMMAR_EVOLUTION_NOTICE_WITHOUT_LANGUAGE in notices
+        composition_notice = (
+            GRAMMAR_EVOLUTION_NOTICE_WITHOUT_COMPOSITION in notices)
+        if enabled is True and notices:
+            add_error(
+                "normalization notices require disabled grammar evolution")
+        if language_present:
+            if config["language_evolution_enabled"] and language_notice:
+                add_error(
+                    "grammar evolution language notice conflicts with "
+                    "effective language")
+            if (
+                notices
+                and not config["language_evolution_enabled"]
+                and not language_notice
+            ):
+                add_error(
+                    "normalized grammar evolution lacks the language "
+                    "dependency notice")
+        if composition_present:
+            if (
+                config["compositional_protolanguage_enabled"]
+                and composition_notice
+            ):
+                add_error(
+                    "grammar evolution composition notice conflicts with "
+                    "effective composition")
+            if (
+                notices
+                and not config["compositional_protolanguage_enabled"]
+                and not composition_notice
+            ):
+                add_error(
+                    "normalized grammar evolution lacks the composition "
+                    "dependency notice")
+
+    defaults = {
+        "grammar_evolution_enabled": DEFAULT_GRAMMAR_EVOLUTION_ENABLED,
+        "order_adoption_threshold": DEFAULT_ORDER_ADOPTION_THRESHOLD,
+    }
+    present_controls = set(defaults).intersection(valid_present)
+    controls_complete = set(defaults) <= valid_present
+    any_nondefault = any(
+        not _exact_equal(config[name], defaults[name])
+        for name in present_controls
+    )
+    if status == "disabled":
+        if any_nondefault:
+            add_error(
+                "disabled grammar evolution status conflicts with present "
+                "controls")
+        if notices_present and notices:
+            add_error(
+                "disabled grammar evolution status requires exact empty "
+                "notices")
+    elif status == "normalized_uncontracted":
+        if enabled is True:
+            add_error(
+                "normalized grammar evolution status requires disabled "
+                "grammar")
+        if not notices_present or not notices:
+            add_error(
+                "normalized grammar evolution status requires a dependency "
+                "notice")
+    elif status == "engineering_only_uncontracted":
+        if notices_present and notices:
+            add_error(
+                "engineering grammar evolution status conflicts with "
+                "normalization notices")
+        if controls_complete and not any_nondefault:
+            add_error(
+                "engineering grammar evolution status requires a nondefault "
+                "control")
+    if notices_present and notices and status_present and (
+        status != "normalized_uncontracted"
+    ):
+        add_error(
+            "grammar evolution status conflicts with normalization notices")
+    for message in errors:
+        _add(
+            issues,
+            "invalid_grammar_evolution_configuration",
             message,
             "manifest",
         )
@@ -2989,6 +3172,7 @@ def _validate_strict(
         _validate_intergenerational_language_configuration(config, issues)
         _validate_lexical_evolution_configuration(config, issues)
         _validate_compositional_protolanguage_configuration(config, issues)
+        _validate_grammar_evolution_configuration(config, issues)
     execution_mode = manifest.get("execution_mode")
     if not _is_str(execution_mode) or execution_mode not in {"serial", "threaded"}:
         _add(issues, "invalid_execution_mode", repr(manifest.get("execution_mode")), "manifest")

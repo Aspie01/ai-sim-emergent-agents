@@ -53,7 +53,7 @@ Future milestones:
 | Milestone | Status |
 | --- | --- |
 | `feature/compositional-protolanguage-v1` | Implemented but experimental; Disabled by default; Engineering-only |
-| `feature/grammar-evolution-v1` | Planned, not implemented |
+| `feature/grammar-evolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/language-coevolution-v1` | Planned, not implemented |
 | `feature/language-research-readiness-v1` | Planned, not implemented |
 
@@ -61,18 +61,21 @@ Current source implements bounded different-coalition acquisition, exposure,
 and contact-qualified borrowing plus bounded comprehension-only transmission
 from exact birth parents. It also implements deterministic same-length
 one-token lexical descendants with bounded direct-edge provenance during
-authentic committed-transfer communication. It does not implement complete
-vocabulary inheritance, deletion/insertion, ancestry reconstruction,
-phonology, morphology, cognates, compositional signals, grammar/syntax,
+authentic committed-transfer communication. It further implements fixed-arity
+composed `(resource, modality)` signals built from speaker-stable morphemes,
+and a per-speaker constituent-order rule that a hearer can infer from a minimal
+pair it has already learned. It does not implement complete vocabulary
+inheritance, deletion/insertion, ancestry reconstruction, phonology, cognates,
+comprehension-time segmentation, parsing, syntax, agreement, inflection,
 language-to-coalition/social feedback, or a finalized language research
-contract. On-demand contact, intergenerational, and lexical summaries are not
-approved research endpoints. Retained parental exposure does not prove uninterrupted
+contract. On-demand contact, intergenerational, lexical, compositional, and
+grammar summaries are not approved research endpoints. Retained parental exposure does not prove uninterrupted
 inheritance because later ordinary communication may reinforce the same
 association, and retained lexical indices do not reconstruct a full lineage.
 This handbook does not invent hypotheses, estimands, uncertainty rules, or
 research conclusions for these mechanisms.
 
-The next language milestone is `feature/grammar-evolution-v1`: **Planned, not implemented**.
+The next language milestone is `feature/language-coevolution-v1`: **Planned, not implemented**.
 
 ## Core Replication V2 authorization
 

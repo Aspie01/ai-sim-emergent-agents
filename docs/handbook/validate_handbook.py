@@ -60,7 +60,6 @@ REQUIRED_PAGES = {
 }
 
 PLANNED_LANGUAGE_MILESTONES = (
-    "feature/grammar-evolution-v1",
     "feature/language-coevolution-v1",
     "feature/language-research-readiness-v1",
 )

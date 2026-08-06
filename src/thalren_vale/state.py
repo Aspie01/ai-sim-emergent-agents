@@ -6,6 +6,7 @@ from .coalitions import CoalitionRuntimeState
 from .language import (
     CoalitionDialectRuntimeState,
     CompositionalProtolanguageRuntimeState,
+    GrammarEvolutionRuntimeState,
     IntergenerationalLanguageRuntimeState,
     LanguageContactRuntimeState,
     LanguageRuntimeState,
@@ -59,6 +60,8 @@ class SimulationState:
         default_factory=LexicalEvolutionRuntimeState)
     compositional_protolanguage: CompositionalProtolanguageRuntimeState = field(
         default_factory=CompositionalProtolanguageRuntimeState)
+    grammar_evolution: GrammarEvolutionRuntimeState = field(
+        default_factory=GrammarEvolutionRuntimeState)
 
     def stage_inhabitant_id(self, inhabitant, candidate: int) -> None:
         """Assign, but do not yet consume, the next authoritative run ID."""
@@ -118,3 +121,4 @@ class SimulationState:
         self.lexical_evolution = LexicalEvolutionRuntimeState()
         self.compositional_protolanguage = (
             CompositionalProtolanguageRuntimeState())
+        self.grammar_evolution = GrammarEvolutionRuntimeState()

@@ -325,14 +325,14 @@ Completed engineering implementations:
 - `feature/intergenerational-language-v1`
 - `feature/lexical-evolution-v1`
 - `feature/compositional-protolanguage-v1`
+- `feature/grammar-evolution-v1`
 
 Planned, not implemented:
 
-- `feature/grammar-evolution-v1` — **Planned, not implemented**
 - `feature/language-coevolution-v1` — **Planned, not implemented**
 - `feature/language-research-readiness-v1` — **Planned, not implemented**
 
-The next milestone is `feature/grammar-evolution-v1`: **Planned, not implemented**.
+The next milestone is `feature/language-coevolution-v1`: **Planned, not implemented**.
 The research-readiness milestone will define a later evidence contract; it does
 not make the current engineering implementation research-ready.
 

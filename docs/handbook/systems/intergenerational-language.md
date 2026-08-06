@@ -455,11 +455,10 @@ inference, or ancestry reconstruction.
 
 Also **Planned, not implemented**:
 
-- `feature/grammar-evolution-v1` — **Planned, not implemented**;
 - `feature/language-coevolution-v1` — **Planned, not implemented**;
 - `feature/language-research-readiness-v1` — **Planned, not implemented**.
 
-The next milestone is `feature/grammar-evolution-v1`: **Planned, not implemented**.
+The next milestone is `feature/language-coevolution-v1`: **Planned, not implemented**.
 
 No research plan, matrix, tier, evidence run, hypothesis, estimand, or
 scientific conclusion is introduced by Intergenerational Language v1.

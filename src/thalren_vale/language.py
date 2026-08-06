@@ -24,6 +24,7 @@ from .config import (
     IntergenerationalLanguageConfig,
     LanguageContactConfig,
     CompositionalProtolanguageConfig,
+    GrammarEvolutionConfig,
     LexicalEvolutionConfig,
 )
 
@@ -33,6 +34,7 @@ LEXICAL_EVOLUTION_DOMAIN = "thalren-vale:lexical-evolution-v1"
 COMPOSITIONAL_PROTOLANGUAGE_DOMAIN = (
     "thalren-vale:compositional-protolanguage-v1"
 )
+GRAMMAR_EVOLUTION_DOMAIN = "thalren-vale:grammar-evolution-v1"
 PHONEME_COUNT = 8
 MIN_SIGNAL_LENGTH = 2
 MAX_SIGNAL_LENGTH = 4
@@ -85,6 +87,45 @@ class Modality(str, Enum):
         for character in self.name:
             value = value * 37 + ord(character)
         return value
+
+
+class ConstituentOrder(str, Enum):
+    """Closed morpheme orders for one composed utterance.
+
+    Order is a speaker-level rule rather than an association-level fact: it
+    governs every composed signal that speaker emits.
+    """
+
+    RESOURCE_FIRST = "RESOURCE_FIRST"
+    MODALITY_FIRST = "MODALITY_FIRST"
+
+    def __hash__(self) -> int:
+        """Return a stable hash independent of salted string hashing.
+
+        Longer member names exceed Py_ssize_t and are truncated by ``hash()``.
+        That truncation is deterministic for integers, so the seed-independence
+        guarantee holds regardless.
+        """
+        value = 0
+        for character in self.name:
+            value = value * 37 + ord(character)
+        return value
+
+
+CONSTITUENT_ORDER_ORDER = {
+    order: index for index, order in enumerate(ConstituentOrder)
+}
+
+
+def opposing_constituent_order(order: ConstituentOrder) -> ConstituentOrder:
+    """Return the only other closed constituent order."""
+    if type(order) is not ConstituentOrder:
+        _raise("invalid_constituent_order", "order must be a ConstituentOrder")
+    return (
+        ConstituentOrder.MODALITY_FIRST
+        if order is ConstituentOrder.RESOURCE_FIRST
+        else ConstituentOrder.RESOURCE_FIRST
+    )
 
 
 class CompositeMeaning(str, Enum):
@@ -298,6 +339,11 @@ class AgentLanguageState:
         tuple[Signal, Meaning], LexicalAssociation
     ] = field(default_factory=dict)
     next_invention_index: int = 0
+    # Grammar Evolution v1 only. Both stay pristine while that feature is
+    # disabled so pre-feature hashes are unchanged and hidden rule state fails
+    # closed.
+    constituent_order: ConstituentOrder | None = None
+    opposing_order_evidence: int = 0
 
 
 @dataclass(slots=True)
@@ -321,6 +367,7 @@ class LanguageRuntimeState:
     intergenerational_language_enabled: bool = False
     lexical_evolution_enabled: bool = False
     compositional_protolanguage_enabled: bool = False
+    grammar_evolution_enabled: bool = False
 
 
 @dataclass(slots=True)
@@ -422,6 +469,172 @@ class CompositionalProtolanguageRuntimeState:
     composed_invention_count: int = 0
     observed_composite_meaning_mask: int = 0
     last_composition_tick: int | None = None
+
+
+@dataclass(slots=True)
+class GrammarEvolutionRuntimeState:
+    """Frozen order controls and bounded constituent-order observability.
+
+    Unsaturated state satisfies:
+
+        order_inference_attempt_count
+            == order_inferred_count + order_not_inferred_count
+        order_agreement_count + order_conflict_count == order_inferred_count
+        order_adoption_count <= order_conflict_count
+    """
+
+    order_adoption_threshold: int | None = None
+    order_inference_attempt_count: int = 0
+    order_inferred_count: int = 0
+    order_not_inferred_count: int = 0
+    order_agreement_count: int = 0
+    order_conflict_count: int = 0
+    order_adoption_count: int = 0
+    last_adoption_tick: int | None = None
+
+
+def grammar_evolution_runtime_is_pristine(runtime: object) -> bool:
+    """Return whether a disabled grammar runtime carries no state."""
+    if type(runtime) is not GrammarEvolutionRuntimeState:
+        return False
+    return (
+        runtime.order_adoption_threshold is None
+        and runtime.order_inference_attempt_count == 0
+        and runtime.order_inferred_count == 0
+        and runtime.order_not_inferred_count == 0
+        and runtime.order_agreement_count == 0
+        and runtime.order_conflict_count == 0
+        and runtime.order_adoption_count == 0
+        and runtime.last_adoption_tick is None
+    )
+
+
+def validate_grammar_evolution_runtime(
+    runtime: object,
+    *,
+    config: GrammarEvolutionConfig | None = None,
+    language_runtime: LanguageRuntimeState | None = None,
+) -> GrammarEvolutionRuntimeState:
+    """Validate frozen controls and every counter partition."""
+    if type(runtime) is not GrammarEvolutionRuntimeState:
+        _raise(
+            "invalid_grammar_evolution_runtime",
+            "grammar runtime has an invalid exact type",
+        )
+    for field_name in (
+        "order_inference_attempt_count",
+        "order_inferred_count",
+        "order_not_inferred_count",
+        "order_agreement_count",
+        "order_conflict_count",
+        "order_adoption_count",
+    ):
+        if not _exact_nonnegative_int(getattr(runtime, field_name)):
+            _raise(
+                "invalid_grammar_evolution_runtime",
+                f"{field_name} must be an exact nonnegative integer",
+            )
+    if runtime.order_adoption_threshold is None:
+        if not grammar_evolution_runtime_is_pristine(runtime):
+            _raise(
+                "nonpristine_disabled_grammar_evolution_runtime",
+                "uninitialized grammar runtime must be pristine",
+            )
+        return runtime
+    if (
+        runtime.order_inference_attempt_count
+        != runtime.order_inferred_count + runtime.order_not_inferred_count
+    ):
+        _raise(
+            "invalid_grammar_evolution_runtime",
+            "inference outcome counters must partition attempts",
+        )
+    if (
+        runtime.order_agreement_count + runtime.order_conflict_count
+        != runtime.order_inferred_count
+    ):
+        _raise(
+            "invalid_grammar_evolution_runtime",
+            "agreement and conflict counters must partition inferences",
+        )
+    if runtime.order_adoption_count > runtime.order_conflict_count:
+        _raise(
+            "invalid_grammar_evolution_runtime",
+            "adoptions cannot exceed observed order conflicts",
+        )
+    if runtime.last_adoption_tick is not None and not _exact_nonnegative_int(
+        runtime.last_adoption_tick
+    ):
+        _raise(
+            "invalid_grammar_evolution_runtime",
+            "last adoption tick must be an exact nonnegative integer",
+        )
+    if config is not None:
+        validated = validate_grammar_evolution_config(config)
+        if (runtime.order_adoption_threshold
+                != validated.order_adoption_threshold):
+            _raise(
+                "grammar_evolution_runtime_config_mismatch",
+                "frozen order controls must match effective configuration",
+            )
+    if (
+        language_runtime is not None
+        and type(language_runtime) is LanguageRuntimeState
+        and language_runtime.grammar_evolution_enabled is not True
+    ):
+        _raise(
+            "grammar_evolution_runtime_gate_mismatch",
+            "initialized grammar runtime requires an enabled gate",
+        )
+    return runtime
+
+
+def validate_grammar_evolution_config(
+    config: object,
+    *,
+    require_enabled: bool = False,
+) -> GrammarEvolutionConfig:
+    """Validate exact effective controls for constituent-order evolution."""
+    if type(require_enabled) is not bool:
+        _raise(
+            "invalid_grammar_evolution_config",
+            "require-enabled policy must be boolean",
+        )
+    if type(config) is not GrammarEvolutionConfig:
+        _raise(
+            "invalid_grammar_evolution_config",
+            "grammar config has an invalid exact type",
+        )
+    if type(config.grammar_evolution_enabled) is not bool:
+        _raise(
+            "invalid_grammar_evolution_config",
+            "grammar evolution setting must be boolean",
+        )
+    if (
+        type(config.order_adoption_threshold) is not int
+        or config.order_adoption_threshold < 1
+    ):
+        _raise(
+            "invalid_grammar_evolution_config",
+            "order adoption threshold must be a positive integer",
+        )
+    if require_enabled and not config.grammar_evolution_enabled:
+        _raise(
+            "grammar_evolution_processing_disabled",
+            "operation requires effective grammar processing",
+        )
+    return config
+
+
+def initialize_grammar_evolution_runtime(
+    runtime: GrammarEvolutionRuntimeState,
+    config: GrammarEvolutionConfig,
+) -> None:
+    """Freeze order controls for one run."""
+    validate_grammar_evolution_runtime(runtime)
+    validated = validate_grammar_evolution_config(config, require_enabled=True)
+    runtime.order_adoption_threshold = validated.order_adoption_threshold
+    validate_grammar_evolution_runtime(runtime, config=validated)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2266,6 +2479,7 @@ def initialize_language_runtime(
     intergenerational_language_enabled: bool = False,
     lexical_evolution_enabled: bool = False,
     compositional_protolanguage_enabled: bool = False,
+    grammar_evolution_enabled: bool = False,
 ) -> None:
     """Initialize only the canonical seed domain; no entropy is constructed."""
     validate_language_runtime(runtime, initialized=False)
@@ -2296,6 +2510,16 @@ def initialize_language_runtime(
             "invalid_compositional_protolanguage_config",
             "language runtime compositional gate must be boolean",
         )
+    if type(grammar_evolution_enabled) is not bool:
+        _raise(
+            "invalid_grammar_evolution_config",
+            "language runtime grammar gate must be boolean",
+        )
+    if grammar_evolution_enabled and not compositional_protolanguage_enabled:
+        _raise(
+            "grammar_evolution_requires_composition",
+            "enabled grammar gate requires an enabled composition gate",
+        )
     seed_domain = f"{LANGUAGE_DOMAIN}|seed={run_seed}"
     runtime.seed_domain = seed_domain
     runtime.seed_domain_fingerprint = hashlib.sha256(
@@ -2310,6 +2534,7 @@ def initialize_language_runtime(
     runtime.lexical_evolution_enabled = lexical_evolution_enabled
     runtime.compositional_protolanguage_enabled = (
         compositional_protolanguage_enabled)
+    runtime.grammar_evolution_enabled = grammar_evolution_enabled
     validate_language_runtime(runtime, initialized=True)
 
 
@@ -2406,12 +2631,43 @@ def derive_morpheme(
     return tuple(digest[index + 1] & 0x07 for index in range(length))
 
 
+def derive_initial_constituent_order(
+    runtime: CompositionalProtolanguageRuntimeState,
+    *,
+    speaker_id: int,
+) -> ConstituentOrder:
+    """Derive one speaker's starting constituent order without RNG.
+
+    Speakers therefore begin divergent. Order is seeded from a dedicated
+    grammar domain so enabling grammar cannot perturb morpheme derivation.
+    """
+    if not _exact_nonnegative_int(speaker_id):
+        _raise("invalid_language_identity", "speaker ID is invalid")
+    if type(runtime.seed_domain) is not str:
+        _raise(
+            "invalid_compositional_protolanguage_runtime",
+            "initial order derivation requires an initialized runtime",
+        )
+    suffix = runtime.seed_domain.split("|seed=", 1)[1]
+    record = (
+        f"{GRAMMAR_EVOLUTION_DOMAIN}|seed={suffix}"
+        f"|speaker_id={speaker_id}"
+    )
+    digest = hashlib.sha256(record.encode("ascii")).digest()
+    return (
+        ConstituentOrder.RESOURCE_FIRST
+        if digest[0] & 1 == 0
+        else ConstituentOrder.MODALITY_FIRST
+    )
+
+
 def derive_composed_signal(
     runtime: CompositionalProtolanguageRuntimeState,
     *,
     speaker_id: int,
     composite_meaning: CompositeMeaning,
     config: CompositionalProtolanguageConfig,
+    constituent_order: ConstituentOrder | None = None,
 ) -> Signal:
     """Compose one signal from a speaker's resource and modality morphemes.
 
@@ -2452,7 +2708,158 @@ def derive_composed_signal(
         value=modality.name,
         length=validated.modality_morpheme_length,
     )
-    return Signal(resource_morpheme + modality_morpheme)
+    # A caller that supplies no order is running without Grammar Evolution v1,
+    # so the historical fixed resource-first arrangement is preserved exactly
+    # and previously pinned composed vectors are unchanged.
+    if constituent_order is None:
+        return Signal(resource_morpheme + modality_morpheme)
+    if type(constituent_order) is not ConstituentOrder:
+        _raise("invalid_constituent_order", "order must be a ConstituentOrder")
+    if constituent_order is ConstituentOrder.RESOURCE_FIRST:
+        return Signal(resource_morpheme + modality_morpheme)
+    return Signal(modality_morpheme + resource_morpheme)
+
+
+def infer_constituent_order(
+    state: AgentLanguageState,
+    heard_signal: Signal,
+    heard_meaning: CompositeMeaning,
+) -> ConstituentOrder | None:
+    """Infer a speaker's order from a minimal pair in the hearer's own state.
+
+    The hearer cannot segment an opaque signal directly, and its own morphemes
+    are speaker-specific so they almost never match a foreign form. What it can
+    do is compare two signals it has already learned which differ in exactly
+    one semantic dimension. The part they share is the morpheme for the shared
+    dimension, and its position reveals the order.
+
+    Same resource, different modality -> the shared run is the resource
+    morpheme. Same modality, different resource -> the shared run is the
+    modality morpheme.
+
+    Bounded by the association cap, exact-match only, no general parser, and no
+    generalization to unseen combinations. Returns ``None`` when no minimal
+    pair is available, which is the common case early in a run.
+    """
+    if type(heard_signal) is not Signal:
+        _raise("invalid_signal", "heard signal must be a Signal")
+    if type(heard_meaning) is not CompositeMeaning:
+        _raise(
+            "invalid_language_meaning",
+            "order inference requires a composite meaning",
+        )
+    heard_resource = COMPOSITE_MEANING_RESOURCE[heard_meaning]
+    heard_modality = COMPOSITE_MEANING_MODALITY[heard_meaning]
+    tokens = heard_signal.phoneme_ids
+    votes: list[ConstituentOrder] = []
+    for (other_signal, other_meaning) in state.comprehension:
+        if type(other_meaning) is not CompositeMeaning:
+            continue
+        if other_signal == heard_signal:
+            continue
+        other_tokens = other_signal.phoneme_ids
+        other_resource = COMPOSITE_MEANING_RESOURCE[other_meaning]
+        other_modality = COMPOSITE_MEANING_MODALITY[other_meaning]
+        if (other_resource is heard_resource
+                and other_modality is not heard_modality):
+            shared_is_resource = True
+        elif (other_modality is heard_modality
+                and other_resource is not heard_resource):
+            shared_is_resource = False
+        else:
+            continue
+        prefix = _shared_prefix_length(tokens, other_tokens)
+        suffix = _shared_suffix_length(tokens, other_tokens)
+        if prefix > 0 and suffix == 0:
+            position_is_leading = True
+        elif suffix > 0 and prefix == 0:
+            position_is_leading = False
+        else:
+            # An ambiguous or absent overlap proves nothing about order.
+            continue
+        if shared_is_resource:
+            votes.append(
+                ConstituentOrder.RESOURCE_FIRST if position_is_leading
+                else ConstituentOrder.MODALITY_FIRST
+            )
+        else:
+            votes.append(
+                ConstituentOrder.MODALITY_FIRST if position_is_leading
+                else ConstituentOrder.RESOURCE_FIRST
+            )
+    if not votes:
+        return None
+    distinct = set(votes)
+    if len(distinct) != 1:
+        # Contradictory evidence yields no inference rather than a guess.
+        return None
+    return votes[0]
+
+
+def apply_order_adoption(
+    state: AgentLanguageState,
+    inferred_order: ConstituentOrder | None,
+    *,
+    adoption_threshold: int,
+) -> bool:
+    """Accumulate order evidence and adopt a new order once it is sustained.
+
+    Evidence must be consecutive: observing the hearer's own order resets the
+    counter, so a single contrary observation cannot flip a settled speaker.
+    Returns whether the hearer's order actually changed.
+    """
+    if type(state) is not AgentLanguageState:
+        _raise("invalid_agent_language_state", "adoption requires exact state")
+    if type(adoption_threshold) is not int or adoption_threshold < 1:
+        _raise(
+            "invalid_grammar_evolution_config",
+            "order adoption threshold must be a positive integer",
+        )
+    if inferred_order is None:
+        return False
+    if type(inferred_order) is not ConstituentOrder:
+        _raise("invalid_constituent_order", "order must be a ConstituentOrder")
+    if type(state.constituent_order) is not ConstituentOrder:
+        _raise(
+            "missing_constituent_order",
+            "enabled grammar requires an assigned constituent order",
+        )
+    if inferred_order is state.constituent_order:
+        state.opposing_order_evidence = 0
+        return False
+    state.opposing_order_evidence = _increment(
+        state.opposing_order_evidence,
+        field_name="opposing_order_evidence",
+    )
+    if state.opposing_order_evidence < adoption_threshold:
+        return False
+    state.constituent_order = inferred_order
+    state.opposing_order_evidence = 0
+    return True
+
+
+def _shared_prefix_length(
+    first: tuple[int, ...],
+    second: tuple[int, ...],
+) -> int:
+    count = 0
+    for left, right in zip(first, second):
+        if left != right:
+            break
+        count += 1
+    return count
+
+
+def _shared_suffix_length(
+    first: tuple[int, ...],
+    second: tuple[int, ...],
+) -> int:
+    count = 0
+    for left, right in zip(reversed(first), reversed(second)):
+        if left != right:
+            break
+        count += 1
+    return count
 
 
 def _effective_communication_meaning(
@@ -2489,6 +2896,7 @@ def _derive_emission_signal(
     invention_index: int,
     maximum_signal_length: int,
     compositional_required: bool,
+    constituent_order: ConstituentOrder | None = None,
 ) -> Signal:
     """Derive one emitted signal for either the base or composed lexicon."""
     if not compositional_required:
@@ -2509,6 +2917,7 @@ def _derive_emission_signal(
         speaker_id=sender_id,
         composite_meaning=meaning,
         config=compositional_config,
+        constituent_order=constituent_order,
     )
 
 
@@ -2659,6 +3068,8 @@ def _copy_agent_state(state: AgentLanguageState) -> AgentLanguageState:
         production=dict(state.production),
         comprehension=dict(state.comprehension),
         next_invention_index=state.next_invention_index,
+        constituent_order=state.constituent_order,
+        opposing_order_evidence=state.opposing_order_evidence,
     )
 
 
@@ -2779,6 +3190,8 @@ def _retain_canonical(
                 item[0][0].phoneme_ids, MEANING_ORDER[item[0][1]]),
         )),
         next_invention_index=state.next_invention_index,
+        constituent_order=state.constituent_order,
+        opposing_order_evidence=state.opposing_order_evidence,
     )
     removed = len(candidates) - retained_total
     return retained, removed
@@ -2921,6 +3334,14 @@ def _commit_lexical_runtime(
     proposed: LexicalEvolutionRuntimeState,
 ) -> None:
     for item in fields(LexicalEvolutionRuntimeState):
+        setattr(target, item.name, getattr(proposed, item.name))
+
+
+def _commit_grammar_runtime(
+    target: GrammarEvolutionRuntimeState,
+    proposed: GrammarEvolutionRuntimeState,
+) -> None:
+    for item in fields(GrammarEvolutionRuntimeState):
         setattr(target, item.name, getattr(proposed, item.name))
 
 
@@ -3610,6 +4031,8 @@ def communicate(
     compositional_runtime: (
         CompositionalProtolanguageRuntimeState | None
     ) = None,
+    grammar_config: GrammarEvolutionConfig | None = None,
+    grammar_runtime: GrammarEvolutionRuntimeState | None = None,
 ) -> CommunicationOutcome:
     """Apply one complete communication transaction or leave all state unchanged."""
     contact_required = (
@@ -3635,6 +4058,8 @@ def communicate(
             lexical_runtime=lexical_runtime,
             compositional_config=compositional_config,
             compositional_runtime=compositional_runtime,
+            grammar_config=grammar_config,
+            grammar_runtime=grammar_runtime,
         )
     if contact_config is not None or contact_runtime is not None:
         _raise(
@@ -3716,6 +4141,33 @@ def communicate(
     else:
         validated_compositional_config = None
         validated_compositional_runtime = None
+    grammar_required = validated_runtime.grammar_evolution_enabled
+    if grammar_required:
+        if not compositional_required:
+            _raise(
+                "grammar_evolution_requires_composition",
+                "constituent order requires composed utterances",
+            )
+        if grammar_config is None or grammar_runtime is None:
+            _raise(
+                "missing_grammar_evolution_inputs",
+                "enabled grammar communication requires config and runtime",
+            )
+        validated_grammar_config = validate_grammar_evolution_config(
+            grammar_config, require_enabled=True)
+        validated_grammar_runtime = validate_grammar_evolution_runtime(
+            grammar_runtime,
+            config=validated_grammar_config,
+            language_runtime=validated_runtime,
+        )
+    elif grammar_config is not None or grammar_runtime is not None:
+        _raise(
+            "unexpected_grammar_evolution_inputs",
+            "disabled grammar communication cannot receive its inputs",
+        )
+    else:
+        validated_grammar_config = None
+        validated_grammar_runtime = None
     # Rebinding here means every downstream key, cap, competition check, and
     # canonical ordering uses the effective meaning without duplicating logic.
     intended_meaning = _effective_communication_meaning(
@@ -3804,6 +4256,25 @@ def communicate(
         replace(validated_compositional_runtime)
         if compositional_required else None
     )
+    proposed_grammar = (
+        replace(validated_grammar_runtime) if grammar_required else None
+    )
+    if grammar_required:
+        # Assign a starting order lazily inside the proposal so every spawn
+        # path is covered uniformly and nothing is mutated outside the
+        # transaction.
+        assert validated_compositional_runtime is not None
+        for participant, participant_id in (
+            (proposed_sender, sender_id),
+            (proposed_receiver, receiver_id),
+        ):
+            if participant.constituent_order is None:
+                participant.constituent_order = (
+                    derive_initial_constituent_order(
+                        validated_compositional_runtime,
+                        speaker_id=participant_id,
+                    )
+                )
     composed_invention = False
     selected_production = _select_production(
         proposed_sender, intended_meaning)
@@ -3829,6 +4300,9 @@ def communicate(
             invention_index=proposed_sender.next_invention_index,
             maximum_signal_length=config.maximum_signal_length,
             compositional_required=compositional_required,
+            constituent_order=(
+                proposed_sender.constituent_order if grammar_required else None
+            ),
         )
         composed_invention = compositional_required
         key = (intended_meaning, signal)
@@ -4223,6 +4697,9 @@ def communicate(
         replace(compositional_runtime)
         if proposed_compositional is not None else None
     )
+    original_grammar = (
+        replace(grammar_runtime) if proposed_grammar is not None else None
+    )
     if proposed_compositional is not None:
         _record_composition(
             proposed_compositional,
@@ -4233,6 +4710,54 @@ def communicate(
         validate_compositional_protolanguage_runtime(
             proposed_compositional,
             config=validated_compositional_config,
+            language_runtime=proposed_runtime,
+        )
+    if proposed_grammar is not None:
+        # Order inference runs only on SUCCESS: the hearer knows which
+        # composite meaning a signal encodes only when it understood
+        # correctly. It observes the already finalized result and never
+        # changes it.
+        if result is CommunicationResult.SUCCESS:
+            proposed_grammar.order_inference_attempt_count = _increment(
+                proposed_grammar.order_inference_attempt_count,
+                field_name="order_inference_attempt_count",
+            )
+            inferred = infer_constituent_order(
+                proposed_receiver, signal, intended_meaning)
+            if inferred is None:
+                proposed_grammar.order_not_inferred_count = _increment(
+                    proposed_grammar.order_not_inferred_count,
+                    field_name="order_not_inferred_count",
+                )
+            else:
+                proposed_grammar.order_inferred_count = _increment(
+                    proposed_grammar.order_inferred_count,
+                    field_name="order_inferred_count",
+                )
+                if inferred is proposed_receiver.constituent_order:
+                    proposed_grammar.order_agreement_count = _increment(
+                        proposed_grammar.order_agreement_count,
+                        field_name="order_agreement_count",
+                    )
+                else:
+                    proposed_grammar.order_conflict_count = _increment(
+                        proposed_grammar.order_conflict_count,
+                        field_name="order_conflict_count",
+                    )
+                if apply_order_adoption(
+                    proposed_receiver,
+                    inferred,
+                    adoption_threshold=(
+                        validated_grammar_config.order_adoption_threshold),
+                ):
+                    proposed_grammar.order_adoption_count = _increment(
+                        proposed_grammar.order_adoption_count,
+                        field_name="order_adoption_count",
+                    )
+                    proposed_grammar.last_adoption_tick = validated_tick
+        validate_grammar_evolution_runtime(
+            proposed_grammar,
+            config=validated_grammar_config,
             language_runtime=proposed_runtime,
         )
     try:
@@ -4248,6 +4773,9 @@ def communicate(
             assert compositional_runtime is not None
             _commit_compositional_runtime(
                 compositional_runtime, proposed_compositional)
+        if proposed_grammar is not None:
+            assert grammar_runtime is not None
+            _commit_grammar_runtime(grammar_runtime, proposed_grammar)
     except BaseException:
         sender.language = original_sender
         receiver.language = original_receiver
@@ -4261,6 +4789,9 @@ def communicate(
             assert compositional_runtime is not None
             _commit_compositional_runtime(
                 compositional_runtime, original_compositional)
+        if original_grammar is not None:
+            assert grammar_runtime is not None
+            _commit_grammar_runtime(grammar_runtime, original_grammar)
         raise
 
     return CommunicationOutcome(
@@ -4307,6 +4838,8 @@ def _communicate_with_contact(
     compositional_runtime: (
         CompositionalProtolanguageRuntimeState | None
     ) = None,
+    grammar_config: GrammarEvolutionConfig | None = None,
+    grammar_runtime: GrammarEvolutionRuntimeState | None = None,
 ) -> CommunicationOutcome:
     """Apply one contact-enabled transaction using one frozen classification."""
     _validate_config(config, require_enabled=True)
@@ -4397,6 +4930,33 @@ def _communicate_with_contact(
     else:
         validated_compositional_config = None
         validated_compositional_runtime = None
+    grammar_required = validated_runtime.grammar_evolution_enabled
+    if grammar_required:
+        if not compositional_required:
+            _raise(
+                "grammar_evolution_requires_composition",
+                "constituent order requires composed utterances",
+            )
+        if grammar_config is None or grammar_runtime is None:
+            _raise(
+                "missing_grammar_evolution_inputs",
+                "enabled grammar communication requires config and runtime",
+            )
+        validated_grammar_config = validate_grammar_evolution_config(
+            grammar_config, require_enabled=True)
+        validated_grammar_runtime = validate_grammar_evolution_runtime(
+            grammar_runtime,
+            config=validated_grammar_config,
+            language_runtime=validated_runtime,
+        )
+    elif grammar_config is not None or grammar_runtime is not None:
+        _raise(
+            "unexpected_grammar_evolution_inputs",
+            "disabled grammar communication cannot receive its inputs",
+        )
+    else:
+        validated_grammar_config = None
+        validated_grammar_runtime = None
     # Rebinding here means every downstream key, cap, competition check, and
     # canonical ordering uses the effective meaning without duplicating logic.
     intended_meaning = _effective_communication_meaning(
@@ -4494,6 +5054,25 @@ def _communicate_with_contact(
         replace(validated_compositional_runtime)
         if compositional_required else None
     )
+    proposed_grammar = (
+        replace(validated_grammar_runtime) if grammar_required else None
+    )
+    if grammar_required:
+        # Assign a starting order lazily inside the proposal so every spawn
+        # path is covered uniformly and nothing is mutated outside the
+        # transaction.
+        assert validated_compositional_runtime is not None
+        for participant, participant_id in (
+            (proposed_sender, sender_id),
+            (proposed_receiver, receiver_id),
+        ):
+            if participant.constituent_order is None:
+                participant.constituent_order = (
+                    derive_initial_constituent_order(
+                        validated_compositional_runtime,
+                        speaker_id=participant_id,
+                    )
+                )
     composed_invention = False
     selected_production = _select_production(
         proposed_sender, intended_meaning)
@@ -4519,6 +5098,9 @@ def _communicate_with_contact(
             invention_index=proposed_sender.next_invention_index,
             maximum_signal_length=config.maximum_signal_length,
             compositional_required=compositional_required,
+            constituent_order=(
+                proposed_sender.constituent_order if grammar_required else None
+            ),
         )
         composed_invention = compositional_required
         key = (intended_meaning, signal)
@@ -5280,7 +5862,11 @@ def maintain_language_state(
             inhabitant,
             current_state,
             AgentLanguageState(
-                next_invention_index=current_state.next_invention_index),
+                next_invention_index=current_state.next_invention_index,
+                constituent_order=current_state.constituent_order,
+                opposing_order_evidence=(
+                    current_state.opposing_order_evidence),
+            ),
         ))
 
     if due:
@@ -5416,6 +6002,7 @@ def agent_language_record(
     include_intergenerational: bool = False,
     include_lexical_evolution: bool = False,
     lexical_config: LexicalEvolutionConfig | None = None,
+    include_grammar_evolution: bool = False,
 ) -> dict[str, object]:
     """Return one agent's complete language state in canonical order."""
     if type(include_contact) is not bool:
@@ -5432,6 +6019,11 @@ def agent_language_record(
         _raise(
             "invalid_lexical_evolution_config",
             "lexical serialization gate must be boolean",
+        )
+    if type(include_grammar_evolution) is not bool:
+        _raise(
+            "invalid_grammar_evolution_config",
+            "grammar serialization gate must be boolean",
         )
     if include_contact:
         validated_contact = validate_language_contact_config(contact_config)
@@ -5466,7 +6058,7 @@ def agent_language_record(
         lexical_config=validated_lexical,
         owner_id=inhabitant_id,
     )
-    return {
+    record: dict[str, object] = {
         "inhabitant_id": inhabitant_id,
         "next_invention_index": state.next_invention_index,
         "production": [
@@ -5496,6 +6088,15 @@ def agent_language_record(
             )
         ],
     }
+    if include_grammar_evolution:
+        # Serialized only when grammar is effective, so every pre-grammar
+        # pinned hash keeps its exact payload.
+        record["constituent_order"] = (
+            None if state.constituent_order is None
+            else state.constituent_order.value
+        )
+        record["opposing_order_evidence"] = state.opposing_order_evidence
+    return record
 
 
 def canonical_language_snapshot(
@@ -5690,6 +6291,95 @@ def compositional_protolanguage_summary(
             for modality in Modality
         },
         "runtime": compositional_protolanguage_runtime_record(
+            runtime,
+            config=validated_config,
+            language_runtime=language_runtime,
+        ),
+    }
+
+
+def grammar_evolution_runtime_record(
+    runtime: GrammarEvolutionRuntimeState,
+    *,
+    config: GrammarEvolutionConfig,
+    language_runtime: LanguageRuntimeState,
+) -> dict[str, object]:
+    """Return canonical order controls and bounded counters."""
+    validate_grammar_evolution_runtime(
+        runtime,
+        config=config,
+        language_runtime=language_runtime,
+    )
+    return {
+        "order_adoption_threshold": runtime.order_adoption_threshold,
+        "order_inference_attempt_count": (
+            runtime.order_inference_attempt_count),
+        "order_inferred_count": runtime.order_inferred_count,
+        "order_not_inferred_count": runtime.order_not_inferred_count,
+        "order_agreement_count": runtime.order_agreement_count,
+        "order_conflict_count": runtime.order_conflict_count,
+        "order_adoption_count": runtime.order_adoption_count,
+        "last_adoption_tick": runtime.last_adoption_tick,
+    }
+
+
+def grammar_evolution_summary(
+    people: Iterable[LanguageInhabitant],
+    *,
+    runtime: GrammarEvolutionRuntimeState,
+    config: GrammarEvolutionConfig,
+    language_runtime: LanguageRuntimeState,
+) -> dict[str, object]:
+    """Return one bounded on-demand view of constituent-order distribution.
+
+    Consumes the supplied population iterable exactly once with bounded work
+    per inhabitant, performs no population-wide sort or pair enumeration,
+    mutates nothing, and consumes no RNG. Order convergence is reported as a
+    plain count per order rather than a dominance ratio so the caller decides
+    what counts as agreement. This is engineering observability, not an
+    approved research endpoint.
+    """
+    validated_config = validate_grammar_evolution_config(
+        config, require_enabled=True)
+    validate_grammar_evolution_runtime(
+        runtime,
+        config=validated_config,
+        language_runtime=language_runtime,
+    )
+    population = 0
+    ordered_carriers = 0
+    pending_evidence_carriers = 0
+    per_order: dict[ConstituentOrder, int] = {
+        order: 0 for order in ConstituentOrder
+    }
+    for inhabitant in people:
+        population += 1
+        state = getattr(inhabitant, "language", None)
+        if type(state) is not AgentLanguageState:
+            _raise(
+                "invalid_agent_language_state",
+                "grammar summary requires explicit language state",
+            )
+        order = state.constituent_order
+        if order is None:
+            continue
+        if type(order) is not ConstituentOrder:
+            _raise(
+                "invalid_constituent_order",
+                "grammar summary requires an exact constituent order",
+            )
+        ordered_carriers += 1
+        per_order[order] += 1
+        if state.opposing_order_evidence > 0:
+            pending_evidence_carriers += 1
+    return {
+        "population": population,
+        "ordered_carriers": ordered_carriers,
+        "pending_evidence_carriers": pending_evidence_carriers,
+        "carriers_by_constituent_order": {
+            order.name: per_order[order] for order in ConstituentOrder
+        },
+        "runtime": grammar_evolution_runtime_record(
             runtime,
             config=validated_config,
             language_runtime=language_runtime,

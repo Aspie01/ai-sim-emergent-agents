@@ -1,4 +1,4 @@
-# (c) 2026 (KriaetvAspie / AspieTheBard)
+﻿# (c) 2026 (KriaetvAspie / AspieTheBard)
 # Licensed under the Polyform Noncommercial License 1.0.0
 """
 sim.py — Single entry point for the emergent civilization simulation.
@@ -75,6 +75,8 @@ from .language import (
     initialize_language_contact_runtime,
     initialize_language_runtime,
     initialize_compositional_protolanguage_runtime,
+    initialize_grammar_evolution_runtime,
+    grammar_evolution_runtime_is_pristine,
     initialize_lexical_evolution_runtime,
     compositional_protolanguage_runtime_is_pristine,
     intergenerational_runtime_is_pristine,
@@ -89,6 +91,7 @@ from .language import (
     validate_language_contact_runtime,
     validate_language_runtime,
     validate_compositional_protolanguage_runtime,
+    validate_grammar_evolution_runtime,
     validate_lexical_evolution_runtime,
 )
 
@@ -224,6 +227,11 @@ def _validate_reset_language_runtimes(
                 "nonpristine_compositional_protolanguage_runtime",
                 "disabled language runtime cannot conceal composed state",
             )
+        if not grammar_evolution_runtime_is_pristine(state.grammar_evolution):
+            raise LanguageInvariantError(
+                "nonpristine_grammar_evolution_runtime",
+                "disabled language runtime cannot conceal order state",
+            )
         return None, None, None
 
     validate_language_runtime(state.language, initialized=True)
@@ -334,6 +342,21 @@ def _validate_reset_language_runtimes(
         raise LanguageInvariantError(
             "nonpristine_compositional_protolanguage_runtime",
             "disabled compositional protolanguage cannot retain runtime state",
+        )
+    if state.language.grammar_evolution_enabled:
+        validate_grammar_evolution_runtime(
+            state.grammar_evolution,
+            config=config.GrammarEvolutionConfig(
+                grammar_evolution_enabled=True,
+                order_adoption_threshold=(
+                    state.grammar_evolution.order_adoption_threshold),
+            ),
+            language_runtime=state.language,
+        )
+    elif not grammar_evolution_runtime_is_pristine(state.grammar_evolution):
+        raise LanguageInvariantError(
+            "nonpristine_grammar_evolution_runtime",
+            "disabled grammar evolution cannot retain runtime state",
         )
     return contact_config, intergenerational_config, lexical_config
 
@@ -735,6 +758,7 @@ def economy_layer(
     compositional_config: (
         config.CompositionalProtolanguageConfig | None
     ) = None,
+    grammar_config: config.GrammarEvolutionConfig | None = None,
 ) -> None:
     """Layer 4: currency, pricing, trade, raids, scarcity, wealth."""
     if social_config is None:
@@ -802,6 +826,12 @@ def economy_layer(
             modality_morpheme_length=(
                 config.DEFAULT_MODALITY_MORPHEME_LENGTH),
         )
+    if grammar_config is None:
+        grammar_config = config.GrammarEvolutionConfig(
+            grammar_evolution_enabled=False,
+            order_adoption_threshold=(
+                config.DEFAULT_ORDER_ADOPTION_THRESHOLD),
+        )
     coalition_membership_snapshot = None
     coalition_context_required = (
         dialect_config.coalition_dialect_influence_enabled
@@ -868,6 +898,14 @@ def economy_layer(
                 state.compositional_protolanguage
                 if compositional_config.compositional_protolanguage_enabled
                 else None
+            ),
+            grammar_config=(
+                grammar_config
+                if grammar_config.grammar_evolution_enabled else None
+            ),
+            grammar_runtime=(
+                state.grammar_evolution
+                if grammar_config.grammar_evolution_enabled else None
             ),
             lexical_config=(
                 lexical_config if lexical_config.lexical_evolution_enabled
@@ -2357,6 +2395,16 @@ def run() -> None:
     _parser.add_argument(
         '--modality-morpheme-length', type=int, default=None,
         help='Exact modality morpheme length in phonemes')
+    _grammar = _parser.add_mutually_exclusive_group()
+    _grammar.add_argument(
+        '--enable-grammar-evolution', action='store_true',
+        help='Enable engineering-only learnable constituent order')
+    _grammar.add_argument(
+        '--disable-grammar-evolution', action='store_true',
+        help='Explicitly leave grammar evolution disabled')
+    _parser.add_argument(
+        '--order-adoption-threshold', type=int, default=None,
+        help='Consecutive conflicting observations before adopting an order')
     _args = _parser.parse_args()
 
     # ── Validate and apply effective configuration ──────────────────────────
@@ -2424,6 +2472,17 @@ def run() -> None:
                 'warning: compositional protolanguage was requested without '
                 'effective language evolution; composition normalized to '
                 'false and the run is not V2-ready\n')
+    for _notice in _run_config.grammar_evolution_control_notices:
+        if _notice == config.GRAMMAR_EVOLUTION_NOTICE_WITHOUT_LANGUAGE:
+            sys.stderr.write(
+                'warning: grammar evolution was requested without effective '
+                'language evolution; grammar normalized to false and the run '
+                'is not V2-ready\n')
+        elif _notice == config.GRAMMAR_EVOLUTION_NOTICE_WITHOUT_COMPOSITION:
+            sys.stderr.write(
+                'warning: grammar evolution was requested without effective '
+                'compositional protolanguage; grammar normalized to false '
+                'and the run is not V2-ready\n')
     _run_config.apply_legacy_globals()
     TICKS = _run_config.ticks
     POP_CAP = _run_config.population_cap
@@ -2454,6 +2513,8 @@ def run() -> None:
                 _run_config.lexical_evolution_enabled),
             compositional_protolanguage_enabled=(
                 _run_config.compositional_protolanguage_enabled),
+            grammar_evolution_enabled=(
+                _run_config.grammar_evolution_enabled),
         )
         if _run_config.language_contact_enabled:
             initialize_language_contact_runtime(
@@ -2476,6 +2537,11 @@ def run() -> None:
                 state.compositional_protolanguage,
                 _run_config.compositional_protolanguage_config,
                 _seed_value,
+            )
+        if _run_config.grammar_evolution_enabled:
+            initialize_grammar_evolution_runtime(
+                state.grammar_evolution,
+                _run_config.grammar_evolution_config,
             )
     # Serial mode: guarantees reproducibility by eliminating thread PRNG interleaving
     _serial_mode = (_args.seed is not None)
@@ -2615,6 +2681,7 @@ def run() -> None:
                     _run_config.language_contact_config,
                     _run_config.lexical_evolution_config,
                     _run_config.compositional_protolanguage_config,
+                    _run_config.grammar_evolution_config,
                 )
             _t_eco = (time.perf_counter() - _t_eco_start) * 1000
 

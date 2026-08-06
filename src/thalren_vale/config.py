@@ -75,6 +75,9 @@ DEFAULT_MAXIMUM_RESOURCE_MORPHEME_LENGTH = 2
 DEFAULT_MODALITY_MORPHEME_LENGTH = 1
 MAXIMUM_RESOURCE_MORPHEME_LENGTH = 3
 MAXIMUM_MODALITY_MORPHEME_LENGTH = 2
+DEFAULT_GRAMMAR_EVOLUTION_ENABLED = False
+DEFAULT_ORDER_ADOPTION_THRESHOLD = 3
+MAXIMUM_ORDER_ADOPTION_THRESHOLD = 32
 FACTION_TRUST_THRESHOLD = DEFAULT_FACTION_TRUST_THRESHOLD
 WAR_TENSION_THRESHOLD = DEFAULT_WAR_TENSION_THRESHOLD
 BELIEF_SHARING_PROBABILITY = DEFAULT_BELIEF_SHARING_PROBABILITY
@@ -202,6 +205,22 @@ VALID_COMPOSITIONAL_PROTOLANGUAGE_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+GRAMMAR_EVOLUTION_NOTICE_WITHOUT_LANGUAGE = (
+    'grammar_evolution_requested_without_language'
+)
+GRAMMAR_EVOLUTION_NOTICE_WITHOUT_COMPOSITION = (
+    'grammar_evolution_requested_without_composition'
+)
+VALID_GRAMMAR_EVOLUTION_CONTROL_NOTICES = frozenset({
+    GRAMMAR_EVOLUTION_NOTICE_WITHOUT_LANGUAGE,
+    GRAMMAR_EVOLUTION_NOTICE_WITHOUT_COMPOSITION,
+})
+VALID_GRAMMAR_EVOLUTION_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
 
 @dataclass(frozen=True)
 class SocialMemoryConfig:
@@ -286,6 +305,14 @@ class CompositionalProtolanguageConfig:
 
 
 @dataclass(frozen=True)
+class GrammarEvolutionConfig:
+    """Effective engineering-only learnable constituent-order controls."""
+
+    grammar_evolution_enabled: bool
+    order_adoption_threshold: int
+
+
+@dataclass(frozen=True)
 class SimulationConfig:
     """Validated effective configuration for one simulation run."""
 
@@ -362,6 +389,8 @@ class SimulationConfig:
         DEFAULT_MAXIMUM_RESOURCE_MORPHEME_LENGTH
     )
     modality_morpheme_length: int = DEFAULT_MODALITY_MORPHEME_LENGTH
+    grammar_evolution_enabled: bool = DEFAULT_GRAMMAR_EVOLUTION_ENABLED
+    order_adoption_threshold: int = DEFAULT_ORDER_ADOPTION_THRESHOLD
     social_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     language_control_notices: tuple[str, ...] = field(
@@ -377,6 +406,8 @@ class SimulationConfig:
     lexical_evolution_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     compositional_protolanguage_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    grammar_evolution_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -476,6 +507,25 @@ class SimulationConfig:
             self,
             'compositional_protolanguage_control_notices',
             tuple(sorted(compositional_notices)),
+        )
+
+        # Runs after composition so an implicitly disabled composition
+        # cascades: requesting grammar with composition requested but
+        # unsatisfied yields both notices.
+        grammar_notices: list[str] = []
+        if self.grammar_evolution_enabled is True:
+            if self.language_evolution_enabled is False:
+                grammar_notices.append(
+                    GRAMMAR_EVOLUTION_NOTICE_WITHOUT_LANGUAGE)
+            if self.compositional_protolanguage_enabled is False:
+                grammar_notices.append(
+                    GRAMMAR_EVOLUTION_NOTICE_WITHOUT_COMPOSITION)
+        if grammar_notices:
+            object.__setattr__(self, 'grammar_evolution_enabled', False)
+        object.__setattr__(
+            self,
+            'grammar_evolution_control_notices',
+            tuple(sorted(grammar_notices)),
         )
 
     @classmethod
@@ -709,6 +759,16 @@ class SimulationConfig:
                 DEFAULT_MODALITY_MORPHEME_LENGTH
                 if getattr(args, 'modality_morpheme_length', None) is None
                 else args.modality_morpheme_length
+            ),
+            grammar_evolution_enabled=(
+                bool(getattr(args, 'enable_grammar_evolution', False))
+                and not bool(getattr(
+                    args, 'disable_grammar_evolution', False))
+            ),
+            order_adoption_threshold=(
+                DEFAULT_ORDER_ADOPTION_THRESHOLD
+                if getattr(args, 'order_adoption_threshold', None) is None
+                else args.order_adoption_threshold
             ),
         )
         instance.validate()
@@ -1033,6 +1093,39 @@ class SimulationConfig:
                 'compositional protolanguage normalization notices require '
                 'disabled compositional protolanguage')
 
+        if type(self.grammar_evolution_enabled) is not bool:
+            raise ValueError('grammar evolution setting must be boolean')
+        if (self.grammar_evolution_enabled
+                and not self.language_evolution_enabled):
+            raise ValueError('grammar evolution requires language evolution')
+        if (
+            self.grammar_evolution_enabled
+            and not self.compositional_protolanguage_enabled
+        ):
+            raise ValueError(
+                'grammar evolution requires compositional protolanguage')
+        if (
+            type(self.order_adoption_threshold) is not int
+            or not 1
+            <= self.order_adoption_threshold
+            <= MAXIMUM_ORDER_ADOPTION_THRESHOLD
+        ):
+            raise ValueError(
+                'order adoption threshold must be an integer from 1 to '
+                f'{MAXIMUM_ORDER_ADOPTION_THRESHOLD}')
+        if any(
+            notice not in VALID_GRAMMAR_EVOLUTION_CONTROL_NOTICES
+            for notice in self.grammar_evolution_control_notices
+        ):
+            raise ValueError('unknown grammar evolution normalization notice')
+        if (
+            self.grammar_evolution_control_notices
+            and self.grammar_evolution_enabled
+        ):
+            raise ValueError(
+                'grammar evolution normalization notices require disabled '
+                'grammar evolution')
+
     def apply_legacy_globals(self) -> None:
         """Keep modules using legacy constants synchronized during migration."""
         global TICKS, POP_CAP, STARTING_INHABITANTS
@@ -1062,6 +1155,7 @@ class SimulationConfig:
         result.pop('intergenerational_language_control_notices', None)
         result.pop('lexical_evolution_control_notices', None)
         result.pop('compositional_protolanguage_control_notices', None)
+        result.pop('grammar_evolution_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
@@ -1091,6 +1185,10 @@ class SimulationConfig:
             self.compositional_protolanguage_control_notices)
         result['compositional_protolanguage_controls_status'] = (
             self.compositional_protolanguage_controls_status)
+        result['grammar_evolution_control_notices'] = list(
+            self.grammar_evolution_control_notices)
+        result['grammar_evolution_controls_status'] = (
+            self.grammar_evolution_controls_status)
         return result
 
     @property
@@ -1312,6 +1410,27 @@ class SimulationConfig:
         ):
             return 'engineering_only_uncontracted'
         return 'disabled'
+
+    @property
+    def grammar_evolution_controls_status(self) -> str:
+        """Return provenance status for uncontracted grammar controls."""
+        if self.grammar_evolution_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.grammar_evolution_enabled
+            or self.order_adoption_threshold
+            != DEFAULT_ORDER_ADOPTION_THRESHOLD
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def grammar_evolution_config(self) -> GrammarEvolutionConfig:
+        """Return immutable effective constituent-order controls."""
+        return GrammarEvolutionConfig(
+            grammar_evolution_enabled=self.grammar_evolution_enabled,
+            order_adoption_threshold=self.order_adoption_threshold,
+        )
 
     @property
     def compositional_protolanguage_config(

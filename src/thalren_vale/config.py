@@ -87,6 +87,11 @@ DEFAULT_COALITION_INTELLIGIBILITY_ENABLED = False
 # 113 to 182. A gating default that visibly does nothing is a poor default.
 # Treat this as a starting point, not a tuned value.
 DEFAULT_COALITION_INTELLIGIBILITY_THRESHOLD = 0.50
+DEFAULT_FACTION_RELATIONSHIP_TRUST_ENABLED = False
+# Legacy faction trust requires an interaction count strictly above 5. Aid
+# adds +0.08 of Relationship trust per interaction, so ~0.40 is the nearest
+# equivalent. It is an equivalence chosen by arithmetic, not a tuned value.
+DEFAULT_FACTION_RELATIONSHIP_TRUST_THRESHOLD = 0.40
 DEFAULT_PRODUCTION_TRIAL_ENABLED = False
 DEFAULT_PRODUCTION_TRIAL_INTERVAL = 8
 MAXIMUM_PRODUCTION_TRIAL_INTERVAL = 64
@@ -279,6 +284,18 @@ VALID_COALITION_INTELLIGIBILITY_CONTROL_STATUSES = frozenset({
     'engineering_only_uncontracted',
 })
 
+FACTION_RELATIONSHIP_TRUST_NOTICE_WITHOUT_SOCIAL = (
+    'faction_relationship_trust_requested_without_social_memory'
+)
+VALID_FACTION_RELATIONSHIP_TRUST_CONTROL_NOTICES = frozenset({
+    FACTION_RELATIONSHIP_TRUST_NOTICE_WITHOUT_SOCIAL,
+})
+VALID_FACTION_RELATIONSHIP_TRUST_CONTROL_STATUSES = frozenset({
+    'disabled',
+    'normalized_uncontracted',
+    'engineering_only_uncontracted',
+})
+
 PRODUCTION_TRIAL_NOTICE_WITHOUT_LANGUAGE = (
     'production_trial_requested_without_language'
 )
@@ -400,6 +417,14 @@ class CoalitionIntelligibilityConfig:
 
 
 @dataclass(frozen=True)
+class FactionRelationshipTrustConfig:
+    """Effective engineering-only faction social-model selection."""
+
+    faction_relationship_trust_enabled: bool
+    faction_relationship_trust_threshold: float
+
+
+@dataclass(frozen=True)
 class ProductionTrialConfig:
     """Effective engineering-only runner-up production trial controls."""
 
@@ -497,6 +522,12 @@ class SimulationConfig:
     coalition_intelligibility_threshold: float = (
         DEFAULT_COALITION_INTELLIGIBILITY_THRESHOLD
     )
+    faction_relationship_trust_enabled: bool = (
+        DEFAULT_FACTION_RELATIONSHIP_TRUST_ENABLED
+    )
+    faction_relationship_trust_threshold: float = (
+        DEFAULT_FACTION_RELATIONSHIP_TRUST_THRESHOLD
+    )
     production_trial_enabled: bool = DEFAULT_PRODUCTION_TRIAL_ENABLED
     production_trial_interval: int = DEFAULT_PRODUCTION_TRIAL_INTERVAL
     social_control_notices: tuple[str, ...] = field(
@@ -522,6 +553,8 @@ class SimulationConfig:
     coalition_intelligibility_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
     production_trial_control_notices: tuple[str, ...] = field(
+        default=(), init=False, compare=False, repr=False)
+    faction_relationship_trust_control_notices: tuple[str, ...] = field(
         default=(), init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -693,6 +726,23 @@ class SimulationConfig:
             self,
             'production_trial_control_notices',
             tuple(sorted(production_trial_notices)),
+        )
+
+        # Relationship records exist only when social memory is effective. A
+        # faction layer reading them without it would find every tie absent
+        # and no faction would ever form.
+        faction_trust_notices: list[str] = []
+        if self.faction_relationship_trust_enabled is True:
+            if self.social_memory_enabled is False:
+                faction_trust_notices.append(
+                    FACTION_RELATIONSHIP_TRUST_NOTICE_WITHOUT_SOCIAL)
+        if faction_trust_notices:
+            object.__setattr__(
+                self, 'faction_relationship_trust_enabled', False)
+        object.__setattr__(
+            self,
+            'faction_relationship_trust_control_notices',
+            tuple(sorted(faction_trust_notices)),
         )
 
     @classmethod
@@ -962,6 +1012,18 @@ class SimulationConfig:
                 if getattr(
                     args, 'coalition_intelligibility_threshold', None) is None
                 else args.coalition_intelligibility_threshold
+            ),
+            faction_relationship_trust_enabled=(
+                bool(getattr(
+                    args, 'enable_faction_relationship_trust', False))
+                and not bool(getattr(
+                    args, 'disable_faction_relationship_trust', False))
+            ),
+            faction_relationship_trust_threshold=(
+                DEFAULT_FACTION_RELATIONSHIP_TRUST_THRESHOLD
+                if getattr(
+                    args, 'faction_relationship_trust_threshold', None) is None
+                else args.faction_relationship_trust_threshold
             ),
             production_trial_enabled=(
                 bool(getattr(args, 'enable_production_trial', False))
@@ -1335,6 +1397,35 @@ class SimulationConfig:
                 and not self.social_partner_bias_enabled):
             raise ValueError(
                 'language coevolution requires social partner bias')
+        if type(self.faction_relationship_trust_enabled) is not bool:
+            raise ValueError(
+                'faction relationship trust setting must be boolean')
+        faction_threshold = self.faction_relationship_trust_threshold
+        if (
+            type(faction_threshold) is not float
+            or not math.isfinite(faction_threshold)
+            or not 0.0 < faction_threshold <= 1.0
+        ):
+            raise ValueError(
+                'faction relationship trust threshold must be a finite float '
+                'greater than 0.0 and at most 1.0')
+        if (self.faction_relationship_trust_enabled
+                and not self.social_memory_enabled):
+            raise ValueError(
+                'faction relationship trust requires social memory')
+        if any(
+            notice not in VALID_FACTION_RELATIONSHIP_TRUST_CONTROL_NOTICES
+            for notice in self.faction_relationship_trust_control_notices
+        ):
+            raise ValueError(
+                'unknown faction relationship trust normalization notice')
+        if (
+            self.faction_relationship_trust_control_notices
+            and self.faction_relationship_trust_enabled
+        ):
+            raise ValueError(
+                'faction relationship trust normalization notices require '
+                'the legacy model')
         if type(self.production_trial_enabled) is not bool:
             raise ValueError('production trial setting must be boolean')
         if (
@@ -1456,6 +1547,7 @@ class SimulationConfig:
         result.pop('language_coevolution_control_notices', None)
         result.pop('coalition_intelligibility_control_notices', None)
         result.pop('production_trial_control_notices', None)
+        result.pop('faction_relationship_trust_control_notices', None)
         result['disabled_layers'] = list(self.disabled_layers)
         result['raids_enabled'] = self.raids_enabled
         result['social_control_notices'] = list(self.social_control_notices)
@@ -1501,6 +1593,10 @@ class SimulationConfig:
             self.production_trial_control_notices)
         result['production_trial_controls_status'] = (
             self.production_trial_controls_status)
+        result['faction_relationship_trust_control_notices'] = list(
+            self.faction_relationship_trust_control_notices)
+        result['faction_relationship_trust_controls_status'] = (
+            self.faction_relationship_trust_controls_status)
         return result
 
     @property
@@ -1754,6 +1850,31 @@ class SimulationConfig:
         ):
             return 'engineering_only_uncontracted'
         return 'disabled'
+
+    @property
+    def faction_relationship_trust_controls_status(self) -> str:
+        """Return provenance status for uncontracted faction-model controls."""
+        if self.faction_relationship_trust_control_notices:
+            return 'normalized_uncontracted'
+        if (
+            self.faction_relationship_trust_enabled
+            or self.faction_relationship_trust_threshold
+            != DEFAULT_FACTION_RELATIONSHIP_TRUST_THRESHOLD
+        ):
+            return 'engineering_only_uncontracted'
+        return 'disabled'
+
+    @property
+    def faction_relationship_trust_config(
+        self,
+    ) -> FactionRelationshipTrustConfig:
+        """Return immutable effective faction social-model controls."""
+        return FactionRelationshipTrustConfig(
+            faction_relationship_trust_enabled=(
+                self.faction_relationship_trust_enabled),
+            faction_relationship_trust_threshold=(
+                self.faction_relationship_trust_threshold),
+        )
 
     @property
     def production_trial_controls_status(self) -> str:

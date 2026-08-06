@@ -771,11 +771,19 @@ def beliefs_layer(t: int, deaths: list, winter_just_ended: bool,
     return {d.name for d in deaths}
 
 
-def factions_layer(t: int, dead_names: set) -> None:
+def factions_layer(
+    t: int,
+    dead_names: set,
+    faction_trust_config: config.FactionRelationshipTrustConfig | None = None,
+) -> None:
     """Layer 3: form factions every 5 ticks, run member mechanics."""
     if t % 5 == 0:
-        check_faction_formation(people, factions, t, event_log)
-    faction_tick(people, factions, t, event_log)
+        check_faction_formation(
+            people, factions, t, event_log,
+            faction_trust_config=faction_trust_config)
+    faction_tick(
+        people, factions, t, event_log,
+        faction_trust_config=faction_trust_config)
     for f in factions:
         f.remove_dead(dead_names)
 
@@ -2496,6 +2504,16 @@ def run() -> None:
     _parser.add_argument(
         '--coalition-intelligibility-threshold', type=float, default=None,
         help='Minimum mutual intelligibility for a coalition edge')
+    _faction_model = _parser.add_mutually_exclusive_group()
+    _faction_model.add_argument(
+        '--enable-faction-relationship-trust', action='store_true',
+        help='Factions read Relationship records instead of legacy trust')
+    _faction_model.add_argument(
+        '--disable-faction-relationship-trust', action='store_true',
+        help='Explicitly retain the legacy faction trust model')
+    _parser.add_argument(
+        '--faction-relationship-trust-threshold', type=float, default=None,
+        help='Relationship trust a faction tie must clear')
     _production_trial = _parser.add_mutually_exclusive_group()
     _production_trial.add_argument(
         '--enable-production-trial', action='store_true',
@@ -2590,6 +2608,14 @@ def run() -> None:
                 'warning: grammar evolution was requested without effective '
                 'compositional protolanguage; grammar normalized to false '
                 'and the run is not V2-ready\n')
+    for _notice in _run_config.faction_relationship_trust_control_notices:
+        if _notice == (
+            config.FACTION_RELATIONSHIP_TRUST_NOTICE_WITHOUT_SOCIAL
+        ):
+            sys.stderr.write(
+                'warning: faction relationship trust was requested without '
+                'effective social memory; factions retained the legacy trust '
+                'model and the run is not V2-ready\n')
     for _notice in _run_config.production_trial_control_notices:
         if _notice == config.PRODUCTION_TRIAL_NOTICE_WITHOUT_LANGUAGE:
             sys.stderr.write(
@@ -2795,7 +2821,9 @@ def run() -> None:
             # ── Layer 3: Factions ───────────────────────────────────────────
             _t_fac_start = time.perf_counter()
             if 'factions' not in _disabled_layers:
-                factions_layer(t, dead_names)
+                factions_layer(
+                    t, dead_names,
+                    _run_config.faction_relationship_trust_config)
             _t_fac = (time.perf_counter() - _t_fac_start) * 1000
 
             # ── Procreation ─────────────────────────────────────────────────

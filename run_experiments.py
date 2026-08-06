@@ -106,6 +106,11 @@ _UNCONTRACTED_GRAMMAR_EVOLUTION_FLAGS = frozenset({
     '--disable-grammar-evolution',
     '--order-adoption-threshold',
 })
+_UNCONTRACTED_FACTION_RELATIONSHIP_TRUST_FLAGS = frozenset({
+    '--enable-faction-relationship-trust',
+    '--disable-faction-relationship-trust',
+    '--faction-relationship-trust-threshold',
+})
 _UNCONTRACTED_PRODUCTION_TRIAL_FLAGS = frozenset({
     '--enable-production-trial',
     '--disable-production-trial',
@@ -286,6 +291,26 @@ def _reject_uncontracted_grammar_evolution_args(
                 f'permitted in the experiment runner: {argument}')
 
 
+def _reject_uncontracted_faction_relationship_trust_args(
+    extra_args: tuple[str, ...],
+) -> None:
+    """Reserve every exact, equals, and prefix faction-model option."""
+    for argument in extra_args:
+        option_name = argument.split('=', 1)[0]
+        if any(
+            option_name == flag
+            or (
+                option_name.startswith('--')
+                and len(option_name) > 2
+                and flag.startswith(option_name)
+            )
+            for flag in _UNCONTRACTED_FACTION_RELATIONSHIP_TRUST_FLAGS
+        ):
+            raise ValueError(
+                f'uncontracted faction relationship trust control is not '
+                f'permitted in the experiment runner: {argument}')
+
+
 def _reject_uncontracted_production_trial_args(
     extra_args: tuple[str, ...],
 ) -> None:
@@ -428,6 +453,7 @@ def _freeze_cell(cell: object) -> _FrozenCell:
     _reject_uncontracted_language_coevolution_args(frozen_extra_args)
     _reject_uncontracted_coalition_intelligibility_args(frozen_extra_args)
     _reject_uncontracted_production_trial_args(frozen_extra_args)
+    _reject_uncontracted_faction_relationship_trust_args(frozen_extra_args)
     if timeout_seconds is not None and (
         type(timeout_seconds) is not int or timeout_seconds < 1
     ):
@@ -511,6 +537,8 @@ def load_plan(plan_path: Path) -> tuple[dict, str]:
         _reject_uncontracted_coalition_intelligibility_args(
             tuple(parsed_extra))
         _reject_uncontracted_production_trial_args(tuple(parsed_extra))
+        _reject_uncontracted_faction_relationship_trust_args(
+            tuple(parsed_extra))
     return plan, hashlib.sha256(raw).hexdigest()
 
 

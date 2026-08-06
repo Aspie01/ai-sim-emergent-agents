@@ -1073,6 +1073,15 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         raise ValueError("production trial setting must be boolean")
     production_trial_enabled = configuration.get(
         "production_trial_enabled", False)
+    if (
+        "faction_relationship_trust_enabled" in configuration
+        and type(
+            configuration["faction_relationship_trust_enabled"]) is not bool
+    ):
+        raise ValueError(
+            "faction relationship trust setting must be boolean")
+    faction_relationship_trust_enabled = configuration.get(
+        "faction_relationship_trust_enabled", False)
     social_partner_bias_enabled = configuration.get(
         "social_partner_bias_enabled") is True
     non_behavioral_keys = {
@@ -1171,6 +1180,12 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
         "production_trial_controls_status",
         "production_trial_control_notices",
     }
+    faction_relationship_trust_configuration_keys = {
+        "faction_relationship_trust_enabled",
+        "faction_relationship_trust_threshold",
+        "faction_relationship_trust_controls_status",
+        "faction_relationship_trust_control_notices",
+    }
     compositional_configuration_keys = {
         "compositional_protolanguage_enabled",
         "maximum_resource_morpheme_length",
@@ -1208,6 +1223,14 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
     elif not language_evolution_enabled:
         raise ValueError(
             "enabled compositional protolanguage requires language evolution")
+    if not faction_relationship_trust_enabled:
+        # Selecting the social model owns no runtime state, so the keys simply
+        # leave the behavioural payload while the legacy model is in use.
+        non_behavioral_keys.update(
+            faction_relationship_trust_configuration_keys)
+    elif not social_memory_enabled:
+        raise ValueError(
+            "enabled faction relationship trust requires social memory")
     if not production_trial_enabled:
         # Trials own no runtime state: the decision is derived per utterance
         # from a seed domain, so there is nothing to hold pristine.

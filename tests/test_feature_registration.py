@@ -84,6 +84,15 @@ FAMILY_REGISTRATION = {
         "artifact_validator": "_validate_language_coevolution_configuration",
         "runner_rejector": "_reject_uncontracted_language_coevolution_args",
     },
+    "faction_relationship_trust": {
+        # Selecting the social model owns no runtime state; it only chooses
+        # which existing store the faction layer reads.
+        "pristine_guard": None,
+        "artifact_validator": (
+            "_validate_faction_relationship_trust_configuration"),
+        "runner_rejector": (
+            "_reject_uncontracted_faction_relationship_trust_args"),
+    },
     "production_trial": {
         # Owns no runtime state: each trial occasion is derived per utterance
         # from a seed domain, so there is nothing to hold pristine.

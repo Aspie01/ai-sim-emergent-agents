@@ -171,11 +171,47 @@ class Faction:
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────
-def _mutual_trust(a, b, threshold=None):
-    if threshold is None:
-        threshold = config.FACTION_TRUST_THRESHOLD
-    return (a.trust.get(b.name, 0) > threshold and
-            b.trust.get(a.name, 0) > threshold)
+def _directed_trust_qualifies(observer, target, faction_trust_config=None):
+    """Report whether observer trusts target enough for faction purposes.
+
+    Two social models coexist. Legacy ``trust`` is a name-keyed interaction
+    counter written on every committed transfer, so it is always populated.
+    ``relationships`` holds bounded :class:`Relationship` records written only
+    when social memory is effective, so it is empty in a default run: reading
+    it unconditionally would stop every faction from forming.
+
+    The models are not interchangeable. Legacy trust counts interactions and
+    grows without bound; relationship trust is a decaying score clamped to
+    [-1, 1]. Selecting between them therefore changes faction behaviour, which
+    is why it is gated and disabled by default.
+    """
+    if (
+        faction_trust_config is not None
+        and faction_trust_config.faction_relationship_trust_enabled
+    ):
+        target_id = getattr(target, "inhabitant_id", None)
+        if target_id is None:
+            return False
+        record = observer.relationships.get(target_id)
+        if record is None:
+            return False
+        return (
+            record.trust
+            >= faction_trust_config.faction_relationship_trust_threshold
+        )
+    return a_legacy_trust(observer, target) > config.FACTION_TRUST_THRESHOLD
+
+
+def a_legacy_trust(observer, target):
+    """Return the historical name-keyed interaction counter."""
+    return observer.trust.get(target.name, 0)
+
+
+def _mutual_trust(a, b, faction_trust_config=None):
+    return (
+        _directed_trust_qualifies(a, b, faction_trust_config)
+        and _directed_trust_qualifies(b, a, faction_trust_config)
+    )
 
 def _common_cores(group):
     sets = [inh_cores(m) for m in group]
@@ -210,7 +246,8 @@ def _announce(faction, t, event_log):
     )
 
 # ── Formation check (every 5 ticks) ──────────────────────────────────────────
-def check_faction_formation(people, factions, t, event_log):
+def check_faction_formation(
+    people, factions, t, event_log, faction_trust_config=None):
     taken    = {n for f in factions for n in f.member_names()}
     eligible = [p for p in people if p.name not in taken]
     absorbed = set()   # names claimed by new factions this pass
@@ -224,7 +261,10 @@ def check_faction_formation(people, factions, t, event_log):
             continue
 
         # Mutual trust: every pair must trust each other > 8
-        if any(not _mutual_trust(a, b) for a, b in combinations(trio, 2)):
+        if any(
+            not _mutual_trust(a, b, faction_trust_config)
+            for a, b in combinations(trio, 2)
+        ):
             continue
 
         # Shared beliefs: at least 2 common core beliefs
@@ -244,7 +284,7 @@ def check_faction_formation(people, factions, t, event_log):
         _announce(faction, t, event_log)
 
 # ── Per-tick faction mechanics ─────────────────────────────────────────────
-def faction_tick(people, factions, t, event_log):
+def faction_tick(people, factions, t, event_log, faction_trust_config=None):
     for faction in factions:
         if not faction.members:
             continue
@@ -353,7 +393,10 @@ def faction_tick(people, factions, t, event_log):
                     blocked = (bb, ba)
                     break
             if blocked:
-                if any(inh.trust.get(m.name, 0) > config.FACTION_TRUST_THRESHOLD for m in faction.members):
+                if any(
+                    _directed_trust_qualifies(inh, m, faction_trust_config)
+                    for m in faction.members
+                ):
                     inh.was_rejected = True
                     already_rejected = 'trust_no_group' in inh.beliefs
                     add_belief(inh, 'trust_no_group')
@@ -365,8 +408,10 @@ def faction_tick(people, factions, t, event_log):
                 continue
 
             # Trust: > threshold with at least 1 current member
-            if sum(1 for m in faction.members
-                   if inh.trust.get(m.name, 0) > config.FACTION_TRUST_THRESHOLD) < 1:
+            if sum(
+                1 for m in faction.members
+                if _directed_trust_qualifies(inh, m, faction_trust_config)
+            ) < 1:
                 continue
 
             # Beliefs: must share 2+ core beliefs with faction

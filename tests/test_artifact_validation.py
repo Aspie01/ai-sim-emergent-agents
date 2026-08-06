@@ -328,6 +328,10 @@ def make_artifacts(
         "production_trial_interval": 8,
         "production_trial_controls_status": "disabled",
         "production_trial_control_notices": [],
+        "faction_relationship_trust_enabled": False,
+        "faction_relationship_trust_threshold": 0.40,
+        "faction_relationship_trust_controls_status": "disabled",
+        "faction_relationship_trust_control_notices": [],
     })
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return run_dir, manifest_path

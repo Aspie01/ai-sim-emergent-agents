@@ -255,7 +255,10 @@ At tick 10, three unaffiliated inhabitants are all within Manhattan distance 2 o
 
 - Beliefs are string labels with a simple eight-entry FIFO, not a probabilistic or semantic belief model.
 - Sharing requires only the sender's trust; historical prose claiming mutual trust is stale.
-- Formal faction formation is cubic and based on legacy name-keyed trust.
+- Formal faction formation is cubic. It reads legacy name-keyed trust by
+  default, and bounded `Relationship.trust` when
+  [Faction Relationship Trust](faction-social-model.md) is effective, which is
+  disabled by default and requires social memory.
 - Formal factions remain materially causal while newer informal coalitions are intentionally observational/engineering-only; users must not conflate them.
 - Faction objects are never formally dissolved or removed.
 - Settlement ownership and reclaim are incomplete.

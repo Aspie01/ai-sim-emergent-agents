@@ -56,6 +56,7 @@ The compact visual overview is the [full system map](diagrams/full-system-map.md
 - [Language research readiness](systems/language-research-readiness.md)
 - [Coalition intelligibility](systems/coalition-intelligibility.md)
 - [Production trial](systems/production-trial.md)
+- [Faction social model](systems/faction-social-model.md)
 - [Combat, technology, diplomacy, and religion](systems/conflict-technology-diplomacy-religion.md)
 - [Events, observers, and plugins](systems/events-observers-and-plugins.md)
 

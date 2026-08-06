@@ -113,10 +113,15 @@ external `ExpectedRunContract` matching:
 - environment fingerprint;
 - zero-event and belief-snapshot policy.
 
-The current runner calls strict validation without this contract. Current
-simulator manifests also omit plan identity/hash, code tag, and environment
-fingerprint. Consequently current real runner output is at most
-`schema2_valid`, not `v2_ready`.
+Simulator manifests now record every field the contract compares, including
+plan identity and SHA-256, the annotated tag, and the environment fingerprint.
+The runner still calls strict validation without supplying a contract, so real
+runner output remains at most `schema2_valid`.
+
+Two further conditions are operational rather than structural: the contract
+requires a nonempty `code_tag` and `code_dirty: false`, so evidence must come
+from a clean, annotated-tagged revision. Neither is created by running the
+simulator.
 
 Readiness additionally vetoes nondefault social-memory, coalition, language,
 dialect, and language-contact controls. Missing historical controls may remain

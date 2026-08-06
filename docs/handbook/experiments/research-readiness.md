@@ -13,7 +13,7 @@ Valid engineering evidence and research-ready evidence are different states:
 | `schema2_valid` | Current deep structured contract passes, but the complete external readiness contract is absent or fails |
 | `v2_ready` | Valid schema-2 evidence, an exact complete `ExpectedRunContract`, approved controls, and the contracted language endpoint |
 
-Current real runner output cannot reach `v2_ready`: child manifests omit plan identity/hash, code tag, and environment/plugin fingerprint, and the runner does not supply a complete expected contract.
+Child manifests now record plan identity and SHA-256, the annotated tag, and an environment/plugin fingerprint, so every field the contract compares is present. Current real runner output still cannot reach `v2_ready`: the runner does not supply a complete expected contract, and readiness additionally requires a clean, annotated-tagged revision.
 
 ## Current runner gate
 
@@ -42,7 +42,7 @@ These remain **Planned, not implemented**. The current `--resume` and `--overwri
 
 Completed engineering implementations at the documented revision:
 
-- `feature/endogenous-language-v1`: Implemented but experimental; Disabled by default; Engineering-only.
+- `feature/endogenous-language-v1`: Implemented but experimental; Disabled by default; Contracted for readiness.
 - `feature/coalition-dialects-v1`: Implemented but experimental; Disabled by default; Engineering-only.
 - `feature/language-contact-v1`: Implemented but experimental; Disabled by default; Engineering-only.
 - `feature/intergenerational-language-v1`: Implemented but experimental; Disabled by default; Engineering-only.
@@ -51,14 +51,14 @@ Completed engineering implementations at the documented revision:
 - `feature/grammar-evolution-v1`: Implemented but experimental; Disabled by default; Engineering-only.
 - `feature/language-coevolution-v1`: Implemented but experimental; Disabled by default; Engineering-only.
 
-Future milestones:
+The remaining milestones, all implemented:
 
 | Milestone | Status |
 | --- | --- |
 | `feature/compositional-protolanguage-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/grammar-evolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/language-coevolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
-| `feature/language-research-readiness-v1` | Implemented but experimental; Disabled by default; Engineering-only |
+| `feature/language-research-readiness-v1` | Implemented; contracts base language; authorizes no execution |
 
 Current source implements bounded different-coalition acquisition, exposure,
 and contact-qualified borrowing plus bounded comprehension-only transmission

@@ -98,9 +98,11 @@ It does not establish:
 - recomputation of the state hash from CSVs;
 - freshness against the current checkout unless an external contract is
   supplied;
-- plugin identity;
-- a clean tagged revision or environment fingerprint;
+- a clean tagged revision;
 - V2 authorization or execution.
+
+Plugin identity and the environment fingerprint are recorded in the manifest,
+but validation compares them only against a supplied expected-run contract.
 
 ## Inspect the manifest
 
@@ -128,8 +130,9 @@ population zero.
 `ExpectedRunContract` is a separate programmatic readiness input. It requires
 exact seed/condition/ticks/log mode, anti-stagnation/combat/raid controls,
 disabled layers, execution mode, plan identity/hash, commit/tag/clean state,
-environment fingerprint, and artifact policy. The current runner never supplies
-it, and current run manifests omit several required fields.
+environment fingerprint, and artifact policy. Run manifests now carry every
+field the contract compares; the runner still does not supply the contract
+itself, so validation cannot reach `v2_ready` through the runner alone.
 
 Therefore:
 

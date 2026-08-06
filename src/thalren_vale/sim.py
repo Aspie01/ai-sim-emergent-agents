@@ -2467,6 +2467,12 @@ def run() -> None:
     _parser.add_argument(
         '--intelligibility-penalty', type=float, default=None,
         help='Directed tie loss per misunderstood utterance')
+    _parser.add_argument(
+        '--plan-identity', type=str, default=None,
+        help='Experiment plan identity asserted by the runner')
+    _parser.add_argument(
+        '--plan-sha256', type=str, default=None,
+        help='Experiment plan SHA-256 asserted by the runner')
     _args = _parser.parse_args()
 
     # ── Validate and apply effective configuration ──────────────────────────
@@ -3343,6 +3349,8 @@ def run() -> None:
                     state_hash=_state_hash,
                     language_endpoint=language_endpoint_record(
                         state.language, final_tick=_last_completed_tick),
+                    plan_identity=_args.plan_identity,
+                    plan_sha256=_args.plan_sha256,
                     execution_mode='serial' if _serial_mode else 'threaded',
                     requested_ticks=TICKS,
                     final_tick=_last_completed_tick,

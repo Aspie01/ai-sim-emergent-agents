@@ -6,7 +6,9 @@ import csv
 import hashlib
 import json
 import os
+import platform
 import subprocess
+import sys
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -1500,6 +1502,29 @@ def canonical_state_hash(state, world: list, configuration: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _annotated_tag(project_root: Path) -> str | None:
+    """Return the annotated tag naming HEAD exactly, or None.
+
+    `--exact-match` matters: `git describe` otherwise reports the nearest
+    ancestor tag with a distance suffix, which would record a revision as
+    tagged when it is merely descended from one.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "describe", "--exact-match", "--tags", "HEAD"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    tag = completed.stdout.strip()
+    return tag or None
+
+
 def _code_revision() -> dict:
     project_root = Path(__file__).resolve().parents[2]
     try:
@@ -1519,9 +1544,59 @@ def _code_revision() -> dict:
             check=True,
             timeout=5,
         ).stdout.strip())
-        return {"commit": revision, "dirty": dirty}
+        return {
+            "commit": revision,
+            "tag": _annotated_tag(project_root),
+            "dirty": dirty,
+        }
     except (OSError, subprocess.SubprocessError):
-        return {"commit": None, "dirty": None}
+        return {"commit": None, "tag": None, "dirty": None}
+
+
+def plugin_inventory(project_root: Path | None = None) -> list[dict]:
+    """Return every plugin that `load_plugins` would load, with a digest.
+
+    Plugins can mutate simulation state directly, so an environment
+    fingerprint that ignored them would call two materially different runs
+    identical. The scan mirrors `load_plugins`: `plugins/*.py` excluding
+    `__init__.py`, sorted by name.
+    """
+    root = (
+        Path(__file__).resolve().parents[2]
+        if project_root is None else Path(project_root)
+    )
+    directory = root / "plugins"
+    if not directory.is_dir():
+        return []
+    entries = []
+    for path in sorted(directory.glob("*.py"), key=lambda item: item.name):
+        if path.name == "__init__.py" or not path.is_file():
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        entries.append({"name": path.name, "sha256": digest})
+    return entries
+
+
+def environment_fingerprint(project_root: Path | None = None) -> str:
+    """Return a deterministic digest of everything that can alter a run.
+
+    Covers the interpreter, the platform, and the plugin inventory. Installed
+    third-party distributions are deliberately excluded: this project has
+    minimal runtime dependencies and packaging metadata varies by install
+    method, so including it would report mismatches between environments that
+    are actually equivalent.
+    """
+    record = {
+        "python": "%d.%d.%d" % sys.version_info[:3],
+        "implementation": platform.python_implementation(),
+        "system": platform.system(),
+        "machine": platform.machine(),
+        "plugins": plugin_inventory(project_root),
+    }
+    encoded = json.dumps(
+        record, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _artifact_inventory_entry(
@@ -1642,6 +1717,8 @@ def write_run_manifest(
     configuration: dict,
     state_hash: str,
     language_endpoint: dict | None = None,
+    plan_identity: str | None = None,
+    plan_sha256: str | None = None,
     execution_mode: str,
     requested_ticks: int,
     final_tick: int,
@@ -1701,6 +1778,11 @@ def write_run_manifest(
         "state_hash_algorithm": "sha256",
         "state_hash": state_hash,
         "language_endpoint": language_endpoint,
+        # Runner-asserted provenance. None for a direct run, which is why a
+        # direct run cannot reach v2_ready.
+        "plan_identity": plan_identity,
+        "plan_sha256": plan_sha256,
+        "environment_fingerprint": environment_fingerprint(),
         "writer_health": writer_health,
         "artifact_policy": artifact_policy or {
             "allow_zero_events": ALLOW_ZERO_EVENTS,

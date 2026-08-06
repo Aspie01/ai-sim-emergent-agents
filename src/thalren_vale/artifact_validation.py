@@ -2247,7 +2247,11 @@ def _validate_present_provenance(
     issues: _IssueCollector,
 ) -> None:
     """Reject malformed provenance while allowing later-slice fields to be absent."""
-    if "plan_identity" in manifest:
+    # None means the run was launched directly rather than by the experiment
+    # runner, which is ordinary and remains valid engineering evidence. Only
+    # V2 readiness requires plan provenance, and the expected-run contract
+    # enforces that separately.
+    if manifest.get("plan_identity") is not None:
         identity = manifest["plan_identity"]
         if not _is_str(identity) or not _SAFE_NAME.fullmatch(identity):
             _add(
@@ -2257,7 +2261,7 @@ def _validate_present_provenance(
                 "manifest",
             )
 
-    if "plan_sha256" in manifest:
+    if manifest.get("plan_sha256") is not None:
         plan_sha256 = manifest["plan_sha256"]
         if not _is_str(plan_sha256) or not _SHA256.fullmatch(plan_sha256):
             _add(
@@ -2298,11 +2302,16 @@ def _validate_present_provenance(
                 )
             if "tag" in code:
                 tag = code["tag"]
-                if not _is_str(tag) or not tag.strip():
+                # None means the revision carries no annotated tag, which is
+                # ordinary for development work and is valid engineering
+                # evidence. Only V2 readiness requires an actual tag, and the
+                # expected-run contract enforces that separately. An empty or
+                # non-string tag remains malformed.
+                if tag is not None and (not _is_str(tag) or not tag.strip()):
                     _add(
                         issues,
                         "invalid_code_tag",
-                        "code.tag must be a nonempty string",
+                        "code.tag must be a nonempty string or null",
                         "manifest",
                     )
             if not _is_bool(code.get("dirty")):

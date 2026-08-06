@@ -231,7 +231,17 @@ def test_manifest_records_code_provenance(tmp_path):
     assert manifest["completed_normally"] is True
     assert manifest["state_hash_algorithm"] == "sha256"
     assert len(manifest["state_hash"]) == 64
-    assert set(manifest["code"]) == {"commit", "dirty"}
+    # The expected-run contract has always required this exact shape; the
+    # writer previously omitted `tag`, which is one reason runner output could
+    # not reach v2_ready.
+    assert set(manifest["code"]) == {"commit", "tag", "dirty"}
+    tag = manifest["code"]["tag"]
+    assert tag is None or (type(tag) is str and tag.strip())
+    # A direct run carries no plan, but the fields must exist so their absence
+    # is recorded rather than merely missing.
+    assert manifest["plan_identity"] is None
+    assert manifest["plan_sha256"] is None
+    assert len(manifest["environment_fingerprint"]) == 64
     assert set(manifest["artifact_inventory"]) == {
         "metrics", "events", "beliefs", "summary",
     }
@@ -803,3 +813,132 @@ def test_endpoint_rate_is_deterministic_across_processes():
     first = run("0")
     assert first
     assert first == run("7") == run("12345")
+
+
+# ── Runner provenance ───────────────────────────────────────────────────────
+
+def test_environment_fingerprint_is_deterministic():
+    from thalren_vale.reproducibility import environment_fingerprint
+
+    first = environment_fingerprint()
+    assert len(first) == 64
+    assert first == environment_fingerprint()
+
+
+def test_environment_fingerprint_tracks_plugin_content(tmp_path):
+    """A changed plugin must change the fingerprint.
+
+    Plugins can mutate simulation state directly, so a fingerprint blind to
+    them would call two materially different environments identical.
+    """
+    from thalren_vale.reproducibility import environment_fingerprint
+
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    (plugins / "__init__.py").write_text("", encoding="utf-8")
+    plugin = plugins / "sample.py"
+
+    plugin.write_text("VALUE = 1\n", encoding="utf-8")
+    before = environment_fingerprint(tmp_path)
+    plugin.write_text("VALUE = 2\n", encoding="utf-8")
+    after = environment_fingerprint(tmp_path)
+    assert before != after
+
+    plugin.unlink()
+    assert environment_fingerprint(tmp_path) not in (before, after)
+
+
+def test_plugin_inventory_mirrors_the_loader_scan_rule(tmp_path):
+    """`load_plugins` reads plugins/*.py excluding __init__.py."""
+    from thalren_vale.reproducibility import plugin_inventory
+
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    (plugins / "__init__.py").write_text("", encoding="utf-8")
+    (plugins / "beta.py").write_text("B = 1\n", encoding="utf-8")
+    (plugins / "alpha.py").write_text("A = 1\n", encoding="utf-8")
+    (plugins / "notes.txt").write_text("ignored\n", encoding="utf-8")
+
+    entries = plugin_inventory(tmp_path)
+    assert [entry["name"] for entry in entries] == ["alpha.py", "beta.py"]
+    assert all(len(entry["sha256"]) == 64 for entry in entries)
+
+
+def test_absent_plugin_directory_is_an_empty_inventory(tmp_path):
+    from thalren_vale.reproducibility import plugin_inventory
+
+    assert plugin_inventory(tmp_path) == []
+
+
+def test_code_revision_reports_the_expected_shape():
+    """The expected-run contract compares exactly these three keys."""
+    from thalren_vale.reproducibility import _code_revision
+
+    code = _code_revision()
+    assert set(code) == {"commit", "tag", "dirty"}
+    assert code["tag"] is None or (
+        type(code["tag"]) is str and code["tag"].strip())
+
+
+def test_runner_passes_plan_provenance_on_the_child_command_line():
+    """Plan identity must travel on argv so provenance is auditable."""
+    import run_experiments
+
+    command = run_experiments._simulation_command(
+        456, "baseline", 3, ("--log-mode", "metrics_only"),
+        plan_identity="demo-plan", plan_sha256="a" * 64,
+    )
+    assert "--plan-identity" in command
+    assert command[command.index("--plan-identity") + 1] == "demo-plan"
+    assert "--plan-sha256" in command
+    assert command[command.index("--plan-sha256") + 1] == "a" * 64
+    # Cell arguments must still follow, unmodified.
+    assert command[-2:] == ["--log-mode", "metrics_only"]
+
+
+def test_direct_run_command_omits_plan_provenance():
+    """A run with no plan must not fabricate identity."""
+    import run_experiments
+
+    command = run_experiments._simulation_command(456, "baseline", 3, ())
+    assert "--plan-identity" not in command
+    assert "--plan-sha256" not in command
+
+
+def test_annotated_tag_requires_an_exact_match(tmp_path):
+    """A descendant of a tagged commit is not itself tagged.
+
+    Plain `git describe --tags` reports the nearest ancestor tag with a
+    distance suffix, which would record an untagged development revision as
+    though it were the tagged release.
+    """
+    import subprocess
+
+    from thalren_vale.reproducibility import _annotated_tag
+
+    def git(*args):
+        subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True,
+            capture_output=True, text=True, timeout=10)
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "Test")
+    (tmp_path / "a.txt").write_text("one\n", encoding="utf-8")
+    git("add", "a.txt")
+    git("commit", "-qm", "first")
+    git("tag", "-a", "v1.0", "-m", "release")
+
+    assert _annotated_tag(tmp_path) == "v1.0"
+
+    (tmp_path / "a.txt").write_text("two\n", encoding="utf-8")
+    git("add", "a.txt")
+    git("commit", "-qm", "second")
+
+    assert _annotated_tag(tmp_path) is None
+
+
+def test_annotated_tag_is_none_outside_a_repository(tmp_path):
+    from thalren_vale.reproducibility import _annotated_tag
+
+    assert _annotated_tag(tmp_path) is None

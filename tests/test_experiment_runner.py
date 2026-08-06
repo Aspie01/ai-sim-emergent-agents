@@ -372,7 +372,8 @@ def test_runner_rejects_uncontracted_social_controls_before_creating_root(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(ValueError, match="uncontracted social control"):
@@ -400,7 +401,8 @@ def test_runner_rejects_uncontracted_coalition_controls_before_creating_root(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(ValueError, match="uncontracted coalition control"):
@@ -428,7 +430,8 @@ def test_runner_rejects_uncontracted_language_controls_before_creating_root(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(ValueError, match="uncontracted language control"):
@@ -456,7 +459,8 @@ def test_runner_rejects_every_dialect_prefix_before_filesystem_or_child_activity
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(ValueError, match="uncontracted dialect control"):
@@ -484,7 +488,8 @@ def test_runner_rejects_every_contact_prefix_before_filesystem_or_child_activity
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(ValueError):
@@ -509,7 +514,8 @@ def test_rejected_contact_control_preserves_existing_output_tree(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(ValueError, match="uncontracted language contact control"):
@@ -537,7 +543,8 @@ def test_runner_rejects_every_intergenerational_option_before_any_activity(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(ValueError):
@@ -561,7 +568,8 @@ def test_rejected_intergenerational_control_preserves_existing_output_tree(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(
@@ -591,7 +599,8 @@ def test_runner_rejects_every_lexical_option_before_any_activity(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(ValueError):
@@ -615,7 +624,8 @@ def test_rejected_lexical_control_preserves_existing_output_tree(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(
@@ -642,7 +652,8 @@ def test_rejected_coalition_control_preserves_existing_output_tree(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(ValueError, match="uncontracted coalition control"):
@@ -1321,7 +1332,7 @@ def test_timeout_kills_and_reaps_real_child_and_blocks_resume(tmp_path, monkeypa
     )
     monkeypatch.setattr(
         "run_experiments._simulation_command",
-        lambda *args: [sys.executable, "-c", child_script],
+        lambda *args, **kwargs: [sys.executable, "-c", child_script],
     )
 
     results, _ = run_from_plan(plan_path, output)
@@ -1350,7 +1361,7 @@ def test_sigint_cancellation_is_classified_and_blocks_resume(tmp_path, monkeypat
     output = tmp_path / "outputs"
     monkeypatch.setattr(
         "run_experiments._simulation_command",
-        lambda *args: [
+        lambda *args, **kwargs: [
             sys.executable,
             "-c",
             "import os, signal; os.kill(os.getpid(), signal.SIGINT)",
@@ -1472,7 +1483,8 @@ def test_private_orchestrator_rejects_nonexact_cell_mappings_without_mutation(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
     before = snapshot_tree(tmp_path)
 
@@ -1510,7 +1522,7 @@ def test_private_orchestrator_uses_frozen_copy_after_external_dict_mutation(
         input_cells.clear()
         return result
 
-    def tiny_command(seed, condition, ticks, extra_args):
+    def tiny_command(seed, condition, ticks, extra_args, **provenance):
         command_calls.append((seed, condition, ticks, extra_args))
         return [
             sys.executable,
@@ -1595,7 +1607,8 @@ def test_private_orchestrator_rejects_malformed_cell_primitives_before_root(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
     before = snapshot_tree(tmp_path)
 
@@ -1623,7 +1636,8 @@ def test_private_orchestrator_rejects_wrong_cell_keys_before_root(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
 
     with pytest.raises(ValueError, match="cell keys"):
@@ -1687,7 +1701,8 @@ def test_private_fresh_root_orchestrator_rejects_nonempty_roots_read_only(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
     before = snapshot_tree(output)
 
@@ -1711,7 +1726,8 @@ def test_private_fresh_root_orchestrator_has_no_rebind_or_reuse_argument(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
     before = snapshot_tree(output)
 
@@ -1856,7 +1872,7 @@ def test_fresh_batch_executes_multiple_frozen_cells_with_tiny_children(
         "results": [],
     }
 
-    def tiny_command(seed, condition, ticks, extra_args):
+    def tiny_command(seed, condition, ticks, extra_args, **provenance):
         command_calls.append((seed, condition, ticks, extra_args))
         script = (
             "from pathlib import Path; "
@@ -1932,7 +1948,8 @@ def test_private_fresh_root_orchestrator_rejects_symlinked_paths_read_only(
     monkeypatch.setattr(
         runner,
         "_simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
     external_before = snapshot_tree(external)
     output_before = None if output.is_symlink() else snapshot_tree(output)
@@ -1999,7 +2016,8 @@ def test_direct_run_rejects_every_nonempty_root_without_starting_child(
     child_calls = []
     monkeypatch.setattr(
         "run_experiments._simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
     before = snapshot_tree(output)
     with pytest.raises(UnsafeResumeError, match="nonempty output root"):
@@ -2030,7 +2048,8 @@ def test_direct_run_rejects_symlinked_root_or_cell_read_only(
     child_calls = []
     monkeypatch.setattr(
         "run_experiments._simulation_command",
-        lambda *args: child_calls.append(args) or [sys.executable, "-c", "pass"],
+        lambda *args, **kwargs: child_calls.append(args)
+        or [sys.executable, "-c", "pass"],
     )
     external_before = snapshot_tree(external)
     output_before = None if output.is_symlink() else snapshot_tree(output)
@@ -2097,3 +2116,51 @@ def test_resume_rejects_legacy_artifacts_without_mutating_them(tmp_path):
         for path in output.rglob("*") if path.is_file()
     }
     assert after == before
+
+
+# ── Plan provenance reaches the child ───────────────────────────────────────
+
+def test_runner_supplies_plan_provenance_to_every_child(tmp_path, monkeypatch):
+    """The runner must assert plan identity on each child it launches.
+
+    Child manifests previously omitted plan identity and hash, which was one
+    reason runner output could never reach `v2_ready`. Testing
+    `_simulation_command` in isolation does not cover this: the call site has
+    to supply the values.
+    """
+    output = tmp_path / "outputs"
+    supplied = []
+    cells = [
+        {**fresh_cell_spec()[0], "seed": seed, "extra_args": []}
+        for seed in (1, 2)
+    ]
+    batch_manifest = {
+        "schema_version": 1,
+        "experiment_id": "provenance-plan",
+        "results": [],
+    }
+
+    def tiny_command(seed, condition, ticks, extra_args, **provenance):
+        supplied.append(provenance)
+        return [sys.executable, "-c", "pass"]
+
+    monkeypatch.setattr(runner, "_simulation_command", tiny_command)
+    monkeypatch.setattr(
+        runner,
+        "inspect_run_outputs",
+        lambda *args, **kwargs: SimpleNamespace(
+            valid=True, errors=[], v2_ready=False),
+    )
+
+    runner._run_cells_in_fresh_root(
+        cells,
+        output,
+        batch_manifest=batch_manifest,
+        plan={"experiment_id": "provenance-plan"},
+        plan_hash="b" * 64,
+    )
+
+    assert len(supplied) == 2
+    for provenance in supplied:
+        assert provenance["plan_identity"] == "provenance-plan"
+        assert provenance["plan_sha256"] == "b" * 64

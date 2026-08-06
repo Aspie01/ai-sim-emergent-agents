@@ -2035,15 +2035,52 @@ def test_unsupported_future_manifest_schema_is_invalid_not_schema_two(tmp_path):
         assert "unsupported_manifest_schema" in issue_codes(report)
 
 
+@pytest.mark.parametrize("path", [
+    ("plan_identity",),
+    ("plan_sha256",),
+    ("code", "tag"),
+])
+def test_absent_provenance_is_valid_but_never_v2_ready(tmp_path, path):
+    """Absent runner provenance is ordinary, not malformed.
+
+    A run launched directly rather than by the experiment runner has no plan,
+    and a development revision carries no annotated tag. Both are valid
+    engineering evidence. Treating them as malformed would make every direct
+    run an invalid artifact. Only V2 readiness requires the values, and the
+    expected-run contract enforces that separately.
+
+    The environment fingerprint is deliberately not in this list: it is always
+    computable, so its absence really is malformed.
+    """
+    run_dir, manifest_path = make_artifacts(tmp_path, event_rows=[])
+    contract = seal_matching_external_identity(manifest_path)
+    manifest = read_manifest(manifest_path)
+    target = manifest
+    for component in path[:-1]:
+        target = target[component]
+    target[path[-1]] = None
+    write_manifest(manifest_path, manifest)
+
+    report = inspect_run_outputs(
+        run_dir,
+        CONDITION,
+        SEED,
+        expected_ticks=3,
+        mode="strict",
+        expected_contract=contract,
+    )
+
+    assert report.valid is True
+    assert report.v2_ready is False
+
+
 @pytest.mark.parametrize(
     ("path", "malformed_value", "expected_code"),
     (
         (("plan_identity",), 7, "invalid_plan_identity"),
         (("plan_identity",), "", "invalid_plan_identity"),
-        (("plan_identity",), None, "invalid_plan_identity"),
         (("plan_sha256",), 7, "invalid_plan_sha256"),
         (("plan_sha256",), "A" * 64, "invalid_plan_sha256"),
-        (("plan_sha256",), None, "invalid_plan_sha256"),
         (("code",), None, "invalid_code_identity_shape"),
         (("code",), [], "invalid_code_identity_shape"),
         (("code",), "revision", "invalid_code_identity_shape"),
@@ -2053,7 +2090,6 @@ def test_unsupported_future_manifest_schema_is_invalid_not_schema_two(tmp_path):
             "unexpected": "value",
         }, "invalid_code_identity_shape"),
         (("code", "commit"), 7, "invalid_code_commit"),
-        (("code", "tag"), None, "invalid_code_tag"),
         (("code", "dirty"), 0, "invalid_code_dirty"),
         (("environment_fingerprint",), 7,
          "invalid_environment_fingerprint"),

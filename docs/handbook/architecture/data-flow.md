@@ -120,7 +120,7 @@ plan JSON bytes
 -> rewritten run index
 ```
 
-The batch manifest knows the plan path/hash. Child run manifests do not contain plan identity or an environment fingerprint, which is one reason current runner output is valid engineering evidence at most, not `v2_ready`.
+The batch manifest knows the plan path/hash, and each child run manifest now records the plan identity and SHA-256 the runner asserted on its command line, plus an environment fingerprint covering the interpreter, platform, and plugin inventory. A run launched directly rather than by the runner records `null` for the plan fields, which is ordinary and remains valid engineering evidence but can never be `v2_ready`.
 
 ## Downstream analysis
 

@@ -192,9 +192,11 @@ At minimum, preserve and match:
 5. structured artifact schemas;
 6. final canonical state hash.
 
-The current manifest records commit and dirty status but not a tag,
-environment fingerprint, or plugin inventory. Matching state hashes is useful
-engineering evidence, but current outputs remain non-V2-ready.
+The manifest records commit, annotated tag, and dirty status, plus an
+environment fingerprint covering the interpreter, platform, and plugin
+inventory. Matching state hashes remain engineering evidence: readiness also
+requires a clean tagged revision and a complete expected-run contract, so a
+run from an untagged or dirty tree stays non-V2-ready.
 
 ## Inspect artifacts and compare two conditions
 

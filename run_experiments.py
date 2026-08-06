@@ -469,9 +469,28 @@ def _code_revision() -> dict:
             ['git', 'status', '--porcelain'], cwd=PROJECT_ROOT,
             capture_output=True, text=True, check=True, timeout=5,
         ).stdout.strip())
-        return {'commit': commit, 'dirty': dirty}
+        return {'commit': commit, 'tag': _annotated_tag(), 'dirty': dirty}
     except (OSError, subprocess.SubprocessError):
-        return {'commit': None, 'dirty': None}
+        return {'commit': None, 'tag': None, 'dirty': None}
+
+
+def _annotated_tag() -> str | None:
+    """Return the annotated tag naming HEAD exactly, or None.
+
+    `--exact-match` matters: plain `git describe` reports the nearest ancestor
+    tag with a distance suffix, which would record an untagged revision as
+    tagged.
+    """
+    try:
+        completed = subprocess.run(
+            ['git', 'describe', '--exact-match', '--tags', 'HEAD'],
+            cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
 
 
 def expected_outputs(run_dir: Path, condition: str, seed: int) -> dict[str, Path]:
@@ -538,12 +557,24 @@ def _simulation_command(
     condition: str,
     ticks: int,
     extra_args: tuple[str, ...],
+    plan_identity: str | None = None,
+    plan_sha256: str | None = None,
 ) -> list[str]:
-    """Build the simulator child command; tests may replace it with a tiny child."""
-    return [
+    """Build the simulator child command; tests may replace it with a tiny child.
+
+    Plan identity travels on argv rather than through the environment so the
+    provenance a child recorded is visible in the command that produced it.
+    """
+    command = [
         sys.executable, '-m', 'thalren_vale', '--seed', str(seed),
-        '--condition', condition, '--ticks', str(ticks), *extra_args,
+        '--condition', condition, '--ticks', str(ticks),
     ]
+    if plan_identity is not None:
+        command += ['--plan-identity', plan_identity]
+    if plan_sha256 is not None:
+        command += ['--plan-sha256', plan_sha256]
+    command += list(extra_args)
+    return command
 
 
 def _safe_existing_ancestor(path: Path) -> Path:
@@ -1041,6 +1072,8 @@ def _run_cells_in_fresh_root(
             cell.condition,
             cell.ticks,
             cell.extra_args,
+            plan_identity=plan.get('experiment_id') if plan else None,
+            plan_sha256=plan_hash,
         )
         env = os.environ.copy()
         source_path = str(PROJECT_ROOT / 'src')

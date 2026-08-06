@@ -81,13 +81,60 @@ intelligibility climbed back to `+0.037`, while lexicon overlap remained
 each other's forms without adopting them.
 
 That asymmetry is the most interesting observation here and it was not
-predicted. A plausible mechanical explanation is that comprehension is learned
-per heard form while production is selected by confidence, and an
-already-entrenched native form keeps winning selection. This explanation has
-**not** been tested and should be treated as a hypothesis for future work
-rather than a finding.
+predicted. It was subsequently traced through the code and measured; see
+§4 below.
 
-## 4. The negative result
+## 4. Why production does not converge
+
+The asymmetry above was investigated by instrumenting the contact phase. The
+original guess — that an entrenched native form keeps winning production
+selection — turned out to be the *last* of several filters rather than the
+explanation, and two intermediate guesses were wrong outright.
+
+Measured over the 900-tick contact phase:
+
+| Stage | Measurement |
+| --- | --- |
+| Cross-group communication | 508 events, 21.1% of all communication |
+| Cross-group success rate | 216 of 508 (42.5%), against 94.0% within-group |
+| Successes clearing promotion | 6 of 216 |
+| Foreign forms reaching production | peak 2 at once, present on 301 of 900 ticks |
+| Peak foreign production confidence | 0.650, against ~0.965 native |
+| Foreign forms ever **selected** | 0 |
+
+Reading the chain in order:
+
+**Contact is not rare.** One in five communications crossed groups. An early
+guess that speciation held because the groups barely spoke was wrong.
+
+**Promotion filters almost everything.** A heard form enters production only
+after its comprehension entry clears both `PROMOTION_CONFIDENCE` (0.50) and
+`PROMOTION_SUCCESS_COUNT` (3). Confidence is the binding criterion: across the
+216 cross-group successes, comprehension confidence averaged 0.292 and cleared
+0.50 only six times, while the success count cleared 3 sixty-nine times.
+
+**The gate is not the whole story either.** Lowering `PROMOTION_CONFIDENCE`
+to 0.40, 0.20, and even 0.05 in an intervention run left lexicon overlap at
+`0.00`, so promotion alone does not produce adoption.
+
+**Selection is where adoption actually dies.** Foreign forms did reach
+production and did become usable, holding a slot on a third of all contact
+ticks and peaking at 0.650 confidence. They were selected **zero** times.
+`_select_production` takes the highest-confidence usable form, and the native
+sits near the 0.965 ceiling.
+
+A foreign form gains confidence passively when heard again, so this is a rate
+race rather than a strict deadlock: it gains on cross-group hearings and is
+weakened whenever the native is reinforced. With within-group communication
+running roughly four times as often, the foreign form stalls well short of the
+incumbent, is never selected, and is eventually evicted. Final foreign
+production count is zero.
+
+So the original hypothesis is confirmed only in its narrowest form —
+entrenched natives do win selection — but it describes the final step of a
+chain in which promotion has already discarded 210 of 216 opportunities.
+
+## 5. The negative result
 
 Coalition intelligibility gating changed nothing in this scenario.
 
@@ -111,7 +158,7 @@ The practical consequence: **the divergence-and-separation behaviour above is
 produced by base language and coevolution v1. Coalition gating is not
 load-bearing for it.**
 
-## 5. What this does not establish
+## 6. What this does not establish
 
 - Nothing about other population sizes, group counts, seeds, thresholds, or
   contact schedules. One scenario was run.
@@ -120,13 +167,17 @@ load-bearing for it.**
   it is untested in either direction.
 - Nothing about whether lexicon overlap would eventually rise given a longer
   contact phase. It was flat for 900 ticks, which is evidence of persistence
-  over that window and not of permanence.
+  over that window and not of permanence. The rate argument in §4 suggests it
+  would stay flat, but that was reasoned from measured rates rather than run.
+- Nothing about whether different promotion or reinforcement constants would
+  permit adoption. The intervention in §4 varied `PROMOTION_CONFIDENCE` only,
+  and did so by patching a module constant in a probe, not by changing source.
 - Nothing about coalition gating's value in general. It shows only that gating
   did not contribute to this particular behaviour.
 - No estimand, contrast, estimator, or uncertainty method is defined, so no
   quantity here is an approved research endpoint.
 
-## 6. Reproducing it
+## 7. Reproducing it
 
 The scenario is a scripted in-process probe rather than a committed fixture,
 because promoting it to a fixture would imply a stability guarantee that one
@@ -140,7 +191,7 @@ economy layer, and coalitions recompute from it during maintenance, so
 sampling between those two steps reports a different state than sampling after
 both.
 
-## 7. Why this note exists
+## 8. Why this note exists
 
 Three coevolution milestones were built in sequence. Before adding a fourth,
 the stack was run to find out what it already did. The answer was that the

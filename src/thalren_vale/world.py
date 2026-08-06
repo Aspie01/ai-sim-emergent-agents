@@ -343,6 +343,98 @@ def grid_add(inh) -> None:
         grid_occupants[key].append(inh)
 
 
+def grid_admit(
+    inh,
+    people: list,
+    *,
+    additional_collections: tuple[list, ...] = (),
+    on_validated=None,
+    on_inserted=None,
+) -> None:
+    """Atomically expose a newly identified inhabitant in grid and population.
+
+    Population insertion happens last while grid readers are blocked. The
+    validation callback stages identity before the first store mutation; the
+    inserted callback commits its allocator only after every store succeeds.
+    Any partial mutation is rolled back before the grid lock is released.
+    """
+    key = (inh.r, inh.c)
+    with _grid_lock:
+        if any(existing is inh for existing in people):
+            raise ValueError("inhabitant is already in the authoritative population")
+        if any(
+            existing is inh
+            for occupants in grid_occupants.values()
+            for existing in occupants
+        ):
+            raise ValueError("inhabitant is already in the spatial grid")
+        if any(collection is people for collection in additional_collections):
+            raise ValueError("population cannot be repeated as an admission collection")
+        if any(
+            collection is earlier
+            for index, collection in enumerate(additional_collections)
+            for earlier in additional_collections[:index]
+        ):
+            raise ValueError("admission collections must not contain duplicates")
+        for collection in additional_collections:
+            if type(collection) is not list:
+                raise TypeError("additional admission collections must be exact lists")
+            if any(existing is inh for existing in collection):
+                raise ValueError(
+                    "inhabitant is already in an additional admission collection")
+
+        if on_validated is not None:
+            on_validated()
+        occupants = grid_occupants.setdefault(key, [])
+        grid_inserted = False
+        inserted_collections: list[list] = []
+        try:
+            occupants.append(inh)
+            grid_inserted = True
+            for collection in additional_collections:
+                collection.append(inh)
+                inserted_collections.append(collection)
+            people.append(inh)
+            if on_inserted is not None:
+                on_inserted()
+        except BaseException:
+            for index in range(len(people) - 1, -1, -1):
+                if people[index] is inh:
+                    del people[index]
+                    break
+            for collection in reversed(inserted_collections):
+                for index in range(len(collection) - 1, -1, -1):
+                    if collection[index] is inh:
+                        del collection[index]
+                        break
+            if grid_inserted:
+                for index in range(len(occupants) - 1, -1, -1):
+                    if occupants[index] is inh:
+                        del occupants[index]
+                        break
+            if not occupants:
+                grid_occupants.pop(key, None)
+            raise
+
+
+def rollback_grid_admission(inh, people: list) -> None:
+    """Remove a fully inserted inhabitant after a failed ID commit."""
+    key = (inh.r, inh.c)
+    with _grid_lock:
+        for index in range(len(people) - 1, -1, -1):
+            if people[index] is inh:
+                del people[index]
+                break
+        occupants = grid_occupants.get(key)
+        if occupants is not None:
+            for index in range(len(occupants) - 1, -1, -1):
+                if occupants[index] is inh:
+                    del occupants[index]
+                    break
+            if not occupants:
+                grid_occupants.pop(key, None)
+
+
 def grid_remove(inh) -> None:
     """Remove *inh* from grid_occupants at its current (r, c).  Call on death."""
     key = (inh.r, inh.c)

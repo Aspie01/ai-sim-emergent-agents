@@ -3,7 +3,10 @@
 import random, time, os, sys, threading
 sys.stdout.reconfigure(encoding='utf-8')
 from collections import defaultdict
+from dataclasses import dataclass
 from .world import world, tick, BIOME_MAX, grid_move, grid_neighbors, get_settlement_at, SETTLEMENT_MOVE_PENALTY, tile_is_sea, BIOME_MOVE_COST, _SEA_ID
+from .events import JournalToken
+from .language import AgentLanguageState
 
 NAMES = [
     # ── Original pool ─────────────────────────────────────────────────────
@@ -40,6 +43,13 @@ CYCLE_LEN     = 50  # length of one full year (2 winters per 100-tick run)
 # naming the child, and appending to the people list so POP_CAP is never breached.
 procreation_lock = threading.Lock()
 
+
+@dataclass(frozen=True)
+class _DeathObservation:
+    inhabitant: object
+    message: str
+    journal_token: JournalToken | None
+
 def is_winter(t):
     phase = (t - 1) % CYCLE_LEN
     return WINTER_START <= phase < WINTER_START + WINTER_LEN
@@ -50,7 +60,7 @@ def regen_rate(t):
 # ── Inhabitant ─────────────────────────────────────────────────────────────
 class Inhabitant:
     __slots__ = (
-        'name', 'r', 'c', 'health', 'hunger', 'inventory',
+        'name', 'inhabitant_id', 'relationships', 'language', 'r', 'c', 'health', 'hunger', 'inventory',
         'beliefs', 'trust', 'trust_last_seen', 'memory', 'trade_count', 'was_pushed',
         'prev_health', 'biome_ticks', 'faction_ticks', 'was_rejected',
         'zero_food_ticks', 'currency',
@@ -71,6 +81,9 @@ class Inhabitant:
 
     def __init__(self, name, r, c):
         self.name      = name
+        self.inhabitant_id = None
+        self.relationships = {}
+        self.language = AgentLanguageState()
         self.r, self.c = r, c
         self.health    = 100
         self.hunger    = 0
@@ -288,7 +301,8 @@ def do_tick_body(inh, all_people, t, event_log_ref, dead_out,
       log_lock    — guards event_log_ref.append() (step 7)
       trade_lock  — guards cross-inhabitant inventory swaps (step 6)
 
-    ``dead_out`` is a caller-supplied list; dead inhabitants are appended to it.
+    ``dead_out`` receives private death observations that pair each inhabitant
+    with the exact narrative journal token created for its starvation message.
     """
     inh.prev_health = inh.health
 
@@ -402,11 +416,15 @@ def do_tick_body(inh, all_people, t, event_log_ref, dead_out,
 
     # 7. Death
     if inh.health <= 0:
-        dead_out.append(inh)
         msg = f"Tick {t:02d}: \u2620 {inh.name} starved at {inh.biome_label()}"
         _llock = log_lock if log_lock is not None else _NullLock()
         with _llock:
-            event_log_ref.append(msg)
+            token = event_log_ref.append(msg)
+        dead_out.append(_DeathObservation(
+            inhabitant=inh,
+            message=msg,
+            journal_token=token if type(token) is JournalToken else None,
+        ))
 
 
 class _NullLock:
@@ -418,9 +436,10 @@ class _NullLock:
 def do_tick(people, t, event_log):
     """Single-threaded convenience wrapper (used by the standalone __main__ block)."""
     do_tick_preamble(people, t)
-    dead = []
+    observations = []
     for inh in people:
-        do_tick_body(inh, people, t, event_log, dead)
+        do_tick_body(inh, people, t, event_log, observations)
+    dead = [observation.inhabitant for observation in observations]
     for d in dead:
         people.remove(d)
     return dead

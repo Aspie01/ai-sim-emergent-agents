@@ -12,7 +12,16 @@ import os
 import time
 import tracemalloc
 from pathlib import Path
-from .events import EVENT_SCHEMA_VERSION
+from .artifact_contract import (
+    BELIEFS_HEADER,
+    EVENTS_HEADER,
+    METRICS_HEADER,
+    RUN_SUMMARY_HEADER,
+    SEASON_NON_WINTER,
+    SEASON_WINTER,
+    TECHNOLOGY_IDENTIFIERS,
+)
+from .events import EVENT_SCHEMA_VERSION, EVENT_TYPES_BY_SCHEMA
 
 
 DEFAULT_EVENT_FLUSH_INTERVAL = 1000
@@ -45,6 +54,20 @@ class MetricsLogger:
         self.event_flush_interval = event_flush_interval
         self._pending_event_rows = 0
         self._event_flush_failures = 0
+        self._event_flush_failures_recovered = 0
+        self._event_flush_failures_unrecovered = 0
+        self._metrics_write_failures = 0
+        self._metrics_flush_failures = 0
+        self._event_write_failures = 0
+        self._belief_write_failures = 0
+        self._belief_flush_failures = 0
+        self._summary_write_failures = 0
+        self._close_failures = 0
+        self._finalization_failures = 0
+        self._unresolved_failures: list[str] = []
+        self._summary_finalized = False
+        self._finalized = False
+        self._closed = False
 
         # Create output directory
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -63,27 +86,13 @@ class MetricsLogger:
         self._beliefs_writer = csv.writer(self._beliefs_fh)
 
         # Write header rows
-        self._metrics_writer.writerow([
-            'seed', 'tick', 'population', 'faction_count', 'war_count',
-            'total_wars_declared', 'total_deaths', 'total_births',
-            'gini', 'mean_trust', 'mean_food', 'total_techs',
-            'total_treaties', 'max_generation', 'mean_generation',
-            'largest_faction_size', 'smallest_faction_size',
-            'total_schisms', 'total_mergers', 'peace_ticks',
-            'mean_reputation', 'reputation_variance',
-            'grid_size', 'season',
-        ])
+        self._metrics_writer.writerow(METRICS_HEADER)
         self._metrics_fh.flush()
 
-        self._events_writer.writerow([
-            'event_schema_version', 'seed', 'tick', 'event_type',
-            'actor', 'target', 'detail',
-        ])
+        self._events_writer.writerow(EVENTS_HEADER)
         self._events_fh.flush()
 
-        self._beliefs_writer.writerow([
-            'seed', 'tick', 'inhabitant_id', 'faction', 'beliefs',
-        ])
+        self._beliefs_writer.writerow(BELIEFS_HEADER)
         self._beliefs_fh.flush()
 
         # Cumulative counters
@@ -111,6 +120,57 @@ class MetricsLogger:
         # Wall clock and memory tracking
         self.start_time = time.time()
         tracemalloc.start()
+
+    def _mark_unresolved(self, code: str, exc: BaseException) -> None:
+        """Record an evidence-writing failure without hiding its context."""
+        detail = f"{code}: {type(exc).__name__}: {exc}"
+        if detail not in self._unresolved_failures:
+            self._unresolved_failures.append(detail)
+
+    def record_unresolved_failure(self, code: str, exc: BaseException) -> None:
+        """Surface a required-output failure caught by lifecycle orchestration."""
+        self._mark_unresolved(code, exc)
+
+    def record_finalization_failure(self, code: str, exc: BaseException) -> None:
+        """Surface a required finalization failure with an explicit counter."""
+        self._finalization_failures += 1
+        self._mark_unresolved(code, exc)
+
+    def writer_health(self) -> dict:
+        """Return manifest-safe structured writer/finalization health."""
+        unresolved = list(self._unresolved_failures)
+        if self._pending_event_rows:
+            unresolved.append(
+                f"pending_event_rows: {self._pending_event_rows} row(s) not flushed")
+        finalized = (
+            self._summary_finalized
+            and not self._event_flush_failures_unrecovered
+        )
+        if not finalized:
+            unresolved.append("logger_not_finalized")
+        if not self._closed:
+            unresolved.append("logger_not_closed")
+        return {
+            "metrics_write_failures": self._metrics_write_failures,
+            "metrics_flush_failures": self._metrics_flush_failures,
+            "event_write_failures": self._event_write_failures,
+            "event_flush_failures": self._event_flush_failures,
+            "event_flush_failures_recovered": (
+                self._event_flush_failures_recovered
+            ),
+            "event_flush_failures_unrecovered": (
+                self._event_flush_failures_unrecovered
+            ),
+            "belief_write_failures": self._belief_write_failures,
+            "belief_flush_failures": self._belief_flush_failures,
+            "summary_write_failures": self._summary_write_failures,
+            "close_failures": self._close_failures,
+            "finalization_failures": self._finalization_failures,
+            "pending_event_rows": self._pending_event_rows,
+            "finalized": finalized,
+            "closed": self._closed,
+            "unresolved_failures": unresolved,
+        }
 
     # ──────────────────────────────────────────────────────────────────────
     # Wealth and Gini helpers (matching economy.py formulas)
@@ -173,7 +233,7 @@ class MetricsLogger:
     # ──────────────────────────────────────────────────────────────────────
 
     def record_tick(self, tick, world, inhabitants, factions,
-                    wars, treaties, peace_ticks):
+                    wars, treaties, peace_ticks) -> bool:
         """Called once per tick from the main loop.  Writes one CSV row."""
         try:
             pop = len(inhabitants)
@@ -237,9 +297,11 @@ class MetricsLogger:
 
             # Season (1 = winter, 0 = otherwise)
             phase = (tick - 1) % self._CYCLE_LEN
-            season = 1 if (self._WINTER_START
-                           <= phase
-                           < self._WINTER_START + self._WINTER_LEN) else 0
+            season = SEASON_WINTER if (
+                self._WINTER_START
+                <= phase
+                < self._WINTER_START + self._WINTER_LEN
+            ) else SEASON_NON_WINTER
 
             # Update running stats
             self._peak_population = max(self._peak_population, pop)
@@ -261,10 +323,17 @@ class MetricsLogger:
 
             # Flush every 100 ticks
             if tick % 100 == 0:
-                self._metrics_fh.flush()
+                try:
+                    self._metrics_fh.flush()
+                except Exception as exc:
+                    self._metrics_flush_failures += 1
+                    self._mark_unresolved("metrics_flush_failed", exc)
+            return True
 
-        except Exception:
-            pass  # Never crash the simulation
+        except Exception as exc:
+            self._metrics_write_failures += 1
+            self._mark_unresolved("metrics_write_failed", exc)
+            return False
 
     # ──────────────────────────────────────────────────────────────────────
     # Discrete event recording
@@ -276,21 +345,30 @@ class MetricsLogger:
             self._events_fh.flush()
         except Exception:
             self._event_flush_failures += 1
+            self._event_flush_failures_unrecovered += 1
             return False
+        if self._event_flush_failures_unrecovered:
+            self._event_flush_failures_recovered += (
+                self._event_flush_failures_unrecovered
+            )
+            self._event_flush_failures_unrecovered = 0
         self._pending_event_rows = 0
         return True
 
-    def record_event(self, tick, event_type, actor="", target="", detail=""):
+    def record_event(self, tick, event_type, actor="", target="", detail="") -> bool:
         """Called whenever a discrete event occurs.  Writes one CSV row
         and increments cumulative counters.
 
-        event_type must be one of:
-            'war_declared', 'war_ended', 'faction_formed', 'faction_dissolved',
-            'schism', 'merger', 'treaty_signed', 'treaty_broken',
-            'tech_researched', 'settlement_founded', 'birth', 'death',
-            'era_shift', 'stagnation_trigger', 'raid', 'world_event'
+        ``event_type`` must belong to the shared active event schema.
         """
         try:
+            if event_type not in EVENT_TYPES_BY_SCHEMA[EVENT_SCHEMA_VERSION]:
+                raise ValueError(f"unknown event type: {event_type}")
+            if (
+                event_type == 'tech_researched'
+                and detail not in TECHNOLOGY_IDENTIFIERS
+            ):
+                raise ValueError(f"unknown technology identifier: {detail!r}")
             self._events_writer.writerow([
                 EVENT_SCHEMA_VERSION, self.seed, tick, event_type,
                 actor, target, detail,
@@ -337,26 +415,31 @@ class MetricsLogger:
                 self.stagnation_events += 1
             elif event_type == 'era_shift':
                 self.era_count += 1
+            return True
 
-        except Exception:
-            pass
+        except Exception as exc:
+            self._event_write_failures += 1
+            self._mark_unresolved("event_write_failed", exc)
+            return False
 
-    def record_simulation_events(self, events) -> None:
+    def record_simulation_events(self, events) -> bool:
         """Record typed engine events without parsing their display text."""
+        ok = True
         for event in events:
-            self.record_event(
+            ok = self.record_event(
                 event.tick,
                 event.event_type,
                 actor=event.actor,
                 target=event.target,
                 detail=event.detail,
-            )
+            ) and ok
+        return ok
 
     # ──────────────────────────────────────────────────────────────────────
     # Belief snapshots (every 100 ticks)
     # ──────────────────────────────────────────────────────────────────────
 
-    def record_beliefs(self, tick, inhabitants, factions):
+    def record_beliefs(self, tick, inhabitants, factions) -> bool:
         """Called every 100 ticks.  Writes one row per living inhabitant."""
         try:
             for inh in inhabitants:
@@ -369,15 +452,22 @@ class MetricsLogger:
                     faction_name,
                     beliefs_str,
                 ])
-            self._beliefs_fh.flush()
-        except Exception:
-            pass
+            try:
+                self._beliefs_fh.flush()
+            except Exception as exc:
+                self._belief_flush_failures += 1
+                self._mark_unresolved("belief_flush_failed", exc)
+            return True
+        except Exception as exc:
+            self._belief_write_failures += 1
+            self._mark_unresolved("belief_write_failed", exc)
+            return False
 
     # ──────────────────────────────────────────────────────────────────────
     # Finalize — run-level summary
     # ──────────────────────────────────────────────────────────────────────
 
-    def finalize(self, world, inhabitants, factions):
+    def finalize(self, world, inhabitants, factions) -> bool:
         """Called once at end of simulation.  Appends one row to
         data/run_summaries.csv.
         """
@@ -441,20 +531,7 @@ class MetricsLogger:
             with open(summary_path, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 if not file_exists:
-                    writer.writerow([
-                        'seed', 'condition', 'final_population',
-                        'peak_population', 'min_population',
-                        'total_factions_formed', 'final_faction_count',
-                        'peak_faction_count', 'first_faction_tick',
-                        'total_wars', 'total_deaths', 'total_births',
-                        'total_schisms', 'total_mergers',
-                        'mean_gini', 'final_gini', 'peak_gini',
-                        'total_unique_techs', 'mean_tech_count_per_faction',
-                        'total_treaties_formed', 'total_treaties_broken',
-                        'max_generation', 'mean_war_duration',
-                        'stagnation_events', 'era_count',
-                        'wall_clock_seconds', 'peak_ram_mb',
-                    ])
+                    writer.writerow(RUN_SUMMARY_HEADER)
                 writer.writerow([
                     self.seed, self.condition, final_pop,
                     self._peak_population, self._min_population,
@@ -472,22 +549,38 @@ class MetricsLogger:
                     self.stagnation_events, self.era_count,
                     wall_clock, peak_ram,
                 ])
+            success = True
+            self._summary_finalized = True
 
-        except Exception:
-            pass
+        except Exception as exc:
+            self._summary_write_failures += 1
+            self._mark_unresolved("summary_write_failed", exc)
+            success = False
+            self._summary_finalized = False
         finally:
-            self.flush_events()
+            if not self.flush_events():
+                success = False
+            self._finalized = self._summary_finalized
+        return success
 
     # ──────────────────────────────────────────────────────────────────────
     # Cleanup
     # ──────────────────────────────────────────────────────────────────────
 
-    def close(self):
+    def close(self) -> bool:
         """Flush and close all CSV file handles.  Call after finalize()."""
-        self.flush_events()
-        for fh in (self._metrics_fh, self._events_fh, self._beliefs_fh):
+        success = self.flush_events()
+        for label, fh in (
+            ("metrics", self._metrics_fh),
+            ("events", self._events_fh),
+            ("beliefs", self._beliefs_fh),
+        ):
             try:
                 fh.flush()
                 fh.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                self._close_failures += 1
+                self._mark_unresolved(f"{label}_close_failed", exc)
+                success = False
+        self._closed = success
+        return success

@@ -2,6 +2,18 @@
 
 from dataclasses import dataclass, field
 
+from .coalitions import CoalitionRuntimeState
+from .language import (
+    CoalitionDialectRuntimeState,
+    CompositionalProtolanguageRuntimeState,
+    GrammarEvolutionRuntimeState,
+    IntergenerationalLanguageRuntimeState,
+    LanguageCoevolutionRuntimeState,
+    LanguageContactRuntimeState,
+    LanguageRuntimeState,
+    LexicalEvolutionRuntimeState,
+)
+
 
 @dataclass
 class SimulationState:
@@ -34,6 +46,50 @@ class SimulationState:
     scarcity_events: list = field(default_factory=list)
     religions: list = field(default_factory=list)
     holy_wars: set = field(default_factory=set)
+    next_inhabitant_id: int = 0
+    coalitions: CoalitionRuntimeState = field(
+        default_factory=CoalitionRuntimeState)
+    language: LanguageRuntimeState = field(
+        default_factory=LanguageRuntimeState)
+    dialect: CoalitionDialectRuntimeState = field(
+        default_factory=CoalitionDialectRuntimeState)
+    language_contact: LanguageContactRuntimeState = field(
+        default_factory=LanguageContactRuntimeState)
+    intergenerational_language: IntergenerationalLanguageRuntimeState = field(
+        default_factory=IntergenerationalLanguageRuntimeState)
+    lexical_evolution: LexicalEvolutionRuntimeState = field(
+        default_factory=LexicalEvolutionRuntimeState)
+    compositional_protolanguage: CompositionalProtolanguageRuntimeState = field(
+        default_factory=CompositionalProtolanguageRuntimeState)
+    grammar_evolution: GrammarEvolutionRuntimeState = field(
+        default_factory=GrammarEvolutionRuntimeState)
+    language_coevolution: LanguageCoevolutionRuntimeState = field(
+        default_factory=LanguageCoevolutionRuntimeState)
+
+    def stage_inhabitant_id(self, inhabitant, candidate: int) -> None:
+        """Assign, but do not yet consume, the next authoritative run ID."""
+        if getattr(inhabitant, "inhabitant_id", None) is not None:
+            raise ValueError("inhabitant already has an assigned ID")
+        if type(candidate) is not int or candidate != self.next_inhabitant_id:
+            raise ValueError("candidate inhabitant ID is no longer current")
+        inhabitant.inhabitant_id = candidate
+
+    def commit_inhabitant_id(self, inhabitant, candidate: int) -> None:
+        """Consume a staged ID only after authoritative insertion succeeds."""
+        if getattr(inhabitant, "inhabitant_id", None) != candidate:
+            raise ValueError("staged inhabitant ID changed before commit")
+        if candidate != self.next_inhabitant_id:
+            raise ValueError("staged inhabitant ID is no longer current")
+        self.next_inhabitant_id += 1
+
+    def rollback_inhabitant_id(self, inhabitant, candidate: int) -> None:
+        """Restore the allocator and candidate after failed admission."""
+        if self.next_inhabitant_id == candidate + 1:
+            self.next_inhabitant_id = candidate
+        elif self.next_inhabitant_id != candidate:
+            raise RuntimeError("cannot safely roll back inhabitant ID allocator")
+        if getattr(inhabitant, "inhabitant_id", None) == candidate:
+            inhabitant.inhabitant_id = None
 
     def reset(self) -> None:
         """Clear this run's collections without invalidating aliases."""
@@ -59,3 +115,14 @@ class SimulationState:
         self.scarcity_events.clear()
         self.religions.clear()
         self.holy_wars.clear()
+        self.next_inhabitant_id = 0
+        self.coalitions = CoalitionRuntimeState()
+        self.language = LanguageRuntimeState()
+        self.dialect = CoalitionDialectRuntimeState()
+        self.language_contact = LanguageContactRuntimeState()
+        self.intergenerational_language = IntergenerationalLanguageRuntimeState()
+        self.lexical_evolution = LexicalEvolutionRuntimeState()
+        self.compositional_protolanguage = (
+            CompositionalProtolanguageRuntimeState())
+        self.grammar_evolution = GrammarEvolutionRuntimeState()
+        self.language_coevolution = LanguageCoevolutionRuntimeState()

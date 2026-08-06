@@ -24,6 +24,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 from .world   import world, BIOME_MAX, coast_score
 from .beliefs import add_belief, core_of, inh_cores, MAX_BELIEFS
 from .events import emit_event
+from .artifact_contract import TECHNOLOGY_IDENTIFIERS
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -158,6 +159,9 @@ TECH_TREE: dict[str, dict] = {
         'desc':     'Raises internal trust; suppresses schisms; +5 reputation permanently',
     },
 }
+
+if frozenset(TECH_TREE) != TECHNOLOGY_IDENTIFIERS:
+    raise RuntimeError("technology tree and structured-artifact contract differ")
 
 # Branch → set of tech names (for quick lookup)
 _BRANCH: dict[str, set] = {}

@@ -35,4 +35,4 @@ flowchart TD
     VALIDATE --> ANALYSIS
 ```
 
-Current limitations: no immutable attempt directory, append-only ledger, selected attempt, safe nonempty-root resume, fail-fast dispatch, environment/plugin preflight, or V2-ready execution contract. All are **Planned, not implemented**.
+Current limitations: no immutable attempt directory, append-only ledger, selected attempt, safe nonempty-root resume, fail-fast dispatch, environment/plugin preflight, or V2-ready execution contract. All are **Planned, not implemented**. Revision preflight is the one piece that exists: opt-in per plan, enforced before any output root is created.

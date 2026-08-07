@@ -500,6 +500,7 @@ def load_plan(plan_path: Path) -> tuple[dict, str]:
     experiment_id = plan.get('experiment_id', '')
     if not _SAFE_NAME.fullmatch(experiment_id):
         raise ValueError("experiment_id must be filename-safe")
+    _validate_revision_contract(plan)
     conditions = plan.get('conditions')
     if not isinstance(conditions, list) or not conditions:
         raise ValueError("plan must define at least one condition")
@@ -574,6 +575,112 @@ def _annotated_tag() -> str | None:
     if completed.returncode != 0:
         return None
     return completed.stdout.strip() or None
+
+
+class RevisionContractError(ValueError):
+    """HEAD does not satisfy the revision contract a plan declared."""
+
+
+_EXPECTED_COMMIT = re.compile(r'[0-9a-f]{40}')
+
+# A plan opts into revision enforcement by declaring any of these. Enforcement
+# is opt-in because the runner is also used for engineering characterization on
+# untagged working revisions, and root AGENTS.md forbids tagging a run-ready
+# revision unless explicitly requested. A plan that says nothing about its
+# revision therefore behaves exactly as before; a plan that makes a provenance
+# claim has that claim checked before anything executes.
+_REVISION_CONTRACT_KEYS = (
+    'expected_commit', 'expected_tag', 'require_clean_revision')
+
+
+def _validate_revision_contract(plan: dict) -> None:
+    """Reject a malformed revision contract while loading the plan.
+
+    Shape errors are rejected here rather than at preflight so that a
+    typo cannot silently disable enforcement: a plan carrying
+    ``expected_commit: ""`` must fail loudly instead of reading as absent.
+    """
+    commit = plan.get('expected_commit')
+    if commit is not None and (
+            type(commit) is not str or not _EXPECTED_COMMIT.fullmatch(commit)):
+        raise ValueError(
+            'expected_commit must be a 40-character lowercase hex commit id')
+
+    tag = plan.get('expected_tag')
+    if tag is not None and (type(tag) is not str or not tag.strip()):
+        raise ValueError('expected_tag must be a nonempty string')
+
+    require_clean = plan.get('require_clean_revision')
+    if require_clean is not None and type(require_clean) is not bool:
+        # Exact identity, not truthiness: `1` would otherwise read as True and
+        # record a boolean the plan never stated.
+        raise ValueError('require_clean_revision must be true or false')
+
+
+def _declares_revision_contract(plan: dict) -> bool:
+    return any(plan.get(key) is not None for key in _REVISION_CONTRACT_KEYS)
+
+
+def _preflight_revision_contract(plan: dict) -> dict:
+    """Fail closed before execution when HEAD violates the plan's contract.
+
+    Returns the evidence to record either way. When a plan declares no
+    contract this records the revision and enforces nothing, which is the
+    pre-existing behaviour.
+
+    An unreadable revision is a failure, not a pass. A plan that claims to run
+    at a known commit cannot be honoured where the commit cannot be read, and
+    treating that as success would record `code_dirty: null` under a provenance
+    claim the runner never actually checked.
+    """
+    revision = _code_revision()
+    evidence = {
+        'enforced': False,
+        'expected_commit': plan.get('expected_commit'),
+        'expected_tag': plan.get('expected_tag'),
+        'require_clean_revision': plan.get('require_clean_revision'),
+        'revision': revision,
+    }
+    if not _declares_revision_contract(plan):
+        return evidence
+    evidence['enforced'] = True
+
+    if revision['commit'] is None:
+        raise RevisionContractError(
+            'plan declares a revision contract but the repository revision '
+            'could not be read; refusing to execute under an unverifiable '
+            'revision')
+
+    expected_commit = plan.get('expected_commit')
+    if expected_commit is not None and revision['commit'] != expected_commit:
+        raise RevisionContractError(
+            f'plan expects commit {expected_commit} but HEAD is '
+            f'{revision["commit"]}; a plan cannot be executed against a '
+            'different revision than the one it was frozen against')
+
+    expected_tag = plan.get('expected_tag')
+    if expected_tag is not None:
+        if revision['tag'] is None:
+            raise RevisionContractError(
+                f'plan expects annotated tag {expected_tag!r} but no annotated '
+                'tag resolves exactly to HEAD')
+        if revision['tag'] != expected_tag:
+            raise RevisionContractError(
+                f'plan expects annotated tag {expected_tag!r} but HEAD is '
+                f'tagged {revision["tag"]!r}')
+
+    if plan.get('require_clean_revision'):
+        if revision['dirty'] is None:
+            raise RevisionContractError(
+                'plan requires a clean revision but the working tree status '
+                'could not be read')
+        if revision['dirty']:
+            raise RevisionContractError(
+                'plan requires a clean revision but the parent repository has '
+                'uncommitted changes; commit or stash them, or remove '
+                'require_clean_revision from the plan')
+
+    return evidence
 
 
 def expected_outputs(run_dir: Path, condition: str, seed: int) -> dict[str, Path]:
@@ -1304,6 +1411,9 @@ def run_from_plan(
     overwrite: bool = False,
 ) -> tuple[list[dict], Path]:
     plan, plan_hash = load_plan(plan_path)
+    # Before any output root is touched: a contract violation must not leave a
+    # partially created experiment directory behind.
+    revision_contract = _preflight_revision_contract(plan)
     output_root = output_root or Path('experiment_runs') / plan['experiment_id']
     default_ticks = int(plan.get('default_ticks', 5000))
     default_timeout = plan.get('timeout_seconds', 86400)
@@ -1343,7 +1453,8 @@ def run_from_plan(
         'plan_schema_version': plan['schema_version'],
         'plan_sha256': plan_hash,
         'plan_path': str(plan_path.resolve()),
-        'code': _code_revision(),
+        'code': revision_contract['revision'],
+        'revision_contract': revision_contract,
         'started_at': datetime.now(timezone.utc).isoformat(),
         'completed_at': None,
         'resume_count': 0,

@@ -71,7 +71,8 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | Biological age/senescence/family model | Planned, not implemented only as a possibility; no active contract exists |
 | Checkpoint, PRNG restoration or event replay | Planned, not implemented |
 | Immutable experiment attempts, ledger, selection and safe resume | Planned, not implemented |
-| Clean-tag preflight, enforced plugin load policy, and V2 matrix orchestration | Planned, not implemented. The annotated tag, dirty status, and an environment fingerprint over interpreter, platform, and plugin digests are already recorded in every run manifest; what is missing is the preflight that refuses to run when they are wrong |
+| Enforced plugin load policy and V2 matrix orchestration | Planned, not implemented |
+| Revision preflight | Implemented, opt-in. A plan declaring `expected_commit`, `expected_tag`, or `require_clean_revision` has it enforced before any output root is created, and an unreadable revision fails closed. Enforcement is opt-in because the runner also serves engineering characterization on untagged revisions. Environment, dependency, and plugin fingerprints are recorded but **not** yet enforced |
 | Estimand, contrast, estimator, uncertainty method, multiplicity rules | Planned, not implemented |
 | Runner construction of a complete `ExpectedRunContract` | Planned, not implemented; the validator accepts one, the runner never builds one |
 

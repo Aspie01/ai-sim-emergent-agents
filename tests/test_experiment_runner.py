@@ -2164,3 +2164,176 @@ def test_runner_supplies_plan_provenance_to_every_child(tmp_path, monkeypatch):
     for provenance in supplied:
         assert provenance["plan_identity"] == "provenance-plan"
         assert provenance["plan_sha256"] == "b" * 64
+
+
+# ── Revision contract preflight ─────────────────────────────────────────────
+
+CLEAN = {"commit": "a" * 40, "tag": "run-ready-v1", "dirty": False}
+
+
+def revision(monkeypatch, **overrides):
+    """Pin the repository revision the preflight sees."""
+    state = dict(CLEAN)
+    state.update(overrides)
+    monkeypatch.setattr(runner, "_code_revision", lambda: state)
+    return state
+
+
+# Malformed contracts are rejected while loading, not at execution time, so a
+# typo cannot silently read as "no contract declared".
+
+@pytest.mark.parametrize("field,value", [
+    ("expected_commit", ""),
+    ("expected_commit", "not-a-commit"),
+    ("expected_commit", "A" * 40),        # uppercase is not git's spelling
+    ("expected_commit", "a" * 39),
+    ("expected_commit", 123),
+    ("expected_tag", ""),
+    ("expected_tag", "   "),
+    ("expected_tag", 7),
+    ("require_clean_revision", "true"),
+    ("require_clean_revision", 1),        # bool identity, not truthiness
+    ("require_clean_revision", 0),
+])
+def test_malformed_revision_contract_is_rejected_by_load_plan(
+        tmp_path, field, value):
+    plan_path = write_plan(tmp_path / "plan.json", **{field: value})
+    with pytest.raises(ValueError):
+        load_plan(plan_path)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("expected_commit", "b" * 40),
+    ("expected_tag", "run-ready-v1"),
+    ("require_clean_revision", True),
+    ("require_clean_revision", False),
+])
+def test_well_formed_revision_contract_loads(tmp_path, field, value):
+    plan_path = write_plan(tmp_path / "plan.json", **{field: value})
+    plan, _hash = load_plan(plan_path)
+    assert plan[field] == value
+
+
+# A plan that says nothing about its revision must behave exactly as before.
+
+def test_plan_without_a_contract_enforces_nothing(monkeypatch):
+    revision(monkeypatch, commit=None, tag=None, dirty=None)
+    evidence = runner._preflight_revision_contract({})
+    assert evidence["enforced"] is False
+    assert evidence["revision"]["commit"] is None
+
+
+def test_absent_contract_does_not_require_a_readable_revision(monkeypatch):
+    """Engineering runs happen on untagged, dirty, and non-git trees."""
+    revision(monkeypatch, commit=None, tag=None, dirty=None)
+    runner._preflight_revision_contract({"experiment_id": "x"})
+
+
+# Declared contracts are enforced, and every failure is closed.
+
+def test_matching_commit_passes(monkeypatch):
+    revision(monkeypatch)
+    evidence = runner._preflight_revision_contract(
+        {"expected_commit": "a" * 40})
+    assert evidence["enforced"] is True
+
+
+def test_mismatched_commit_fails_closed(monkeypatch):
+    revision(monkeypatch)
+    with pytest.raises(runner.RevisionContractError, match="HEAD is"):
+        runner._preflight_revision_contract({"expected_commit": "b" * 40})
+
+
+def test_missing_annotated_tag_fails_closed(monkeypatch):
+    revision(monkeypatch, tag=None)
+    with pytest.raises(runner.RevisionContractError, match="no annotated tag"):
+        runner._preflight_revision_contract({"expected_tag": "run-ready-v1"})
+
+
+def test_mismatched_tag_fails_closed(monkeypatch):
+    revision(monkeypatch, tag="some-other-tag")
+    with pytest.raises(runner.RevisionContractError, match="tagged"):
+        runner._preflight_revision_contract({"expected_tag": "run-ready-v1"})
+
+
+def test_dirty_tree_fails_closed_when_clean_is_required(monkeypatch):
+    revision(monkeypatch, dirty=True)
+    with pytest.raises(runner.RevisionContractError, match="uncommitted"):
+        runner._preflight_revision_contract({"require_clean_revision": True})
+
+
+def test_clean_tree_passes_when_clean_is_required(monkeypatch):
+    revision(monkeypatch, dirty=False)
+    assert runner._preflight_revision_contract(
+        {"require_clean_revision": True})["enforced"] is True
+
+
+def test_require_clean_false_does_not_reject_a_dirty_tree(monkeypatch):
+    revision(monkeypatch, dirty=True)
+    runner._preflight_revision_contract({"require_clean_revision": False})
+
+
+@pytest.mark.parametrize("contract", [
+    {"expected_commit": "a" * 40},
+    {"expected_tag": "run-ready-v1"},
+    {"require_clean_revision": True},
+])
+def test_unreadable_revision_fails_closed_under_any_contract(
+        monkeypatch, contract):
+    """An unverifiable revision is a failure, not a pass.
+
+    Recording `dirty: null` under a provenance claim the runner never checked
+    would be worse than refusing to run.
+    """
+    revision(monkeypatch, commit=None, tag=None, dirty=None)
+    with pytest.raises(runner.RevisionContractError):
+        runner._preflight_revision_contract(contract)
+
+
+def test_unreadable_dirty_status_fails_closed(monkeypatch):
+    revision(monkeypatch, dirty=None)
+    with pytest.raises(runner.RevisionContractError, match="could not be read"):
+        runner._preflight_revision_contract({"require_clean_revision": True})
+
+
+# Ordering: a violation must not leave an experiment directory behind.
+
+def test_contract_violation_creates_no_output_root(tmp_path, monkeypatch):
+    revision(monkeypatch, dirty=True)
+    plan_path = write_plan(tmp_path / "plan.json", require_clean_revision=True)
+    output_root = tmp_path / "experiment_runs"
+
+    with pytest.raises(runner.RevisionContractError):
+        runner.run_from_plan(plan_path, output_root)
+
+    assert not output_root.exists(), (
+        "preflight must fail before any output root is created")
+
+
+def test_enforced_contract_is_recorded_in_the_batch_manifest(
+        tmp_path, monkeypatch):
+    revision(monkeypatch)
+    plan_path = write_plan(
+        tmp_path / "plan.json", expected_tag="run-ready-v1",
+        require_clean_revision=True)
+    plan, _hash = load_plan(plan_path)
+    evidence = runner._preflight_revision_contract(plan)
+
+    assert evidence["enforced"] is True
+    assert evidence["expected_tag"] == "run-ready-v1"
+    assert evidence["require_clean_revision"] is True
+    assert evidence["revision"]["dirty"] is False
+
+
+def test_declaring_a_contract_at_all_requires_a_readable_revision(monkeypatch):
+    """`require_clean_revision: false` still declares a revision contract.
+
+    This is the one contract whose downstream checks are all passive, so it
+    isolates the guard that the revision must be readable at all. Stating
+    anything about the revision means the runner has to be able to read it;
+    otherwise the manifest records `commit: null` beneath a plan that made a
+    provenance claim nobody verified.
+    """
+    revision(monkeypatch, commit=None, tag=None, dirty=None)
+    with pytest.raises(runner.RevisionContractError, match="unverifiable"):
+        runner._preflight_revision_contract({"require_clean_revision": False})

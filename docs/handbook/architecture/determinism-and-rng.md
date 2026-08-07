@@ -105,7 +105,10 @@ Same seeds across different conditions are replicate identifiers, not permanentl
   deliberately excluded because packaging metadata varies by install method.
 - No per-tick hashes, RNG serialization, checkpoint, restore, or event replay.
 - No deterministic-parallelism guarantee.
-- Clean-tag/environment preflight and checkpoint/replay are **Planned, not implemented**.
+- Revision preflight is implemented and opt-in; a plan declaring
+  `expected_commit`, `expected_tag`, or `require_clean_revision` cannot run
+  against a revision that violates it. Environment preflight and
+  checkpoint/replay are **Planned, not implemented**.
 
 ## Implementation evidence
 

@@ -153,7 +153,7 @@ plan + code + environment
 -> derived analysis
 ```
 
-The generic runner currently records only part of the complete provenance shown. Clean-tag/environment/plugin preflight and immutable attempts are **Planned, not implemented**.
+The generic runner currently records only part of the complete provenance shown. Revision preflight is implemented and opt-in: a plan that declares `expected_commit`, `expected_tag`, or `require_clean_revision` has it enforced before execution. Environment and plugin preflight, and immutable attempts, are **Planned, not implemented**.
 
 ## Connection classification
 

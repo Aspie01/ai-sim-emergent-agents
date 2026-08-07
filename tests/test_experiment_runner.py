@@ -2632,3 +2632,129 @@ def test_explicit_argument_overrides_the_plan(tmp_path, monkeypatch):
     results, _root = runner.run_from_plan(
         plan_path, tmp_path / "out", fail_fast=True)
     assert len(results) == 2
+
+
+# ── Environment contract preflight ──────────────────────────────────────────
+
+def environment(monkeypatch, *, fingerprint="e" * 64, plugins=()):
+    """Pin the environment the preflight sees."""
+    monkeypatch.setattr(runner, "environment_fingerprint",
+                        lambda *a, **k: fingerprint)
+    monkeypatch.setattr(runner, "plugin_inventory",
+                        lambda *a, **k: [dict(p) for p in plugins])
+
+
+PLUGIN = {"name": "example_plugin.py", "sha256": "f" * 64}
+
+
+@pytest.mark.parametrize("field,value", [
+    ("expected_environment_fingerprint", ""),
+    ("expected_environment_fingerprint", "not-hex"),
+    ("expected_environment_fingerprint", "E" * 64),
+    ("expected_environment_fingerprint", "e" * 63),
+    ("expected_environment_fingerprint", 7),
+    ("require_empty_plugin_inventory", "true"),
+    ("require_empty_plugin_inventory", 1),
+    ("require_empty_plugin_inventory", 0),
+])
+def test_malformed_environment_contract_is_rejected_by_load_plan(
+        tmp_path, field, value):
+    plan_path = write_plan(tmp_path / "plan.json", **{field: value})
+    with pytest.raises(ValueError):
+        load_plan(plan_path)
+
+
+def test_plan_without_an_environment_contract_enforces_nothing(monkeypatch):
+    environment(monkeypatch, plugins=(PLUGIN,))
+    evidence = runner._preflight_environment_contract({})
+    assert evidence["enforced"] is False
+    assert evidence["environment"]["plugin_count"] == 1
+
+
+def test_matching_environment_fingerprint_passes(monkeypatch):
+    environment(monkeypatch)
+    evidence = runner._preflight_environment_contract(
+        {"expected_environment_fingerprint": "e" * 64})
+    assert evidence["enforced"] is True
+
+
+def test_mismatched_environment_fingerprint_fails_closed(monkeypatch):
+    environment(monkeypatch, fingerprint="a" * 64, plugins=(PLUGIN,))
+    with pytest.raises(runner.EnvironmentContractError) as error:
+        runner._preflight_environment_contract(
+            {"expected_environment_fingerprint": "e" * 64})
+    # A bare digest mismatch is undiagnosable; the plugin names must appear.
+    assert "example_plugin.py" in str(error.value)
+
+
+def test_a_mismatch_with_no_plugins_says_so(monkeypatch):
+    environment(monkeypatch, fingerprint="a" * 64)
+    with pytest.raises(runner.EnvironmentContractError, match="none"):
+        runner._preflight_environment_contract(
+            {"expected_environment_fingerprint": "e" * 64})
+
+
+def test_present_plugins_fail_closed_when_an_empty_inventory_is_required(
+        monkeypatch):
+    environment(monkeypatch, plugins=(PLUGIN,))
+    with pytest.raises(runner.EnvironmentContractError,
+                       match="example_plugin.py"):
+        runner._preflight_environment_contract(
+            {"require_empty_plugin_inventory": True})
+
+
+def test_an_empty_inventory_passes_when_required(monkeypatch):
+    environment(monkeypatch)
+    assert runner._preflight_environment_contract(
+        {"require_empty_plugin_inventory": True})["enforced"] is True
+
+
+def test_require_empty_false_tolerates_plugins(monkeypatch):
+    environment(monkeypatch, plugins=(PLUGIN,))
+    runner._preflight_environment_contract(
+        {"require_empty_plugin_inventory": False})
+
+
+def test_the_environment_is_recorded_even_with_no_contract(monkeypatch):
+    """Section 10 requires recording regardless of whether anything enforces."""
+    environment(monkeypatch, plugins=(PLUGIN,))
+    record = runner._preflight_environment_contract({})["environment"]
+    for key in ("fingerprint", "python_version", "python_executable",
+                "python_implementation", "system", "machine",
+                "pythonhashseed_policy", "plugin_inventory", "plugin_count"):
+        assert key in record, key
+    assert record["pythonhashseed_policy"] == "forced_zero_for_children"
+    assert os.path.isabs(record["python_executable"])
+
+
+def test_an_empty_plugin_inventory_is_recorded_explicitly(monkeypatch):
+    """'including an explicit empty/disabled inventory when applicable'."""
+    environment(monkeypatch)
+    record = runner._preflight_environment_contract({})["environment"]
+    assert record["plugin_inventory"] == []
+    assert record["plugin_count"] == 0
+
+
+def test_environment_violation_creates_no_output_root(tmp_path, monkeypatch):
+    environment(monkeypatch, plugins=(PLUGIN,))
+    plan_path = write_plan(
+        tmp_path / "plan.json", require_empty_plugin_inventory=True)
+    output_root = tmp_path / "experiment_runs"
+
+    with pytest.raises(runner.EnvironmentContractError):
+        runner.run_from_plan(plan_path, output_root)
+
+    assert not output_root.exists()
+
+
+def test_expansion_reports_the_environment_without_enforcing_it(
+        tmp_path, monkeypatch):
+    environment(monkeypatch, plugins=(PLUGIN,))
+    plan_path = write_plan(
+        tmp_path / "plan.json", require_empty_plugin_inventory=True,
+        default_ticks=1, conditions=[{"name": "c", "seeds": "1"}])
+
+    report = runner.expand_plan(plan_path, tmp_path / "out")
+
+    assert report["environment_contract"]["declared"] is True
+    assert report["environment_contract"]["environment"]["plugin_count"] == 1

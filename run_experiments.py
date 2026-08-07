@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 import os
+import platform
 import re
 import signal
 import shlex
@@ -31,6 +32,10 @@ from thalren_vale.artifact_validation import (  # noqa: E402
     ValidationPolicy,
     artifact_paths,
     inspect_run_outputs,
+)
+from thalren_vale.reproducibility import (  # noqa: E402
+    environment_fingerprint,
+    plugin_inventory,
 )
 
 PLAN_SCHEMA_VERSION = 1
@@ -501,6 +506,7 @@ def load_plan(plan_path: Path) -> tuple[dict, str]:
     if not _SAFE_NAME.fullmatch(experiment_id):
         raise ValueError("experiment_id must be filename-safe")
     _validate_revision_contract(plan)
+    _validate_environment_contract(plan)
     if plan.get('fail_fast') is not None and type(plan['fail_fast']) is not bool:
         raise ValueError('fail_fast must be true or false')
     conditions = plan.get('conditions')
@@ -681,6 +687,99 @@ def _preflight_revision_contract(plan: dict) -> dict:
                 'plan requires a clean revision but the parent repository has '
                 'uncommitted changes; commit or stash them, or remove '
                 'require_clean_revision from the plan')
+
+    return evidence
+
+
+class EnvironmentContractError(ValueError):
+    """The environment does not satisfy the contract a plan declared."""
+
+
+_ENVIRONMENT_CONTRACT_KEYS = (
+    'expected_environment_fingerprint', 'require_empty_plugin_inventory')
+
+
+def _environment_record() -> dict:
+    """Everything section 10 requires about the environment, recorded always.
+
+    The plugin inventory is recorded in full rather than only as part of the
+    fingerprint digest. A bare hash mismatch says something changed but not
+    what, and "which plugin appeared" is exactly the question someone auditing a
+    mismatched run needs answered.
+    """
+    inventory = plugin_inventory(PROJECT_ROOT)
+    return {
+        'fingerprint': environment_fingerprint(PROJECT_ROOT),
+        'python_version': '%d.%d.%d' % sys.version_info[:3],
+        'python_implementation': platform.python_implementation(),
+        'python_executable': os.path.abspath(sys.executable),
+        'system': platform.system(),
+        'machine': platform.machine(),
+        # The runner forces PYTHONHASHSEED=0 into every child, so the policy is
+        # a property of the runner rather than of whatever shell invoked it.
+        'pythonhashseed_policy': 'forced_zero_for_children',
+        'plugin_inventory': inventory,
+        'plugin_count': len(inventory),
+    }
+
+
+def _validate_environment_contract(plan: dict) -> None:
+    """Reject a malformed environment contract while loading the plan."""
+    fingerprint = plan.get('expected_environment_fingerprint')
+    if fingerprint is not None and (
+            type(fingerprint) is not str
+            or not re.fullmatch(r'[0-9a-f]{64}', fingerprint)):
+        raise ValueError(
+            'expected_environment_fingerprint must be a 64-character '
+            'lowercase hex digest')
+    require_empty = plan.get('require_empty_plugin_inventory')
+    if require_empty is not None and type(require_empty) is not bool:
+        raise ValueError(
+            'require_empty_plugin_inventory must be true or false')
+
+
+def _declares_environment_contract(plan: dict) -> bool:
+    return any(plan.get(key) is not None
+               for key in _ENVIRONMENT_CONTRACT_KEYS)
+
+
+def _preflight_environment_contract(plan: dict) -> dict:
+    """Fail closed before execution when the environment violates the plan.
+
+    Opt-in for the same reason the revision contract is: the runner serves
+    engineering characterization on whatever interpreter is to hand, and a
+    mandatory fingerprint match would make the runner unusable outside the one
+    machine that produced the expected digest.
+    """
+    environment = _environment_record()
+    evidence = {
+        'enforced': False,
+        'expected_environment_fingerprint': plan.get(
+            'expected_environment_fingerprint'),
+        'require_empty_plugin_inventory': plan.get(
+            'require_empty_plugin_inventory'),
+        'environment': environment,
+    }
+    if not _declares_environment_contract(plan):
+        return evidence
+    evidence['enforced'] = True
+
+    expected = plan.get('expected_environment_fingerprint')
+    if expected is not None and environment['fingerprint'] != expected:
+        raise EnvironmentContractError(
+            f'plan expects environment fingerprint {expected} but this '
+            f'environment is {environment["fingerprint"]}; interpreter, '
+            f'platform, or plugin inventory differs. Plugins present: '
+            f'{[entry["name"] for entry in environment["plugin_inventory"]] or "none"}')
+
+    if plan.get('require_empty_plugin_inventory'):
+        if environment['plugin_inventory']:
+            names = ', '.join(
+                entry['name'] for entry in environment['plugin_inventory'])
+            raise EnvironmentContractError(
+                f'plan requires an empty plugin inventory but plugins are '
+                f'present: {names}. Plugins can alter a run, so a cell that '
+                'declares none must not execute beside them')
 
     return evidence
 
@@ -1522,6 +1621,14 @@ def expand_plan(plan_path: Path, output_root: Path | None = None) -> dict:
         'output_root': str(root),
         'cell_count': len(expanded),
         'total_ticks': sum(cell['ticks'] for cell in cells),
+        'environment_contract': {
+            'expected_environment_fingerprint': plan.get(
+                'expected_environment_fingerprint'),
+            'require_empty_plugin_inventory': plan.get(
+                'require_empty_plugin_inventory'),
+            'declared': _declares_environment_contract(plan),
+            'environment': _environment_record(),
+        },
         'revision_contract': {
             'expected_commit': plan.get('expected_commit'),
             'expected_tag': plan.get('expected_tag'),
@@ -1545,6 +1652,7 @@ def run_from_plan(
     # Before any output root is touched: a contract violation must not leave a
     # partially created experiment directory behind.
     revision_contract = _preflight_revision_contract(plan)
+    environment_contract = _preflight_environment_contract(plan)
     # An explicit argument wins over the plan; otherwise the plan decides, and
     # a plan silent on the matter keeps the historical run-every-cell
     # behaviour. Core Replication V2 cells are expected to set it.
@@ -1564,6 +1672,8 @@ def run_from_plan(
         'plan_path': str(plan_path.resolve()),
         'code': revision_contract['revision'],
         'revision_contract': revision_contract,
+        'environment': environment_contract['environment'],
+        'environment_contract': environment_contract,
         'started_at': datetime.now(timezone.utc).isoformat(),
         'completed_at': None,
         'resume_count': 0,

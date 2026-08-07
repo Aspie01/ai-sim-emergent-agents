@@ -501,6 +501,8 @@ def load_plan(plan_path: Path) -> tuple[dict, str]:
     if not _SAFE_NAME.fullmatch(experiment_id):
         raise ValueError("experiment_id must be filename-safe")
     _validate_revision_contract(plan)
+    if plan.get('fail_fast') is not None and type(plan['fail_fast']) is not bool:
+        raise ValueError('fail_fast must be true or false')
     conditions = plan.get('conditions')
     if not isinstance(conditions, list) or not conditions:
         raise ValueError("plan must define at least one condition")
@@ -1087,6 +1089,7 @@ def _run_cells_in_fresh_root(
     resume: bool = False,
     overwrite: bool = False,
     direct: bool = False,
+    fail_fast: bool = False,
     plan: dict | None = None,
     plan_hash: str | None = None,
     batch_manifest: dict | None = None,
@@ -1096,6 +1099,7 @@ def _run_cells_in_fresh_root(
         ('resume', resume),
         ('overwrite', overwrite),
         ('direct', direct),
+        ('fail_fast', fail_fast),
     ):
         if type(flag_value) is not bool:
             raise ValueError(f'{flag_name} must be a boolean')
@@ -1342,19 +1346,52 @@ def _run_cells_in_fresh_root(
             'v2_ready': report.v2_ready,
         }
 
-    for cell in frozen_cells:
+    stop_reason: dict | None = None
+    for position, cell in enumerate(frozen_cells, start=1):
         if cell.announcement:
             print(cell.announcement)
         result = execute_cell(cell)
         results.append(result)
+        if fail_fast and not result['ok']:
+            # Persist the stop before declining to dispatch, so a batch that
+            # ends early can never be read as one that ran to completion with
+            # fewer cells. Recorded even when there is no batch manifest, so
+            # the caller sees it too.
+            stop_reason = {
+                'stopped': True,
+                'position': position,
+                'of': len(frozen_cells),
+                'condition': cell.condition,
+                'seed': cell.seed,
+                'result': result.get('result'),
+                'errors': result.get('errors'),
+                'not_dispatched': len(frozen_cells) - position,
+            }
         if batch_manifest is not None:
             batch_manifest['results'] = results
+            if stop_reason is not None:
+                batch_manifest['stop_reason'] = stop_reason
             write_manifest()
             write_index()
+        if stop_reason is not None:
+            break
 
     if batch_manifest is not None:
         batch_manifest['completed_at'] = datetime.now(timezone.utc).isoformat()
-        batch_manifest['complete'] = all(result['ok'] for result in results)
+        # A truncated batch is never complete, even if every cell it managed to
+        # dispatch succeeded, because the cells it skipped were never observed.
+        #
+        # The `stop_reason is None` term is deliberately redundant today: the
+        # only stop cause is a non-ok cell, so `all(...)` is already False
+        # whenever a stop happened, and no test can isolate this term. It is
+        # kept because the plan anticipates stop causes that are not cell
+        # failures -- a breached quota must "stop safely ... and never produce a
+        # silently truncated `completed` result" -- and under those this term is
+        # the only thing standing between a truncated batch and `complete: true`.
+        batch_manifest['complete'] = (
+            stop_reason is None and all(result['ok'] for result in results))
+        batch_manifest['dispatched_cell_count'] = len(results)
+        batch_manifest['planned_cell_count'] = len(frozen_cells)
         write_manifest()
     return results, output_root
 
@@ -1502,11 +1539,20 @@ def run_from_plan(
     *,
     resume: bool = False,
     overwrite: bool = False,
+    fail_fast: bool | None = None,
 ) -> tuple[list[dict], Path]:
     plan, plan_hash = load_plan(plan_path)
     # Before any output root is touched: a contract violation must not leave a
     # partially created experiment directory behind.
     revision_contract = _preflight_revision_contract(plan)
+    # An explicit argument wins over the plan; otherwise the plan decides, and
+    # a plan silent on the matter keeps the historical run-every-cell
+    # behaviour. Core Replication V2 cells are expected to set it.
+    plan_fail_fast = plan.get('fail_fast')
+    if plan_fail_fast is not None and type(plan_fail_fast) is not bool:
+        raise ValueError('fail_fast must be true or false')
+    if fail_fast is None:
+        fail_fast = bool(plan_fail_fast)
     output_root = output_root or Path('experiment_runs') / plan['experiment_id']
     cells = _expand_plan_cells(plan)
 
@@ -1529,6 +1575,7 @@ def run_from_plan(
         resume=resume,
         overwrite=overwrite,
         direct=False,
+        fail_fast=fail_fast,
         plan=plan,
         plan_hash=plan_hash,
         batch_manifest=batch_manifest,
@@ -1603,6 +1650,11 @@ def main() -> int:
     )
     parser.add_argument('--verify', action='store_true')
     parser.add_argument(
+        '--fail-fast', action='store_true',
+        help='Stop dispatching after the first cell that does not complete, '
+             'recording the stop reason and position',
+    )
+    parser.add_argument(
         '--expand', action='store_true',
         help='Print the exact cells, order, commands, and paths this plan '
              'would execute, then exit without running anything',
@@ -1649,7 +1701,8 @@ def main() -> int:
             validation_mode=args.validation_mode) else 1
     try:
         results, root = run_from_plan(
-            plan_path, output_root, resume=args.resume, overwrite=args.overwrite)
+            plan_path, output_root, resume=args.resume, overwrite=args.overwrite,
+            fail_fast=True if args.fail_fast else None)
     except (ValueError, FileExistsError) as exc:
         parser.error(str(exc))
     succeeded = sum(result['ok'] for result in results)

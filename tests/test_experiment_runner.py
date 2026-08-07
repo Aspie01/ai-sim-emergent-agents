@@ -2758,3 +2758,140 @@ def test_expansion_reports_the_environment_without_enforcing_it(
 
     assert report["environment_contract"]["declared"] is True
     assert report["environment_contract"]["environment"]["plugin_count"] == 1
+
+
+# ── Phase 0: resume contract, config fingerprint, frozen schedule ───────────
+
+def cells_for(*specs):
+    return [
+        {"condition": c, "seed": s, "ticks": t, "extra_args": list(e),
+         "timeout_seconds": 60, "announcement": None}
+        for c, s, t, e in specs
+    ]
+
+
+BASE = (("c", 1, 10, []), ("c", 2, 10, []), ("d", 1, 20, ["--disable-raids"]))
+
+
+def test_config_fingerprint_ignores_dispatch_order():
+    """Reordering the matrix is a schedule change, not a configuration change."""
+    forward = runner._config_fingerprint(cells_for(*BASE))
+    reversed_ = runner._config_fingerprint(cells_for(*reversed(BASE)))
+    assert forward == reversed_
+
+
+@pytest.mark.parametrize("changed", [
+    (("c", 1, 10, []), ("c", 2, 10, []), ("d", 1, 21, ["--disable-raids"])),
+    (("c", 1, 10, []), ("c", 2, 10, []), ("d", 1, 20, [])),
+    (("c", 1, 10, []), ("c", 3, 10, []), ("d", 1, 20, ["--disable-raids"])),
+    (("c", 1, 10, []), ("c", 2, 10, []), ("e", 1, 20, ["--disable-raids"])),
+    (("c", 1, 10, []), ("c", 2, 10, [])),
+])
+def test_config_fingerprint_changes_when_any_control_changes(changed):
+    assert (runner._config_fingerprint(cells_for(*BASE))
+            != runner._config_fingerprint(cells_for(*changed)))
+
+
+def test_config_fingerprint_is_stable_across_processes(tmp_path):
+    """A digest that varies per process cannot gate a resume."""
+    script = (
+        "import sys; sys.path.insert(0, %r); import run_experiments as r;"
+        "print(r._config_fingerprint(["
+        "{'condition':'c','seed':1,'ticks':10,'extra_args':[],"
+        "'timeout_seconds':60}]))" % str(runner.PROJECT_ROOT)
+    )
+    outputs = {
+        subprocess.run([sys.executable, "-c", script], capture_output=True,
+                       text=True, check=True).stdout.strip()
+        for _ in range(2)
+    }
+    assert len(outputs) == 1
+
+
+def test_schedule_id_tracks_order():
+    forward = runner._schedule_id(cells_for(*BASE))
+    reversed_ = runner._schedule_id(cells_for(*reversed(BASE)))
+    assert forward != reversed_, "reordering must change the schedule identity"
+    assert runner._schedule_id(cells_for(*BASE)) == forward
+
+
+def test_schedule_id_ignores_controls_that_do_not_change_order():
+    """Schedule identity is about order; ticks belong to the config digest."""
+    a = cells_for(("c", 1, 10, []), ("c", 2, 10, []))
+    b = cells_for(("c", 1, 999, []), ("c", 2, 999, []))
+    assert runner._schedule_id(a) == runner._schedule_id(b)
+
+
+def test_resume_contract_record_carries_every_field_decide_resume_compares():
+    from thalren_vale.safe_resume import ResumeContract
+
+    record = runner._resume_contract_record(
+        experiment_id="exp-v1", plan_hash="a" * 64,
+        revision={"commit": "b" * 40, "tag": "t", "dirty": False},
+        environment={"fingerprint": "e" * 64},
+        config_fingerprint="cfg")
+
+    # The contract the runner writes must construct the one resume reads.
+    assert set(record) == set(ResumeContract.__dataclass_fields__)
+    assert ResumeContract(**record).commit == "b" * 40
+
+
+def test_batch_manifest_records_the_contract_and_schedule(tmp_path, monkeypatch):
+    revision(monkeypatch)
+    environment(monkeypatch)
+    plan_path = write_plan(
+        tmp_path / "plan.json", default_ticks=1,
+        conditions=[{"name": "c", "seeds": "1-2"}])
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(99))
+    always_valid(monkeypatch)
+
+    _results, root = runner.run_from_plan(plan_path, tmp_path / "out")
+    manifest = json.loads(
+        (root / "experiment_manifest.json").read_text(encoding="utf-8"))
+
+    contract = manifest["resume_contract"]
+    assert contract["experiment_id"] == "test-batch-v1"
+    assert contract["commit"] == "a" * 40
+    assert contract["environment_fingerprint"] == "e" * 64
+    assert len(contract["config_fingerprint"]) == 64
+
+    schedule = manifest["schedule"]
+    assert schedule["planned_order"] == ["c/seed_1", "c/seed_2"]
+    assert [d["cell_id"] for d in schedule["dispatched"]] == [
+        "c/seed_1", "c/seed_2"]
+    assert [d["position"] for d in schedule["dispatched"]] == [1, 2]
+
+
+def test_each_result_records_position_and_wall_clock_stamps(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(99))
+    always_valid(monkeypatch)
+
+    results, _root = runner._run_cells_in_fresh_root(
+        cells_for(("c", 1, 1, []), ("c", 2, 1, [])), tmp_path / "out")
+
+    assert [r["dispatch_position"] for r in results] == [1, 2]
+    for result in results:
+        # Monotonic elapsed and wall-clock stamps are both required by §10.
+        assert isinstance(result["elapsed"], float)
+        assert result["started_at"] <= result["completed_at"]
+        assert result["started_at"].endswith("+00:00")
+
+
+def test_a_truncated_batch_records_only_the_cells_it_dispatched(
+        tmp_path, monkeypatch):
+    """The schedule must show the stop, not a shorter plan."""
+    revision(monkeypatch)
+    environment(monkeypatch)
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(1))
+    always_valid(monkeypatch)
+    plan_path = write_plan(
+        tmp_path / "plan.json", fail_fast=True, default_ticks=1,
+        conditions=[{"name": "c", "seeds": "1-3"}])
+
+    _results, root = runner.run_from_plan(plan_path, tmp_path / "out")
+    manifest = json.loads(
+        (root / "experiment_manifest.json").read_text(encoding="utf-8"))
+
+    assert len(manifest["schedule"]["planned_order"]) == 3
+    assert len(manifest["schedule"]["dispatched"]) == 2

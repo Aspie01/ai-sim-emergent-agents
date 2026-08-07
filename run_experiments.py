@@ -784,6 +784,67 @@ def _preflight_environment_contract(plan: dict) -> dict:
     return evidence
 
 
+def _config_fingerprint(cells: list[dict]) -> str:
+    """Digest the controls every cell will run under, independent of order.
+
+    Complements `plan_sha256`, which digests the plan's raw bytes and therefore
+    changes when a comment or whitespace does. This changes only when what a
+    cell actually runs changes, which is the sensitivity a resume needs: a
+    reformatted plan should still resume, an edited condition should not.
+
+    Order is excluded deliberately -- `_schedule_id` covers that separately, so
+    a reordered matrix is reported as a schedule change rather than as a
+    different configuration.
+    """
+    payload = sorted(
+        [cell['condition'], cell['seed'], cell['ticks'],
+         list(cell['extra_args']), cell['timeout_seconds']]
+        for cell in cells
+    )
+    encoded = json.dumps(payload, sort_keys=True, separators=(',', ':'),
+                         ensure_ascii=False).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _schedule_id(cells: list[dict]) -> str:
+    """Digest the dispatch order itself.
+
+    Section 11.2 requires resume to preserve schedule identity and record
+    deviations rather than silently regenerating order, so the order needs a
+    name of its own that a later run can be compared against.
+    """
+    ordered = [f"{cell['condition']}/seed_{cell['seed']}" for cell in cells]
+    encoded = json.dumps(ordered, separators=(',', ':'),
+                         ensure_ascii=False).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _resume_contract_record(
+    *,
+    experiment_id: str,
+    plan_hash: str,
+    revision: dict,
+    environment: dict,
+    config_fingerprint: str,
+) -> dict:
+    """The identity a later resume must match exactly.
+
+    Written as one block rather than left implicit across the revision and
+    environment records, because a resume compares a single contract and
+    reassembling one from scattered fields is where a field quietly goes
+    missing.
+    """
+    return {
+        'experiment_id': experiment_id,
+        'plan_sha256': plan_hash,
+        'commit': revision.get('commit'),
+        'tag': revision.get('tag'),
+        'dirty': revision.get('dirty'),
+        'environment_fingerprint': environment.get('fingerprint'),
+        'config_fingerprint': config_fingerprint,
+    }
+
+
 def expected_outputs(run_dir: Path, condition: str, seed: int) -> dict[str, Path]:
     paths = artifact_paths(run_dir, condition, seed)
     return {
@@ -1381,6 +1442,7 @@ def _run_cells_in_fresh_root(
             flush=True,
         )
         started = time.perf_counter()
+        started_at = datetime.now(timezone.utc).isoformat()
         timed_out = False
         process = None
         try:
@@ -1439,6 +1501,8 @@ def _run_cells_in_fresh_root(
             'runner_action': 'executed',
             'ok': ok,
             'elapsed': elapsed, 'returncode': returncode,
+            'started_at': started_at,
+            'completed_at': datetime.now(timezone.utc).isoformat(),
             'state_hash': state_hash,
             'run_dir': str(run_dir.relative_to(output_root)),
             'command': command, 'errors': errors,
@@ -1450,7 +1514,18 @@ def _run_cells_in_fresh_root(
         if cell.announcement:
             print(cell.announcement)
         result = execute_cell(cell)
+        result['dispatch_position'] = position
         results.append(result)
+        if batch_manifest is not None and 'schedule' in batch_manifest:
+            # Actual order, recorded as it happens. Section 11.2 wants
+            # deviations recorded rather than the order silently regenerated,
+            # so this is written even when it matches the planned order.
+            batch_manifest['schedule']['dispatched'].append({
+                'position': position,
+                'cell_id': f'{cell.condition}/seed_{cell.seed}',
+                'started_at': result.get('started_at'),
+                'completed_at': result.get('completed_at'),
+            })
         if fail_fast and not result['ok']:
             # Persist the stop before declining to dispatch, so a batch that
             # ends early can never be read as one that ran to completion with
@@ -1531,6 +1606,7 @@ def _write_index(output_root: Path, results: list[dict]) -> None:
     fields = [
         'condition', 'seed', 'status', 'result', 'runner_action', 'ok',
         'elapsed', 'returncode', 'state_hash', 'run_dir',
+        'dispatch_position', 'started_at', 'completed_at',
     ]
     with (output_root / 'run_index.csv').open(
             'w', newline='', encoding='utf-8') as handle:
@@ -1674,6 +1750,19 @@ def run_from_plan(
         'revision_contract': revision_contract,
         'environment': environment_contract['environment'],
         'environment_contract': environment_contract,
+        'resume_contract': _resume_contract_record(
+            experiment_id=plan['experiment_id'],
+            plan_hash=plan_hash,
+            revision=revision_contract['revision'],
+            environment=environment_contract['environment'],
+            config_fingerprint=_config_fingerprint(cells),
+        ),
+        'schedule': {
+            'schedule_id': _schedule_id(cells),
+            'planned_order': [
+                f"{cell['condition']}/seed_{cell['seed']}" for cell in cells],
+            'dispatched': [],
+        },
         'started_at': datetime.now(timezone.utc).isoformat(),
         'completed_at': None,
         'resume_count': 0,

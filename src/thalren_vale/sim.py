@@ -1712,16 +1712,37 @@ def export_to_mythology_file(t: int) -> None:
 
 
 def _make_traveler_name(used: set) -> str | None:
-    """Return an unused inhabitant name, appending a generation suffix if all base names taken."""
+    """Return an unused inhabitant name, appending a generation suffix if all base names taken.
+
+    Generation suffixes are unbounded. They used to stop at 9, which capped a
+    run at ``len(NAMES) * 9`` distinct names — 1215 by default. The two birth
+    paths build ``used`` from the living *and* the dead, so that cap was a
+    ceiling on the number of inhabitants a run could ever produce, not on the
+    number alive at once. On reaching it this function returned ``None`` and
+    the callers broke out of procreation, so births stopped permanently and the
+    population died out. Anti-stagnation then hid the failure by spawning
+    replacements from a pool that only excluded the living, so it never
+    exhausted.
+
+    Names stay unique across all time rather than being recycled from the
+    dead: ``trust``, ``memory``, and grievance are keyed by name, so reusing a
+    dead inhabitant's name would hand its social history to a newborn.
+
+    The first ``len(NAMES) * 9`` names are unchanged, so runs that never reach
+    the old ceiling produce exactly the names they did before.
+    """
+    if not NAMES:
+        return None
     for n in NAMES:
         if n not in used:
             return n
-    for gen in range(2, 10):
+    gen = 2
+    while True:
         for n in NAMES:
             candidate = f'{n}{gen}'
             if candidate not in used:
                 return candidate
-    return None
+        gen += 1
 
 
 def world_event_layer(t: int) -> None:

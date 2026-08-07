@@ -70,6 +70,7 @@ For the full social-to-language path, see the [social and language causal-chain 
 - [Experiment and artifact flow](diagrams/experiment-and-artifact-flow.md)
 - [Characterization: language divergence](experiments/language-speciation-characterization.md)
 - [Characterization: language in the full simulation](experiments/language-speciation-full-simulation.md)
+- [Characterization: anti-stagnation and population viability](experiments/anti-stagnation-and-population-viability.md)
 
 The current batch runner is a fresh-root engineering runner. It rejects every nonempty root—even with `--resume` or `--overwrite`—and current real outputs cannot become `v2_ready`. Core Replication V2 has not been executed.
 

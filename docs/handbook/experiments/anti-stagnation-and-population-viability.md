@@ -68,34 +68,60 @@ Births are **identical between arms** at every seed. That is the clearest
 single result here: at this horizon anti-stagnation does not change
 reproduction at all.
 
-## 4. Why: the spawn interventions never fire
+## 4. Which interventions actually run
 
-Anti-stagnation is five separate interventions, not one mechanism.
+Anti-stagnation is **ten** separate interventions, not one mechanism and not
+the five an earlier revision of this note listed. Six of them are nested inside
+the single `t % 25 == 0` block, which is easy to read as one intervention.
 
-| Intervention | Cadence | Gate |
+| # | Intervention | Cadence | Gate |
+| --- | --- | --- | --- |
+| 1 | Solo-faction fragility | every 10 ticks | inhabitant alone in a faction |
+| 2 | World event | every 200 ticks | — |
+| 3 | Era shift | every 500 ticks | — |
+| 4 | Traveler waves | every 40 ticks | `len(people) < 20` or active factions `< 3` |
+| 5 | Faction-collapse prevention | every 25 ticks | factions `< 3` for 50 consecutive ticks |
+| 6 | Great Migration disruption | every 150 ticks | `t > 100` and factions `< 4` |
+| 7 | Stagnation-fallback disruption | every 25 ticks | 40+ ticks since any dynamic event |
+| 8 | Peace escalation, 50 ticks | every 25 ticks | 50 ticks of peace |
+| 9 | Peace escalation, 75 ticks | every 25 ticks | 75 ticks of peace |
+| 10 | Peace escalation, 100 ticks | every 25 ticks | 100 ticks of peace |
+
+Interventions 6 and 7 both call `disruption_event_layer`, which can trigger
+CIVIL WAR, PLAGUE, GREAT MIGRATION, PROMISED LAND, or PROPHET — several of
+which add or remove inhabitants. Interventions 8 to 10 write directly to
+`combat.RIVALRIES`, manufacturing the tension that produces wars. Neither
+group is population life support, and neither was named in the earlier list.
+
+Counted from the full event log of one 700-tick run at seed 42, anti-stagnation
+on and off:
+
+| Intervention | On | Off |
 | --- | --- | --- |
-| Solo-faction fragility | every 10 ticks | inhabitant alone in a faction |
-| Traveler waves | every 40 ticks | `len(people) < 20` or active factions `< 3` |
-| Faction-collapse prevention | every 25 ticks | factions `< 3` for 50 consecutive ticks |
-| World event | every 200 ticks | — |
-| Era shift | every 500 ticks | — |
+| 1 Solo-faction deaths | **54**, across 12 distinct ticks | 0 |
+| 2 World events | **3** — ticks 200, 400, 600 | 0 |
+| 3 Era shifts | **1** — tick 500 | 0 |
+| 4 Traveler waves | 0 | 0 |
+| 5 Faction-collapse spawns | 0 | 0 |
+| 6-7 Disruption events | 0 | 0 |
+| 8-10 Peace escalations | 0 | 0 |
 
-Measured over the three `on` runs:
+**Three of the ten fire. Seven never do.**
 
-- ticks with `len(people) < 20`: **0**, in all three seeds;
-- ticks with active factions `< 3`: **9 to 14**, all at the very start, before
-  any faction has formed. Factions reach three by tick 10 to 15.
+The seven share one cause. Interventions 5 to 10 are all gated on the
+simulation being quiet or shrinking — fewer than three or four factions, or 40
+to 100 ticks without a dynamic event — and this simulation is neither. It
+sustains 50 to 90 factions and produces hundreds of schisms per run, so
+`_last_dynamic_t` is reset constantly and the peace counters never reach even
+their first threshold of 50. Traveler waves need `len(people) < 20`, which
+never occurs at all.
 
-Traveler waves are first evaluated at tick 40, by which point factions are
-well above three. Faction-collapse prevention needs a 50-tick streak below
-three, and the longest streak is 14.
+Of the three that do fire, only one touches population, and it *removes*
+inhabitants rather than adding them: solo-faction fragility drains 10 health
+every 10 ticks from anyone alone in a faction, killing 54 over 700 ticks. The
+other two are world perturbations.
 
-**Neither population-propping intervention executes at all.** They are
-unreachable in the fixed simulation, not merely unnecessary.
-
-What remains active is one mechanism that *removes* inhabitants — solo-faction
-fragility, which drains 10 health every 10 ticks from anyone alone in a faction
-— and two world perturbations.
+So no anti-stagnation mechanism adds a single inhabitant to a healthy run.
 
 ## 5. What the remaining interventions do change
 
@@ -113,8 +139,20 @@ explanation there.
 
 Wars, schisms, mergers, generations, and Gini are within seed-to-seed spread.
 
+The intervention counts in section 4 narrow where the treaty difference can
+come from. The obvious candidates would be interventions 8 to 10, which write
+`combat.RIVALRIES` directly and exist precisely to manufacture conflict — but
+they never fire. Nor does either disruption trigger. Whatever produces the
+difference is therefore reachable through only three world events and one era
+shift per 700-tick run, which is a small enough surface to test directly.
+That test has not been run.
+
 ## 6. What this does not establish
 
+- The intervention counts in section 4 come from the event log of **one** run
+  at seed 42. The gating argument for why seven never fire generalizes — it
+  rests on faction counts and dynamic-event frequency that hold across all
+  three seeds — but the counts themselves were not repeated per seed.
 - Nothing about horizons beyond 700 ticks, or about whether some slower
   stagnation appears later. The old collapse point was near tick 520, so this
   window clears it, but it is not a long-horizon result.

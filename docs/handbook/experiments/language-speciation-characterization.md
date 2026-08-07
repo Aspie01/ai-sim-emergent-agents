@@ -181,8 +181,13 @@ load-bearing for it.**
 - Nothing about other population sizes, group counts, seeds, thresholds, or
   contact schedules. One scenario was run.
 - Nothing about whether the same behaviour appears in a full simulation with
-  births, deaths, migration, factions, and combat active. That was not run, so
-  it is untested in either direction.
+  births, deaths, migration, factions, and combat active. That has since been
+  run and is characterized in
+  [language-speciation-full-simulation.md](language-speciation-full-simulation.md):
+  the behaviour does **not** appear, because the full simulation's social groups
+  last a median of 25 ticks against the 159 ticks of stable isolation this
+  scenario required. The divergence described above depends on a persistence
+  the simulation does not supply on its own.
 - Nothing about whether lexicon overlap would eventually rise given a longer
   contact phase. It was flat for 900 ticks, which is evidence of persistence
   over that window and not of permanence. The rate argument in §4 suggests it

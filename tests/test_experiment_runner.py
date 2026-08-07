@@ -2466,3 +2466,169 @@ def test_expand_cli_prints_json_and_runs_nothing(tmp_path, monkeypatch, capsys):
     report = json.loads(capsys.readouterr().out)
     assert report["cell_count"] == 5
     assert not output_root.exists()
+
+
+# ── Fail-fast dispatch ──────────────────────────────────────────────────────
+
+def failing_after(n_ok):
+    """A child command that succeeds for the first n_ok calls, then fails."""
+    calls = []
+
+    def command(seed, condition, ticks, extra_args, **provenance):
+        calls.append((condition, seed))
+        code = "raise SystemExit(0)" if len(calls) <= n_ok else "raise SystemExit(3)"
+        return [sys.executable, "-c", code]
+
+    command.calls = calls
+    return command
+
+
+def always_valid(monkeypatch):
+    monkeypatch.setattr(
+        runner, "inspect_run_outputs",
+        lambda *a, **k: SimpleNamespace(valid=True, errors=[], v2_ready=False))
+
+
+def three_cells():
+    return [
+        {"condition": "c", "seed": s, "ticks": 1, "extra_args": [],
+         "timeout_seconds": 60, "announcement": None}
+        for s in (1, 2, 3)
+    ]
+
+
+def test_default_behaviour_still_dispatches_every_cell(tmp_path, monkeypatch):
+    """Fail-fast is opt-in; a plan silent on it keeps historical behaviour."""
+    command = failing_after(0)
+    monkeypatch.setattr(runner, "_simulation_command", command)
+    always_valid(monkeypatch)
+
+    results, _root = runner._run_cells_in_fresh_root(
+        three_cells(), tmp_path / "out")
+
+    assert len(results) == 3
+    assert len(command.calls) == 3
+
+
+def test_fail_fast_stops_at_the_first_failure(tmp_path, monkeypatch):
+    command = failing_after(1)
+    monkeypatch.setattr(runner, "_simulation_command", command)
+    always_valid(monkeypatch)
+
+    results, root = runner._run_cells_in_fresh_root(
+        three_cells(), tmp_path / "out", fail_fast=True)
+
+    assert len(results) == 2, "the third cell must never be dispatched"
+    assert len(command.calls) == 2
+    assert not (root / "c" / "seed_3").exists()
+
+
+def test_fail_fast_records_the_stop_reason_and_position(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(1))
+    always_valid(monkeypatch)
+    manifest = {"schema_version": 1, "results": []}
+
+    _results, root = runner._run_cells_in_fresh_root(
+        three_cells(), tmp_path / "out", fail_fast=True,
+        batch_manifest=manifest)
+
+    written = json.loads(
+        (root / "experiment_manifest.json").read_text(encoding="utf-8"))
+    stop = written["stop_reason"]
+    assert stop["stopped"] is True
+    assert stop["position"] == 2
+    assert stop["of"] == 3
+    assert stop["seed"] == 2
+    assert stop["not_dispatched"] == 1
+
+
+def test_a_truncated_batch_is_never_marked_complete(tmp_path, monkeypatch):
+    """`complete` must not be true for a run that skipped cells."""
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(1))
+    always_valid(monkeypatch)
+    manifest = {"schema_version": 1, "results": []}
+
+    _results, root = runner._run_cells_in_fresh_root(
+        three_cells(), tmp_path / "out", fail_fast=True,
+        batch_manifest=manifest)
+
+    written = json.loads(
+        (root / "experiment_manifest.json").read_text(encoding="utf-8"))
+    assert written["complete"] is False
+    assert written["dispatched_cell_count"] == 2
+    assert written["planned_cell_count"] == 3
+
+
+def test_the_stop_is_persisted_before_dispatch_stops(tmp_path, monkeypatch):
+    """The manifest must already name the stop when the loop breaks.
+
+    Recording it only after the loop would lose the reason if the process died
+    between the failing cell and the end of the batch.
+    """
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(1))
+    always_valid(monkeypatch)
+    manifest = {"schema_version": 1, "results": []}
+    _results, root = runner._run_cells_in_fresh_root(
+        three_cells(), tmp_path / "out", fail_fast=True,
+        batch_manifest=manifest)
+    written = json.loads(
+        (root / "experiment_manifest.json").read_text(encoding="utf-8"))
+    assert "stop_reason" in written
+
+
+def test_an_all_passing_batch_is_complete_and_has_no_stop_reason(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(99))
+    always_valid(monkeypatch)
+    manifest = {"schema_version": 1, "results": []}
+
+    results, root = runner._run_cells_in_fresh_root(
+        three_cells(), tmp_path / "out", fail_fast=True,
+        batch_manifest=manifest)
+
+    written = json.loads(
+        (root / "experiment_manifest.json").read_text(encoding="utf-8"))
+    assert len(results) == 3
+    assert written["complete"] is True
+    assert "stop_reason" not in written
+
+
+def test_plan_can_request_fail_fast(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(1))
+    always_valid(monkeypatch)
+    plan_path = write_plan(
+        tmp_path / "plan.json", fail_fast=True, default_ticks=1,
+        conditions=[{"name": "c", "seeds": "1-3"}])
+
+    results, _root = runner.run_from_plan(plan_path, tmp_path / "out")
+    assert len(results) == 2
+
+
+def test_plan_without_fail_fast_dispatches_everything(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(1))
+    always_valid(monkeypatch)
+    plan_path = write_plan(
+        tmp_path / "plan.json", default_ticks=1,
+        conditions=[{"name": "c", "seeds": "1-3"}])
+
+    results, _root = runner.run_from_plan(plan_path, tmp_path / "out")
+    assert len(results) == 3
+
+
+@pytest.mark.parametrize("value", ["true", 1, 0, "yes"])
+def test_malformed_fail_fast_is_rejected_by_load_plan(tmp_path, value):
+    plan_path = write_plan(tmp_path / "plan.json", fail_fast=value)
+    with pytest.raises(ValueError, match="fail_fast"):
+        load_plan(plan_path)
+
+
+def test_explicit_argument_overrides_the_plan(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(1))
+    always_valid(monkeypatch)
+    plan_path = write_plan(
+        tmp_path / "plan.json", fail_fast=False, default_ticks=1,
+        conditions=[{"name": "c", "seeds": "1-3"}])
+
+    results, _root = runner.run_from_plan(
+        plan_path, tmp_path / "out", fail_fast=True)
+    assert len(results) == 2

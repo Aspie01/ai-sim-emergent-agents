@@ -64,6 +64,7 @@ git diff --check
 | `tests/test_run_termination.py` | Requested horizon, extinction, cancellation, exceptions, writer/finalization failure, manifest-last publication, pinned hashes | Runner immutable attempts, fail-fast dispatch, or safe resume |
 | `tests/test_artifact_validation.py` | Streaming deep validation, schema/domain/cadence/cross-file checks, bounded diagnostics, readiness gates | Correctness of scientific endpoints or source semantics not represented in artifacts |
 | `tests/test_experiment_runner.py` | Plan/flag rejection, fresh-root containment, symlink/replacement defenses, timeout/SIGINT classification, frozen cells, read-only nonempty-root rejection | Functional resume, overwrite, attempt ledger, fail-fast, or V2 execution |
+| `tests/test_attempt_ledger.py` | Append-only attempt history, supersession without deletion, consecutive attempt ids, fail-closed ledger reads, immutable attempt directories | Runner integration: the ledger is machinery, not yet wired into execution |
 | `tests/test_plugin_security.py` | Bridge snapshot immutability/staleness and rejection of plugin-defined command subclasses | Process sandboxing or safety of untrusted plugin Python |
 | `tests/test_benchmark.py` | Deterministic bounded benchmark harness shape/output and threshold plumbing | Current performance targets or causal attribution without actually running a controlled benchmark |
 | `test_parse_logs.py` | Legacy narrative parser filename, line-pattern, file, sorting, and CLI behavior | Canonical structured artifact validity; excluded from default suite |

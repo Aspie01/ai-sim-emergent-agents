@@ -1923,7 +1923,11 @@ def test_fresh_batch_executes_multiple_frozen_cells_with_tiny_children(
     for seed in (1, 2):
         run_dir = condition_path / f"seed_{seed}"
         assert run_dir.resolve().is_relative_to(output.resolve())
-        assert {path.name for path in run_dir.iterdir()} == {"tiny-child.txt"}
+        # `attempts.jsonl` is the phase-1 attempt ledger. The point of this
+        # assertion is that nothing *unexpected* lands in a cell directory, so
+        # it stays exhaustive rather than becoming a subset check.
+        assert {path.name for path in run_dir.iterdir()} == {
+            "tiny-child.txt", "attempts.jsonl"}
         assert (run_dir / "tiny-child.txt").read_text(encoding="utf-8") == str(seed)
 
 
@@ -2895,3 +2899,101 @@ def test_a_truncated_batch_records_only_the_cells_it_dispatched(
 
     assert len(manifest["schedule"]["planned_order"]) == 3
     assert len(manifest["schedule"]["dispatched"]) == 2
+
+
+# ── Phase 1: attempt ledgers written under real execution ───────────────────
+
+def read_ledger(root, condition, seed):
+    from thalren_vale.attempt_ledger import AttemptLedger
+
+    return AttemptLedger.load(root / condition / f"seed_{seed}" / "attempts.jsonl")
+
+
+def test_a_completed_cell_leaves_a_selected_attempt(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(99))
+    always_valid(monkeypatch)
+
+    _results, root = runner._run_cells_in_fresh_root(
+        cells_for(("c", 1, 1, [])), tmp_path / "out")
+
+    book = read_ledger(root, "c", 1)
+    assert book.selected_attempt() == 1
+    state = book.derive()[1]
+    assert state.result == RESULT_COMPLETED
+    assert state.directory == "."   # phase 1 keeps the existing layout
+
+
+def test_a_failed_cell_records_the_attempt_but_selects_nothing(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(0))
+    always_valid(monkeypatch)
+
+    _results, root = runner._run_cells_in_fresh_root(
+        cells_for(("c", 1, 1, [])), tmp_path / "out")
+
+    book = read_ledger(root, "c", 1)
+    assert book.selected_attempt() is None, (
+        "a failed attempt must be preserved, never selected")
+    assert book.derive()[1].result != RESULT_COMPLETED
+
+
+def test_selection_requires_deep_validation_not_just_exit_status(
+        tmp_path, monkeypatch):
+    """'Process exit success alone is never evidence completion.'"""
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(99))
+    monkeypatch.setattr(
+        runner, "inspect_run_outputs",
+        lambda *a, **k: SimpleNamespace(
+            valid=False, errors=["metrics truncated"], v2_ready=False))
+
+    _results, root = runner._run_cells_in_fresh_root(
+        cells_for(("c", 1, 1, [])), tmp_path / "out")
+
+    book = read_ledger(root, "c", 1)
+    assert book.selected_attempt() is None
+    assert book.derive()[1].result is not None
+
+
+def test_every_cell_gets_its_own_ledger(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(99))
+    always_valid(monkeypatch)
+
+    _results, root = runner._run_cells_in_fresh_root(
+        cells_for(("c", 1, 1, []), ("c", 2, 1, []), ("d", 1, 1, [])),
+        tmp_path / "out")
+
+    for condition, seed in (("c", 1), ("c", 2), ("d", 1)):
+        book = read_ledger(root, condition, seed)
+        assert book.cell_id == f"{condition}/seed_{seed}"
+        assert book.selected_attempt() == 1
+
+
+def test_the_ledger_survives_a_round_trip_through_its_own_loader(
+        tmp_path, monkeypatch):
+    """A ledger the runner writes must be one the ledger module accepts."""
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(99))
+    always_valid(monkeypatch)
+
+    _results, root = runner._run_cells_in_fresh_root(
+        cells_for(("c", 1, 1, [])), tmp_path / "out")
+
+    path = root / "c" / "seed_1" / "attempts.jsonl"
+    # Two events for a pass: started, finished, plus the selection.
+    lines = [l for l in path.read_text(encoding="utf-8").splitlines() if l]
+    assert len(lines) == 3
+    assert read_ledger(root, "c", 1).events == [json.loads(l) for l in lines]
+
+
+def test_the_ledger_is_appended_not_rewritten(tmp_path, monkeypatch):
+    """The start event must still be byte-identical after the outcome lands."""
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(99))
+    always_valid(monkeypatch)
+
+    _results, root = runner._run_cells_in_fresh_root(
+        cells_for(("c", 1, 1, [])), tmp_path / "out")
+
+    lines = (root / "c" / "seed_1" / "attempts.jsonl").read_text(
+        encoding="utf-8").splitlines()
+    first = json.loads(lines[0])
+    assert first["event"] == "attempt_started"
+    assert first["attempt_id"] == 1

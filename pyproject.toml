@@ -41,7 +41,9 @@ all = [
 ]
 
 [project.scripts]
-thalren-vale = "thalren_vale.sim:run"
+# Target __main__:main, not sim:run, so the installed script also goes through
+# the PYTHONHASHSEED=0 re-exec guard in src/thalren_vale/__main__.py.
+thalren-vale = "thalren_vale.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

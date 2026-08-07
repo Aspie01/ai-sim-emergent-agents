@@ -55,6 +55,7 @@ git diff --check
 | `tests/test_production_trial.py` | Interval-scheduled runner-up production, adoption-deadlock behaviour, determinism | Long-run adoption dynamics or research-ready endpoints |
 | `tests/test_faction_social_model.py` | Faction selection between the legacy trust model and `Relationship` records, threshold and normalization | Which social model is more faithful; both are engineering-only |
 | `tests/test_feature_registration.py` | Structural coverage: every control family declared, and every declared hook reached by the dispatch site that matters | Behavioural correctness of any individual family |
+| `tests/test_technology.py` | Research selection and its ordering properties, resource pooling and cost deduction, prerequisites, duration discount, and the bonuses `combat.py` reads | Whether the tech tree's costs, tiers, or bonus magnitudes are well balanced |
 | `tests/test_language_evolution.py` | Language states, signals, learning, reinforcement, forgetting, pruning, transactionality | Scientific claims about language emergence |
 | `tests/test_language_interaction_hooks.py` | Exact authentic committed-transfer communication hooks | Proximity/background conversation, which is intentionally absent |
 | `tests/test_language_reproducibility.py` | Language determinism, hashing, RNG/state isolation | General reproducibility across unrecorded environments/plugins |

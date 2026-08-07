@@ -274,9 +274,20 @@ def test_every_family_reaches_the_readiness_gate():
 
 # ── Owner threading through the economy layer ───────────────────────────────
 
+# Feature-owner families, read by both owner guards in this module.
+#
+# Defined exactly once. A second module-level tuple of the same name used to
+# sit beside the delegation guard below; because Python resolves globals at
+# call time, that later definition silently won for *both* guards and this
+# one was never read. The two lists had drifted apart, so the economy guard
+# was quietly running against a list nobody was maintaining here.
+#
+# `social_config` is deliberately absent: it is the structural gate every
+# barter path carries, so its presence would not signal that a call is
+# forwarding language owners.
 OWNER_FAMILIES = (
     "language", "dialect", "contact", "lexical", "compositional", "grammar",
-    "coevolution",
+    "coevolution", "trial", "intergenerational",
 )
 
 
@@ -337,13 +348,8 @@ def test_economy_call_sites_forward_every_owner_their_callee_accepts():
 
 # ── Owner forwarding through delegation ─────────────────────────────────────
 
-# Feature-owner families. `social_config` is deliberately absent: it is the
-# structural gate every barter path carries, so its presence would not signal
-# that a call is forwarding language owners.
-OWNER_FAMILIES = (
-    "language", "dialect", "contact", "lexical", "compositional",
-    "grammar", "coevolution", "trial", "intergenerational",
-)
+# `OWNER_FAMILIES` is declared once, above the economy guard. Both guards read
+# that single tuple; do not reintroduce a second binding of the name here.
 
 OWNER_FORWARDING_MODULES = (
     "src/thalren_vale/language.py",
@@ -373,8 +379,8 @@ def _owner_parameters(node: ast.FunctionDef) -> set[str]:
     }
 
 
-def _owner_forwarding_gaps() -> list[str]:
-    """Return calls that forward some feature owners but drop others.
+def _owner_forwarding_drops() -> list[tuple[str, int, str, str, str]]:
+    """Return every dropped owner, *before* `KNOWN_NON_FORWARDING` filtering.
 
     A function that accepts an owner and hands work to another function
     accepting the same owner must pass it, or the feature silently does
@@ -387,8 +393,14 @@ def _owner_forwarding_gaps() -> list[str]:
     Calls forwarding *none* of the shared owners are skipped: those are the
     deliberate feature-disabled fast paths. Calls using `**` unpacking are
     skipped because their keywords are not statically known.
+
+    Exemptions are applied by the caller rather than here, so that
+    `test_every_non_forwarding_exemption_is_still_necessary` can see what each
+    exemption is actually suppressing.
+
+    Each element is `(module, line, caller, callee, parameter)`.
     """
-    gaps: list[str] = []
+    drops: list[tuple[str, int, str, str, str]] = []
     for relative in OWNER_FORWARDING_MODULES:
         tree = _module_tree(relative)
         accepts = {
@@ -415,17 +427,82 @@ def _owner_forwarding_gaps() -> list[str]:
                 passed = {k.arg for k in call.keywords if k.arg}
                 shared = mine & accepts[callee]
                 forwarded = shared & passed
-                missing = {
-                    name for name in shared - passed
-                    if (node.name, callee, name) not in KNOWN_NON_FORWARDING
-                }
-                if forwarded and missing:
-                    gaps.append(
-                        f"{relative}:{call.lineno} {node.name}() -> "
-                        f"{callee}() drops {sorted(missing)}")
-    return gaps
+                missing = shared - passed
+                if not (forwarded and missing):
+                    continue
+                for name in sorted(missing):
+                    drops.append(
+                        (relative, call.lineno, node.name, callee, name))
+    return drops
+
+
+def _owner_forwarding_gaps() -> list[str]:
+    """Return the reportable owner drops: every drop that is not exempted."""
+    return [
+        f"{relative}:{lineno} {caller}() -> {callee}() drops {name}"
+        for relative, lineno, caller, callee, name in _owner_forwarding_drops()
+        if (caller, callee, name) not in KNOWN_NON_FORWARDING
+    ]
 
 
 def test_delegated_calls_forward_every_feature_owner():
     gaps = _owner_forwarding_gaps()
     assert not gaps, "owner forwarding gaps:\n  " + "\n  ".join(gaps)
+
+
+# ── Exemptions must stay falsifiable ────────────────────────────────────────
+
+def test_every_non_forwarding_exemption_is_still_necessary():
+    """A stale exemption is an unnoticed hole in the forwarding guard.
+
+    Each `KNOWN_NON_FORWARDING` entry suppresses one reported drop. Once the
+    call it describes is fixed, renamed, or deleted, the entry suppresses
+    nothing visible -- but it keeps standing, ready to silently absorb a
+    future drop with the same (caller, callee, parameter) shape. Nothing else
+    in this module notices that, because an exemption can only ever make the
+    guard quieter. Requiring every exemption to still match a real unexempted
+    drop is what makes the opt-out falsifiable.
+    """
+    observed = {
+        (caller, callee, name)
+        for _, _, caller, callee, name in _owner_forwarding_drops()
+    }
+    stale = sorted(KNOWN_NON_FORWARDING - observed)
+    assert not stale, (
+        "KNOWN_NON_FORWARDING entries suppress nothing; the call they "
+        f"describe is gone or already forwards. Delete them: {stale}")
+
+
+# Naming convention shared by every disabled-state guard in
+# `reproducibility.py`. Declared here so an unclaimed guard is detectable.
+PRISTINE_GUARD_PREFIXES = (
+    "_require_empty_disabled_",
+    "_require_pristine_disabled_",
+)
+
+
+def test_every_pristine_guard_is_claimed_by_a_family():
+    """`pristine_guard: None` must stay falsifiable too.
+
+    Three families opt out of the disabled-state check by declaring no guard.
+    `test_stateless_families_own_no_runtime_state` only falsifies that opt-out
+    when `SimulationState` grows a field named *exactly* after the family, so
+    a family that later grows guarded state under any other name keeps its
+    opt-out for free. A guard that exists in `reproducibility.py` and that no
+    family claims is the observable symptom of exactly that, so fail on it
+    here rather than waiting for a behavioural test to notice.
+    """
+    defined = {
+        name
+        for name in _defined_functions("src/thalren_vale/reproducibility.py")
+        if name.startswith(PRISTINE_GUARD_PREFIXES)
+    }
+    declared = {
+        hooks["pristine_guard"]
+        for hooks in FAMILY_REGISTRATION.values()
+        if hooks["pristine_guard"] is not None
+    }
+    orphans = sorted(defined - declared)
+    assert not orphans, (
+        "disabled-state guards no control family declares (a family is "
+        f"probably still declaring pristine_guard=None): {orphans}")

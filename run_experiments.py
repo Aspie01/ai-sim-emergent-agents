@@ -33,6 +33,7 @@ from thalren_vale.artifact_validation import (  # noqa: E402
     artifact_paths,
     inspect_run_outputs,
 )
+from thalren_vale.attempt_ledger import AttemptLedger  # noqa: E402
 from thalren_vale.reproducibility import (  # noqa: E402
     environment_fingerprint,
     plugin_inventory,
@@ -1423,6 +1424,18 @@ def _run_cells_in_fresh_root(
         )
         validate_cell(cell, require_run_absent=False)
 
+        # Phase 1 of V2_RUNNER_INTEGRATION_PLAN.md: record the attempt while
+        # the layout is unchanged. `directory` is '.' because artifacts still
+        # live directly under the cell; phase 2 moves them into attempt_NNNN
+        # and that becomes the only field that changes.
+        cell_id = f'{cell.condition}/seed_{cell.seed}'
+        ledger = AttemptLedger(cell_id=cell_id)
+        ledger_path = run_dir / 'attempts.jsonl'
+        attempt_id = ledger.next_attempt_id()
+        ledger.append_to(ledger_path, [ledger.start_attempt(
+            attempt_id, directory='.',
+            at=datetime.now(timezone.utc).isoformat())])
+
         command = _simulation_command(
             cell.seed,
             cell.condition,
@@ -1493,6 +1506,17 @@ def _run_cells_in_fresh_root(
                         'state_hash')
             except json.JSONDecodeError:
                 pass
+        events = [ledger.finish_attempt(
+            attempt_id, result=result,
+            at=datetime.now(timezone.utc).isoformat(),
+            state_hash=state_hash)]
+        if ok:
+            # Selection is gated on deep validation, not on exit status:
+            # "process exit success alone is never evidence completion".
+            events.extend(ledger.select_attempt(
+                attempt_id, at=datetime.now(timezone.utc).isoformat()))
+        ledger.append_to(ledger_path, events)
+
         print(f"  {'OK' if ok else result.upper()}  ({elapsed:.1f}s)")
         return {
             'seed': cell.seed, 'condition': cell.condition,

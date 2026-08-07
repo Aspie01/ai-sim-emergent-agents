@@ -44,6 +44,14 @@ def write_plan(path, **overrides):
     return path
 
 
+
+def cell_artifacts(output_root, condition, seed):
+    """Where a cell's artifacts actually are, resolved the way readers do."""
+    from thalren_vale.attempt_ledger import resolve_cell_artifacts
+
+    return resolve_cell_artifacts(output_root / condition / f"seed_{seed}")
+
+
 def snapshot_tree(root):
     """Capture every in-root entry without following symlinks."""
     root_stat = os.lstat(root)
@@ -1204,13 +1212,13 @@ def test_valid_schema_two_nonready_root_rejects_resume_and_overwrite_read_only(
 
     first, _ = run_from_plan(plan_path, output)
     valid, errors = validate_run_outputs(
-        output / "baseline" / "seed_1", "baseline", 1)
+        cell_artifacts(output, "baseline", 1), "baseline", 1)
     assert first[0]["status"] == "completed"
     assert first[0]["result"] == RESULT_COMPLETED
     assert valid, errors
 
     report = inspect_run_outputs(
-        output / "baseline" / "seed_1",
+        cell_artifacts(output, "baseline", 1),
         "baseline",
         1,
         expected_ticks=1,
@@ -1286,7 +1294,7 @@ def test_every_other_nonempty_resume_root_is_rejected_read_only(
         extra_data.mkdir(parents=True)
         (extra_data / "old.csv").write_text("old evidence\n", encoding="utf-8")
     elif root_kind == "partial_cell":
-        data = output / "baseline" / "seed_1" / "data"
+        data = cell_artifacts(output, "baseline", 1) / "data"
         data.mkdir(parents=True)
         (data / "metrics_baseline_seed_1.csv").write_text(
             "partial metrics\n", encoding="utf-8")
@@ -1342,7 +1350,8 @@ def test_timeout_kills_and_reaps_real_child_and_blocks_resume(tmp_path, monkeypa
     assert result["result"] == RESULT_WALL_CLOCK_LIMIT
     assert result["ok"] is False
     assert result["returncode"] == -1
-    assert_pid_reaped(int((run_dir / "child.pid").read_text(encoding="utf-8")))
+    assert_pid_reaped(int(
+        (run_dir / "attempt_0001" / "child.pid").read_text(encoding="utf-8")))
     assert not (run_dir / "child-survived.txt").exists()
     valid, errors = validate_run_outputs(
         run_dir,
@@ -1550,7 +1559,8 @@ def test_private_orchestrator_uses_frozen_copy_after_external_dict_mutation(
     assert results[0]["condition"] == "baseline"
     assert results[0]["seed"] == 1
     assert results[0]["run_dir"] == "baseline/seed_1"
-    assert (output / "baseline" / "seed_1" / "frozen.txt").read_text() == "ok"
+    assert (output / "baseline" / "seed_1" / "attempt_0001"
+            / "frozen.txt").read_text() == "ok"
     assert not (unrelated / "seed_999").exists()
     assert snapshot_tree(unrelated) == unrelated_before
 
@@ -1927,8 +1937,10 @@ def test_fresh_batch_executes_multiple_frozen_cells_with_tiny_children(
         # assertion is that nothing *unexpected* lands in a cell directory, so
         # it stays exhaustive rather than becoming a subset check.
         assert {path.name for path in run_dir.iterdir()} == {
-            "tiny-child.txt", "attempts.jsonl"}
-        assert (run_dir / "tiny-child.txt").read_text(encoding="utf-8") == str(seed)
+            "attempts.jsonl", "attempt_0001"}
+        assert {path.name for path in (run_dir / "attempt_0001").iterdir()} == {
+            "tiny-child.txt"}
+        assert (run_dir / "attempt_0001" / "tiny-child.txt").read_text(encoding="utf-8") == str(seed)
 
 
 @pytest.mark.parametrize("link_kind", ("root", "cell"))
@@ -1998,14 +2010,14 @@ def test_direct_run_rejects_every_nonempty_root_without_starting_child(
         cell.mkdir(parents=True)
         (cell / "sentinel.txt").write_bytes(b"ordinary cell\x00")
     elif tree_kind == "schema_two_cell":
-        data = output / "baseline" / "seed_1" / "data"
+        data = cell_artifacts(output, "baseline", 1) / "data"
         data.mkdir(parents=True)
         (data / "run_manifest_baseline_seed_1.json").write_text(
             json.dumps({"schema_version": 2}) + "\n",
             encoding="utf-8",
         )
     elif tree_kind == "partial_cell":
-        data = output / "baseline" / "seed_1" / "data"
+        data = cell_artifacts(output, "baseline", 1) / "data"
         data.mkdir(parents=True)
         (data / "metrics_baseline_seed_1.csv").write_text(
             "partial\n", encoding="utf-8")
@@ -2074,7 +2086,7 @@ def test_verify_defaults_to_auto_and_labels_schema_one_legacy(
     output = tmp_path / "outputs"
     run_from_plan(plan_path, output)
     manifest_path = (
-        output / "baseline" / "seed_1" / "data"
+        cell_artifacts(output, "baseline", 1) / "data"
         / "run_manifest_baseline_seed_1.json"
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -2101,7 +2113,7 @@ def test_resume_rejects_legacy_artifacts_without_mutating_them(tmp_path):
     output = tmp_path / "outputs"
     run_from_plan(plan_path, output)
     manifest_path = (
-        output / "baseline" / "seed_1" / "data"
+        cell_artifacts(output, "baseline", 1) / "data"
         / "run_manifest_baseline_seed_1.json"
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -2920,7 +2932,7 @@ def test_a_completed_cell_leaves_a_selected_attempt(tmp_path, monkeypatch):
     assert book.selected_attempt() == 1
     state = book.derive()[1]
     assert state.result == RESULT_COMPLETED
-    assert state.directory == "."   # phase 1 keeps the existing layout
+    assert state.directory == "attempt_0001"
 
 
 def test_a_failed_cell_records_the_attempt_but_selects_nothing(
@@ -2997,3 +3009,80 @@ def test_the_ledger_is_appended_not_rewritten(tmp_path, monkeypatch):
     first = json.loads(lines[0])
     assert first["event"] == "attempt_started"
     assert first["attempt_id"] == 1
+
+
+# ── Phase 2: attempt directories, with legacy layouts still readable ────────
+
+def test_a_new_run_writes_into_its_attempt_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(99))
+    always_valid(monkeypatch)
+
+    _results, root = runner._run_cells_in_fresh_root(
+        cells_for(("c", 1, 1, [])), tmp_path / "out")
+
+    cell = root / "c" / "seed_1"
+    assert (cell / "attempt_0001").is_dir()
+    assert (cell / "attempts.jsonl").is_file()
+    from thalren_vale.attempt_ledger import resolve_cell_artifacts
+    assert resolve_cell_artifacts(cell) == cell / "attempt_0001"
+
+
+def test_a_legacy_cell_directory_still_verifies(tmp_path):
+    """Runs produced before attempts existed must stay readable forever."""
+    plan_path = write_plan(tmp_path / "plan.json")
+    output = tmp_path / "outputs"
+    run_from_plan(plan_path, output)
+
+    # Flatten the run back to the pre-attempt layout, as an old root would be.
+    cell = output / "baseline" / "seed_1"
+    for entry in (cell / "attempt_0001").iterdir():
+        entry.rename(cell / entry.name)
+    (cell / "attempt_0001").rmdir()
+    (cell / "attempts.jsonl").unlink()
+
+    assert verify_outputs(plan_path, output) is True
+
+
+def test_a_cell_with_no_selected_attempt_is_reported_unvalidatable(
+        tmp_path, capsys):
+    """The trap: never fall back to reading `data/` when nothing was selected.
+
+    A ledger with no selection means every attempt failed. Reading whatever sits
+    in the cell would present a failed attempt's leftovers as its evidence.
+    """
+    plan_path = write_plan(tmp_path / "plan.json")
+    output = tmp_path / "outputs"
+    run_from_plan(plan_path, output)
+
+    cell = output / "baseline" / "seed_1"
+    # Rewrite the ledger to record the attempt without ever selecting it, and
+    # leave a plausible `data/` directory behind at the cell level.
+    from thalren_vale.attempt_ledger import AttemptLedger
+    book = AttemptLedger(cell_id="baseline/seed_1")
+    book.start_attempt(1, directory="attempt_0001", at="t")
+    book.finish_attempt(1, result=RESULT_EXCEPTION, at="t")
+    book.write(cell / "attempts.jsonl")
+    (cell / "data").mkdir(exist_ok=True)
+
+    assert verify_outputs(plan_path, output) is False
+    assert "none selected" in capsys.readouterr().out
+
+
+def test_a_retry_cannot_reuse_an_attempt_directory(tmp_path, monkeypatch):
+    """Immutability is enforced by refusing the path, not by permissions."""
+    from thalren_vale.attempt_ledger import (
+        LedgerError,
+        allocate_attempt_directory,
+    )
+
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(99))
+    always_valid(monkeypatch)
+    _results, root = runner._run_cells_in_fresh_root(
+        cells_for(("c", 1, 1, [])), tmp_path / "out")
+
+    cell = root / "c" / "seed_1"
+    manifest_before = sorted(p.name for p in (cell / "attempt_0001").iterdir())
+    with pytest.raises(LedgerError, match="immutable"):
+        allocate_attempt_directory(cell, 1)
+    assert sorted(p.name for p in (cell / "attempt_0001").iterdir()) == (
+        manifest_before)

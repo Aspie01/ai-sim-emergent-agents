@@ -328,3 +328,44 @@ def allocate_attempt_directory(cell_directory: Path, attempt_id: int) -> Path:
             f"attempt directory already exists and is immutable: {path}")
     path.mkdir(parents=True)
     return path
+
+
+# Sentinel distinguishing "this cell has attempts but none is selected" from
+# "this cell is a legacy run". Both are non-Path answers, and conflating them
+# is the specific mistake this module exists to prevent.
+NO_SELECTED_ATTEMPT = object()
+
+
+def resolve_cell_artifacts(cell_directory: Path):
+    """Return the directory a reader should read a cell's artifacts from.
+
+    Three answers, and callers must distinguish all three:
+
+    - a ``Path`` into ``attempt_NNNN`` when the cell has a selected attempt;
+    - the cell directory itself when the cell predates attempts entirely;
+    - ``NO_SELECTED_ATTEMPT`` when the cell has an attempt history but nothing
+      in it was selected.
+
+    The third case must never fall back to the cell directory. A cell with a
+    ledger and no selection is one whose attempts all failed, and "helpfully"
+    reading whatever happens to sit in ``data/`` would present a failed
+    attempt's leftovers as the cell's evidence -- which is the exact ambiguity
+    attempt directories exist to remove.
+
+    A legacy cell is identified by the *absence* of a ledger, not by the
+    presence of ``data/``, so a future layout that drops ``data/`` cannot be
+    silently misread as legacy.
+    """
+    ledger_path = cell_directory / "attempts.jsonl"
+    if not ledger_path.is_file():
+        return cell_directory
+    ledger = AttemptLedger.load(ledger_path)
+    selected = ledger.selected_attempt()
+    if selected is None:
+        return NO_SELECTED_ATTEMPT
+    directory = ledger.derive()[selected].directory
+    if directory in (None, "", "."):
+        # Phase 1 ledgers record '.' because artifacts lived directly under
+        # the cell. Those remain readable exactly where they are.
+        return cell_directory
+    return cell_directory / directory

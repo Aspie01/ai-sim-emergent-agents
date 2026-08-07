@@ -33,7 +33,12 @@ from thalren_vale.artifact_validation import (  # noqa: E402
     artifact_paths,
     inspect_run_outputs,
 )
-from thalren_vale.attempt_ledger import AttemptLedger  # noqa: E402
+from thalren_vale.attempt_ledger import (  # noqa: E402
+    NO_SELECTED_ATTEMPT,
+    AttemptLedger,
+    allocate_attempt_directory,
+    resolve_cell_artifacts,
+)
 from thalren_vale.reproducibility import (  # noqa: E402
     environment_fingerprint,
     plugin_inventory,
@@ -1432,8 +1437,12 @@ def _run_cells_in_fresh_root(
         ledger = AttemptLedger(cell_id=cell_id)
         ledger_path = run_dir / 'attempts.jsonl'
         attempt_id = ledger.next_attempt_id()
+        # Phase 2: the child runs into its own attempt directory, so a later
+        # retry cannot overwrite this attempt's manifest, summary, or stderr.
+        # The allocator refuses an existing path rather than reusing it.
+        attempt_dir = allocate_attempt_directory(run_dir, attempt_id)
         ledger.append_to(ledger_path, [ledger.start_attempt(
-            attempt_id, directory='.',
+            attempt_id, directory=attempt_dir.name,
             at=datetime.now(timezone.utc).isoformat())])
 
         command = _simulation_command(
@@ -1461,7 +1470,7 @@ def _run_cells_in_fresh_root(
         try:
             validate_cell(cell, require_run_absent=False)
             process = subprocess.run(
-                command, cwd=run_dir, env=env, capture_output=True, text=True,
+                command, cwd=attempt_dir, env=env, capture_output=True, text=True,
                 encoding='utf-8', errors='replace',
                 timeout=cell.timeout_seconds,
             )
@@ -1483,7 +1492,7 @@ def _run_cells_in_fresh_root(
         elapsed = round(time.perf_counter() - started, 3)
         validate_cell(cell, require_run_absent=False)
         report = inspect_run_outputs(
-            run_dir,
+            attempt_dir,
             cell.condition,
             cell.seed,
             expected_ticks=cell.ticks,
@@ -1494,11 +1503,12 @@ def _run_cells_in_fresh_root(
         ok = returncode == 0 and valid
         result = classify_result(returncode, valid, timed_out=timed_out)
         if not ok and process is not None and process.stdout:
-            write_cell_text(cell, 'runner_stdout.txt', process.stdout)
+            (attempt_dir / 'runner_stdout.txt').write_text(
+                process.stdout, encoding='utf-8')
         state_hash = None
         validate_cell(cell, require_run_absent=False)
         run_manifest_path = expected_outputs(
-            run_dir, cell.condition, cell.seed)['run_manifest']
+            attempt_dir, cell.condition, cell.seed)['run_manifest']
         if run_manifest_path.is_file():
             try:
                 state_hash = json.loads(
@@ -1818,7 +1828,19 @@ def verify_outputs(
     for condition in plan['conditions']:
         ticks = int(condition.get('ticks', plan.get('default_ticks', 5000)))
         for seed in parse_seed_range(str(condition.get('seeds', '1-5'))):
-            run_dir = output_root / condition['name'] / f'seed_{seed}'
+            cell_dir = output_root / condition['name'] / f'seed_{seed}'
+            # Readers resolve through the ledger rather than assuming a layout.
+            # A cell with an attempt history but no selected attempt resolves to
+            # NO_SELECTED_ATTEMPT and is reported unvalidatable; falling back to
+            # the cell directory would present a failed attempt's leftovers as
+            # the cell's evidence.
+            resolved = resolve_cell_artifacts(cell_dir)
+            if resolved is NO_SELECTED_ATTEMPT:
+                failures.append(
+                    f"{condition['name']} seed {seed}: attempts recorded but "
+                    'none selected')
+                continue
+            run_dir = resolved
             report = inspect_run_outputs(
                 run_dir,
                 condition['name'],

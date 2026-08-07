@@ -340,3 +340,94 @@ def test_allocation_refuses_to_reuse_a_directory_holding_evidence(tmp_path):
 def test_allocation_validates_the_attempt_id(tmp_path, attempt_id):
     with pytest.raises(LedgerError):
         allocate_attempt_directory(tmp_path, attempt_id)
+
+
+# ── Reader resolution: three answers, never conflated ───────────────────────
+
+def build_cell(tmp_path, *, attempts=(), directory_for=None):
+    """Create a cell directory with an optional ledger."""
+    cell = tmp_path / "seed_1"
+    cell.mkdir()
+    (cell / "data").mkdir()
+    if attempts:
+        book = ledger("c/seed_1")
+        for attempt_id, result, select in attempts:
+            book.start_attempt(
+                attempt_id,
+                directory=(directory_for or f"attempt_{attempt_id:04d}"),
+                at="t")
+            book.finish_attempt(attempt_id, result=result, at="t")
+            if select:
+                book.select_attempt(attempt_id, at="t")
+        book.write(cell / "attempts.jsonl")
+    return cell
+
+
+def test_a_cell_with_no_ledger_is_read_where_it_is(tmp_path):
+    """Legacy runs predate attempts and must stay readable forever."""
+    from thalren_vale.attempt_ledger import resolve_cell_artifacts
+
+    cell = build_cell(tmp_path)
+    assert resolve_cell_artifacts(cell) == cell
+
+
+def test_a_selected_attempt_resolves_to_its_directory(tmp_path):
+    from thalren_vale.attempt_ledger import resolve_cell_artifacts
+
+    cell = build_cell(tmp_path, attempts=[(1, "completed", True)])
+    assert resolve_cell_artifacts(cell) == cell / "attempt_0001"
+
+
+def test_a_ledger_with_no_selection_never_falls_back_to_the_cell(tmp_path):
+    """The trap this function exists to avoid.
+
+    A cell with a ledger and no selection is one whose attempts all failed.
+    Reading whatever sits in `data/` would present a failed attempt's leftovers
+    as the cell's evidence.
+    """
+    from thalren_vale.attempt_ledger import (
+        NO_SELECTED_ATTEMPT,
+        resolve_cell_artifacts,
+    )
+
+    cell = build_cell(tmp_path, attempts=[(1, "exception", False)])
+    assert resolve_cell_artifacts(cell) is NO_SELECTED_ATTEMPT
+    assert (cell / "data").is_dir(), "the leftovers still exist; we just refuse them"
+
+
+def test_supersession_resolves_to_the_newly_selected_attempt(tmp_path):
+    from thalren_vale.attempt_ledger import resolve_cell_artifacts
+
+    cell = build_cell(
+        tmp_path,
+        attempts=[(1, "completed", True), (2, "completed", True)])
+    assert resolve_cell_artifacts(cell) == cell / "attempt_0002"
+
+
+def test_a_phase_one_ledger_resolves_to_the_cell_directory(tmp_path):
+    """Phase-1 ledgers record '.', and those runs stay readable in place."""
+    from thalren_vale.attempt_ledger import resolve_cell_artifacts
+
+    cell = build_cell(
+        tmp_path, attempts=[(1, "completed", True)], directory_for=".")
+    assert resolve_cell_artifacts(cell) == cell
+
+
+def test_a_legacy_cell_is_identified_by_the_missing_ledger_not_by_data(tmp_path):
+    """A future layout without `data/` must not be misread as legacy."""
+    from thalren_vale.attempt_ledger import resolve_cell_artifacts
+
+    cell = tmp_path / "seed_1"
+    cell.mkdir()  # no data/, no ledger
+    assert resolve_cell_artifacts(cell) == cell
+
+
+def test_a_corrupt_ledger_refuses_rather_than_falling_back(tmp_path):
+    from thalren_vale.attempt_ledger import resolve_cell_artifacts
+
+    cell = tmp_path / "seed_1"
+    cell.mkdir()
+    (cell / "data").mkdir()
+    (cell / "attempts.jsonl").write_text("{not json\n", encoding="utf-8")
+    with pytest.raises(LedgerError):
+        resolve_cell_artifacts(cell)

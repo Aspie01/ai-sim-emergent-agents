@@ -72,6 +72,7 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | Checkpoint, PRNG restoration or event replay | Planned, not implemented |
 | Immutable experiment attempts, ledger, selection and safe resume | Planned, not implemented |
 | Enforced plugin load policy and V2 matrix orchestration | Planned, not implemented |
+| Attempt ledger and immutable attempt directories | Implemented as machinery, **not wired into execution**. `src/thalren_vale/attempt_ledger.py` provides an event-sourced append-only history with supersession that preserves every prior outcome, and a directory allocator that refuses to reuse an attempt path. The runner does not yet create attempts; fail-fast dispatch and contract-matched resume depend on this and remain Planned, not implemented |
 | Revision preflight | Implemented, opt-in. A plan declaring `expected_commit`, `expected_tag`, or `require_clean_revision` has it enforced before any output root is created, and an unreadable revision fails closed. Enforcement is opt-in because the runner also serves engineering characterization on untagged revisions. Environment, dependency, and plugin fingerprints are recorded but **not** yet enforced |
 | Estimand, contrast, estimator, uncertainty method, multiplicity rules | Planned, not implemented |
 | Runner construction of a complete `ExpectedRunContract` | Planned, not implemented; the validator accepts one, the runner never builds one |

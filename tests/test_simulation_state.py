@@ -439,3 +439,67 @@ def test_same_seed_is_repeatable_in_one_process(tmp_path, monkeypatch):
     second_metrics = metrics_path.read_text(encoding="utf-8")
 
     assert second_metrics == first_metrics
+
+
+# ── Inhabitant naming capacity ──────────────────────────────────────────────
+
+def test_traveler_names_do_not_run_out():
+    """Naming must not cap how many inhabitants a run can ever produce.
+
+    Generation suffixes used to stop at 9, so `len(NAMES) * 9` names existed in
+    total. The two birth paths build their `used` set from the living *and* the
+    dead, so that was a ceiling on lifetime inhabitants rather than on
+    concurrent ones. On reaching it `_make_traveler_name` returned None and the
+    callers broke out of procreation, which stopped births permanently and
+    killed the population off. Anti-stagnation hid it by spawning from a pool
+    that only excluded the living.
+    """
+    used = set()
+    for _ in range(len(sim.NAMES) * 9 + 500):
+        name = sim._make_traveler_name(used)
+        assert name is not None, (
+            f"naming exhausted after {len(used)} names")
+        assert name not in used, f"duplicate name issued: {name}"
+        used.add(name)
+
+
+def test_names_below_the_old_ceiling_are_unchanged():
+    """The fix must not renumber inhabitants in runs that never hit the cap."""
+    used = set()
+    produced = []
+    for _ in range(len(sim.NAMES) * 9):
+        name = sim._make_traveler_name(used)
+        used.add(name)
+        produced.append(name)
+
+    assert produced[0] == sim.NAMES[0]
+    assert produced[len(sim.NAMES)] == f"{sim.NAMES[0]}2"
+    assert produced[-1] == f"{sim.NAMES[-1]}9"
+    assert len(set(produced)) == len(sim.NAMES) * 9
+
+
+def test_naming_continues_past_the_old_ceiling():
+    used = {n for n in sim.NAMES}
+    used |= {f"{n}{gen}" for gen in range(2, 10) for n in sim.NAMES}
+    assert sim._make_traveler_name(used) == f"{sim.NAMES[0]}10"
+
+
+def test_dead_names_are_never_reissued():
+    """Trust, memory, and grievance are name-keyed.
+
+    Recycling a dead inhabitant's name would hand its social history to a
+    newborn, so the birth paths pass the living and the dead and naming must
+    respect that.
+    """
+    dead = {sim.NAMES[0]}
+    issued = set()
+    for _ in range(20):
+        name = sim._make_traveler_name(dead | issued)
+        issued.add(name)
+    assert sim.NAMES[0] not in issued
+
+
+def test_empty_name_pool_reports_failure_instead_of_hanging(monkeypatch):
+    """The unbounded suffix loop must not spin when there is nothing to suffix."""
+    monkeypatch.setattr(sim, "NAMES", [])
+    assert sim._make_traveler_name(set()) is None

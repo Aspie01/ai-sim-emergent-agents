@@ -59,8 +59,10 @@ pre-existing usable form during committed-transfer communication, with no RNG
 or fuzzy comprehension. Compositional Protolanguage v1 and Grammar Evolution v1 are also
 implemented: composition emits fixed-arity `(resource, modality)` signals, and
 grammar lets a speaker hold a constituent-order rule that a hearer can infer
-from a minimal pair it already knows. Coevolution and research-readiness
-milestones are **Planned, not implemented**. Contact applies
+from a minimal pair it already knows. Language Coevolution v1, Language Research
+Readiness v1, Coalition Intelligibility v1, and Production Trials v1 are also
+implemented; every language milestone in the sequence now exists in source, and
+each remains off by default. Contact applies
 only to authentic different-active-coalitions communication; assigned/unassigned
 communication intentionally remains base Language v1 behavior. Birth
 transmission applies only after successful child admission and creates bounded

@@ -1,15 +1,19 @@
 # Project overview
 
-Thalren Vale is a tick-driven civilization simulation. Named inhabitants occupy a procedurally generated grid, gather and exchange resources, carry beliefs, form formal factions, research technologies, negotiate, fight, establish religions, reproduce, and die. Optional engineering-only layers retain directed social relationships, derive informal coalitions from those relationships, and let committed aid or trade teach individual signal vocabularies. Coalition Dialects v1 can increase language learning between members of the same prior-tick informal coalition. Language Contact v1 can strengthen positive acquisition and record borrowing between different active coalitions. Intergenerational Language v1 can seed bounded child comprehension from exact parents after a successful birth admission. Lexical Evolution v1 can derive one deterministic substitution from a pre-existing usable production form during authentic post-transfer communication. All four extensions are deliberately one-way into individual language state.
+Thalren Vale is a tick-driven civilization simulation. Named inhabitants occupy a procedurally generated grid, gather and exchange resources, carry beliefs, form formal factions, research technologies, negotiate, fight, establish religions, reproduce, and die. Optional engineering-only layers retain directed social relationships, derive informal coalitions from those relationships, and let committed aid or trade teach individual signal vocabularies. Coalition Dialects v1 can increase language learning between members of the same prior-tick informal coalition. Language Contact v1 can strengthen positive acquisition and record borrowing between different active coalitions. Intergenerational Language v1 can seed bounded child comprehension from exact parents after a successful birth admission. Lexical Evolution v1 can derive one deterministic substitution from a pre-existing usable production form during authentic post-transfer communication. Compositional Protolanguage v1 can compose a signal from resource and modality morphemes, Grammar Evolution v1 can infer a constituent order from minimal pairs, and Production Trials v1 can occasionally speak the runner-up form. Every one of those extensions is deliberately one-way into individual language state.
 
-This handbook documents the approved, uncommitted Lexical Evolution v1 working
-tree on branch `feature/lexical-evolution-v1`, based at commit
-`2855bf15a77dffc599f6a0f4ac08721f79a379d4`. It describes implementation
+Two later gates are deliberately **not** one-way. Language Coevolution v1 feeds mutual intelligibility back into partner choice, and Coalition Intelligibility v1 gates coalition formation on it, so with either enabled language can influence who interacts with whom. Both are off by default. A separate non-language gate lets the formal faction layer read `Relationship` records instead of the legacy trust counter.
+
+This handbook documents the `main` working tree. Its v0.1 base revision is
+commit `2855bf15a77dffc599f6a0f4ac08721f79a379d4`; later milestones are recorded
+in [handbook status](../HANDBOOK_STATUS.md). It describes implementation
 behavior, not a claim that every mechanic is scientifically validated. The
 repository contains strong tests for configuration, deterministic seeded
 execution, structured artifacts, social memory, informal coalitions, endogenous
-language, coalition dialects, language contact, intergenerational language, and
-lexical evolution.
+language, coalition dialects, language contact, intergenerational language,
+lexical evolution, compositional protolanguage, grammar evolution, language
+coevolution, coalition intelligibility, production trials, and the faction
+social model.
 Several older civilization layers have only indirect regression coverage;
 their pages say so explicitly.
 
@@ -44,20 +48,26 @@ The simulation is not globally transactional. Individual admission, coalition tr
 | Lexical Evolution v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Compositional Protolanguage v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Grammar Evolution v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Language Coevolution v1 | Implemented but experimental; Disabled by default; Engineering-only; first break in language causal isolation |
+| Language Research Readiness v1 | Implemented; contracts base language and records one endpoint; authorizes no execution |
+| Coalition Intelligibility v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Production Trials v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Faction relationship-trust model | Implemented but experimental; Disabled by default; legacy trust model retained; Engineering-only |
 | Dashboard, raw narratives, RA tracker, mythology | Optional or diagnostic; not canonical evidence |
 | Generic experiment runner | Fresh-root engineering runner; not V2 research-ready |
 | Core Replication V2 execution and evidence | Planned, not implemented |
 
-Language coevolution and language research readiness remain
-**Planned, not implemented** as listed in
-[research readiness](../experiments/research-readiness.md).
+The language milestone sequence is complete in engineering terms. What remains
+unbuilt is the analysis contract — estimand, contrast, estimator, uncertainty
+method, multiplicity rules — and the V2 orchestration that would execute it.
+See [research readiness](../experiments/research-readiness.md).
 
 ## Recommended reading paths
 
 - Owner or first-time user: [operations](operations.md) -> [output layout](../data/output-directory-layout.md) -> [identifying valid runs](../data/identifying-valid-runs.md).
 - Developer: [architecture overview](../architecture/architecture-overview.md) -> [tick lifecycle](../architecture/tick-lifecycle.md) -> [state ownership](../architecture/state-ownership-map.md).
 - Research reviewer: [determinism](../architecture/determinism-and-rng.md) -> [artifact catalog](../data/artifact-catalog.md) -> [run lifecycle and validation](../experiments/run-lifecycle-and-validation.md).
-- Social/language reviewer: [aid, trade, and relationships](../systems/aid-trade-and-relationships.md) -> [informal coalitions](../systems/informal-coalitions.md) -> [endogenous language](../systems/endogenous-language.md) -> [coalition dialects](../systems/coalition-dialects.md) -> [language contact](../systems/language-contact.md) -> [intergenerational language](../systems/intergenerational-language.md) -> [lexical evolution](../systems/lexical-evolution.md).
+- Social/language reviewer: [aid, trade, and relationships](../systems/aid-trade-and-relationships.md) -> [informal coalitions](../systems/informal-coalitions.md) -> [endogenous language](../systems/endogenous-language.md) -> [coalition dialects](../systems/coalition-dialects.md) -> [language contact](../systems/language-contact.md) -> [intergenerational language](../systems/intergenerational-language.md) -> [lexical evolution](../systems/lexical-evolution.md) -> [compositional protolanguage](../systems/compositional-protolanguage.md) -> [grammar evolution](../systems/grammar-evolution.md) -> [production trials](../systems/production-trial.md) -> [language coevolution](../systems/language-coevolution.md) -> [coalition intelligibility](../systems/coalition-intelligibility.md).
 
 ## Evidence boundaries
 

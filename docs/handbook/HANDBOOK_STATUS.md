@@ -3,19 +3,24 @@
 ## Recorded revision
 
 - Handbook: Living Technical Handbook v0.1
-- Documented branch: `feature/lexical-evolution-v1`
-- Base `HEAD` commit: `2855bf15a77dffc599f6a0f4ac08721f79a379d4`
-- Documented implementation state: approved Lexical Evolution v1 source and
-  tests in the uncommitted branch working tree
-- Update date: 2026-07-28 (Canada/Eastern)
-- Working-tree caveat: the commit identifies the base revision and does not by
-  itself contain Lexical Evolution v1. The feature implementation, tests, and
-  handbook updates remain uncommitted branch work until the final feature
-  commit. Existing non-handbook changes are intentionally preserved.
+- Documented branch: `main`
+- Handbook v0.1 base commit: `2855bf15a77dffc599f6a0f4ac08721f79a379d4`
+  (`feat: add intergenerational language transmission`)
+- Documented implementation state: the current `main` working tree, which
+  contains every milestone through Production Trials and the faction
+  relationship-trust model, plus the inhabitant-naming fix that removed the
+  lifetime-population ceiling
+- Last documentation refresh: 2026-08-07 (Canada/Eastern)
+- Revision caveat: the commit above identifies the revision this handbook was
+  first written against. It is deliberately **not** re-pinned on every refresh.
+  Later milestones are recorded in the acceptance sections below, and
+  `docs/handbook/validate_handbook.py` checks documented milestone status
+  against `SimulationConfig` in current source rather than against a commit, so
+  a stale commit pin cannot make a false status pass.
 
-This handbook is authoritative for the recorded branch working-tree state and
-base commit described above. It remains explicitly versioned and must be
-refreshed when current behavior changes.
+This handbook is authoritative for the implementation state described above. It
+remains explicitly versioned and must be refreshed when current behavior
+changes.
 
 ## Source-of-truth hierarchy
 
@@ -45,10 +50,17 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | Language Contact v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Intergenerational Language v1 | Implemented but experimental; Disabled by default; Engineering-only |
 | Lexical Evolution v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Compositional Protolanguage v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Grammar Evolution v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Language Coevolution v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Language Research Readiness v1 | Implemented; contracts base language and records one endpoint; authorizes no execution |
+| Coalition Intelligibility v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Production Trials v1 | Implemented but experimental; Disabled by default; Engineering-only |
+| Faction relationship-trust model | Implemented but experimental; Disabled by default; legacy trust model retained; Engineering-only |
 | Combat, technology, diplomacy and religion | Implemented but experimental |
 | Structured events, metrics, manifests and deep validation | Stable and verified engineering infrastructure |
 | Dashboard, RA tracker and mythology | Optional/diagnostic; mythology and RA disabled by default |
-| Plugins | Implemented causal extension system; not sandboxed or provenance-sealed |
+| Plugins | Implemented causal extension system; identity is fingerprinted in every run manifest, but plugins are not sandboxed and no load policy is enforced |
 | Generic experiment runner | Fresh-root engineering runner; not V2 research-ready |
 
 ## Systems absent or planned
@@ -59,12 +71,11 @@ When these conflict, the handbook uses executable behavior, records the discrepa
 | Biological age/senescence/family model | Planned, not implemented only as a possibility; no active contract exists |
 | Checkpoint, PRNG restoration or event replay | Planned, not implemented |
 | Immutable experiment attempts, ledger, selection and safe resume | Planned, not implemented |
-| Clean-tag/environment/plugin preflight and V2 matrix orchestration | Planned, not implemented |
-| `feature/compositional-protolanguage-v1` | Implemented but experimental; Disabled by default; Engineering-only |
-| `feature/grammar-evolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
-| `feature/language-coevolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
-| `feature/language-research-readiness-v1` | Implemented but experimental; Disabled by default; Engineering-only |
+| Clean-tag preflight, enforced plugin load policy, and V2 matrix orchestration | Planned, not implemented. The annotated tag, dirty status, and an environment fingerprint over interpreter, platform, and plugin digests are already recorded in every run manifest; what is missing is the preflight that refuses to run when they are wrong |
+| Estimand, contrast, estimator, uncertainty method, multiplicity rules | Planned, not implemented |
+| Runner construction of a complete `ExpectedRunContract` | Planned, not implemented; the validator accepts one, the runner never builds one |
 
+Every language milestone listed in the previous table is implemented in source.
 No final language research hypotheses, estimands, metrics, evidence contracts, or readiness claims are defined here.
 
 ## Language roadmap
@@ -78,21 +89,15 @@ Completed engineering implementations:
 - `feature/lexical-evolution-v1`
 - `feature/compositional-protolanguage-v1`
 - `feature/grammar-evolution-v1`
+- `feature/language-coevolution-v1`
+- `feature/language-research-readiness-v1`
+- `feature/language-coevolution-v2` (coalition intelligibility)
+- `feature/language-coevolution-v3` (production trials)
+- `feature/language-coevolution-v4` (faction relationship-trust model)
 
-Planned, not implemented:
-
-
-The language milestone sequence is complete. Every further step is a
-research authorization decision rather than an engineering one, and each
-requires separate explicit authorization.
-
-## Current branch work
-
-The branch working tree contains the approved Lexical Evolution v1 implementation
-and tests. This handbook pass changes only `docs/handbook/`; it does not change
-simulation behavior, configuration, artifact schemas, runner behavior, or
-research output. The handbook files are themselves uncommitted branch work
-until the final feature commit.
+Nothing in the language milestone sequence remains planned. The sequence is
+complete: every further step is a research authorization decision rather than
+an engineering one, and each requires separate explicit authorization.
 
 ## Unresolved questions
 
@@ -193,8 +198,10 @@ canonical-output command is part of this refresh.
 Lexical Evolution v1 completed implementation, the bounded summary correction,
 verification, and final read-only acceptance before this documentation pass.
 The earlier accepted implementation suite reported **1,474 passed**. After the
-summary correction, the authoritative current full-suite result is **1,476 passed**.
-These are engineering verification results, not simulations,
+summary correction, that milestone's accepted full-suite result was
+**1,476 passed**. Both numbers are historical acceptance records for Lexical
+Evolution v1, not the current suite size; the suite has grown with every
+milestone since. They are engineering verification results, not simulations,
 experiments, effect-size estimates, or scientific conclusions.
 
 This handbook refresh is verified with:
@@ -207,6 +214,46 @@ git diff --check
 
 No simulator, experiment, matrix, benchmark, historical scan, evidence
 analysis, research tier, or canonical-output command is part of this refresh.
+
+## 2026-08-07 documentation-drift refresh
+
+A documentation-only pass that reconciled the handbook with source after the
+milestones merged since the Lexical Evolution v1 refresh. It changed no
+simulation behavior, configuration, schema, runner behavior, or research
+output. What it corrected:
+
+- Retracted claims that already-shipped work was planned: child-manifest plan
+  and environment provenance, the plugin/environment fingerprint, and the
+  in-progress-research field in the state-hash payload.
+- Marked section 5 of
+  [language in the full simulation](experiments/language-speciation-full-simulation.md)
+  superseded. Its collapse analysis and its ticks-1..500 analysis window
+  measured the inhabitant naming ceiling, which has since been fixed; the
+  superseding note is
+  [anti-stagnation and population viability](experiments/anti-stagnation-and-population-viability.md).
+  The measurements themselves were left unedited.
+- Corrected stated counts of vetoed control families that disagreed with
+  source, and stopped quoting a full-suite total as a current figure.
+- Documented the six newest control families in the configuration and command
+  references, with flag names and defaults taken from
+  `src/thalren_vale/config.py`.
+- Widened the milestone pattern in `docs/handbook/validate_handbook.py` past
+  `-v1` and declared the `-v4` milestone gate, so the newest milestones are
+  actually checked.
+
+Verified with:
+
+```bash
+python docs/handbook/validate_handbook.py
+python -m compileall -q docs/handbook src
+git diff --check
+```
+
+A single bounded one-tick direct run was executed in a fresh `/tmp` directory
+to confirm the example command in the command reference parses and that the
+manifest provenance fields documented here are present. It was deleted after
+inspection. No experiment, matrix, benchmark, research tier, or
+canonical-output command was run, and no evidence root was created.
 
 ## Known documentation limitations
 

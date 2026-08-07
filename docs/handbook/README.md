@@ -2,16 +2,19 @@
 
 This is the authoritative technical handbook for the current Thalren Vale repository revision:
 
-- Branch: `feature/lexical-evolution-v1`
-- Base `HEAD` commit: `2855bf15a77dffc599f6a0f4ac08721f79a379d4`
-- Documented implementation state: the approved, uncommitted Lexical Evolution
-  v1 working tree on that branch
-- Updated: 2026-07-28
+- Branch: `main`
+- Handbook v0.1 base commit: `2855bf15a77dffc599f6a0f4ac08721f79a379d4`
+- Documented implementation state: the current `main` working tree, which
+  contains every milestone through Production Trials and the faction
+  relationship-trust model
+- Last documentation refresh: 2026-08-07
 
-The commit identifies the base revision; it does not by itself contain the
-Lexical Evolution v1 implementation. The implementation and these handbook
-updates remain uncommitted branch work until the owner creates the final
-feature commit.
+The commit identifies the revision this handbook was first written against, not
+the current head. It is deliberately not re-pinned on every refresh; per-page
+claims are checked against current source, and
+[`docs/handbook/validate_handbook.py`](validate_handbook.py) verifies documented
+milestone status against `SimulationConfig` rather than against a commit. Refresh
+history is in [handbook status](HANDBOOK_STATUS.md).
 
 It is written for the project owner, new developers, future Codex sessions, researchers inspecting results, and reviewers auditing causal isolation, determinism, or evidence integrity. It explains executable behavior; it does not promote engineering tests or historical pilot outputs into research conclusions.
 
@@ -112,11 +115,14 @@ authoritative alone.
 | `feature/lexical-evolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/compositional-protolanguage-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 | `feature/grammar-evolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
+| `feature/language-coevolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
+| `feature/language-research-readiness-v1` | Implemented; contracts base language and records one endpoint; authorizes no execution |
+| `feature/language-coevolution-v2` — coalition intelligibility | Implemented but experimental; Disabled by default; Engineering-only |
+| `feature/language-coevolution-v3` — production trials | Implemented but experimental; Disabled by default; Engineering-only |
+| `feature/language-coevolution-v4` — faction relationship-trust model | Implemented but experimental; Disabled by default; legacy trust model retained; Engineering-only |
 | Generic experiment runner | Implemented fresh-root engineering runner; not research-ready |
 | Core Replication V1 | Historical pilot material |
 | Core Replication V2 evidence | Planned, not implemented |
-| `feature/language-coevolution-v1` | Implemented but experimental; Disabled by default; Engineering-only |
-| `feature/language-research-readiness-v1` | Implemented but experimental; Disabled by default; Engineering-only |
 
 The language milestone sequence is complete. Every further step is a
 research authorization decision rather than an engineering one, and each
@@ -142,9 +148,14 @@ The handbook preserves a visible distinction between source-verified behavior an
 - A fixed-seed hash match is not a checkpoint or full replay proof.
 - Passing tests do not establish scientific conclusions.
 - Formal factions and informal coalitions are different systems.
-- Coalition membership can influence language only through the enabled dialect
-  and contact extensions; language cannot influence coalition lifecycle or any
-  economic, social, or biological outcome.
+- Coalition membership can influence language through the enabled dialect and
+  contact extensions. The reverse direction is no longer empty: with
+  [language coevolution](systems/language-coevolution.md) enabled, utterance
+  outcomes adjust directed relationship ties and therefore partner choice, and
+  with [coalition intelligibility](systems/coalition-intelligibility.md)
+  enabled, a tie must clear an intelligibility threshold in both directions to
+  carry a coalition edge. Both gates are off by default. Language still cannot
+  influence any economic, combat, diplomatic, religious, or biological outcome.
 - A successfully committed birth can provide bounded child comprehension of
   usable parental forms when Intergenerational Language v1 is enabled;
   language cannot affect reproduction or any social/material outcome.

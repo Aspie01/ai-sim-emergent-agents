@@ -122,10 +122,13 @@ Base language is the one exception: under
 [Language Research Readiness v1](../systems/language-research-readiness.md) it
 is contracted, so `language_evolution_enabled` may take either value while
 every other base-language control stays pinned to its approved value. All
-seven other language and social families remain engineering-only and vetoed.
-The generic runner rejects each engineering-only option family before
-output-root or child-process activity. Both parsers retain
-`allow_abbrev=False`.
+twelve other language and social families remain engineering-only and vetoed:
+social memory, informal coalitions, coalition dialects, language contact,
+intergenerational language, lexical evolution, compositional protolanguage,
+grammar evolution, language coevolution, coalition intelligibility, production
+trials, and the faction relationship-trust model. The generic runner rejects
+each engineering-only option family before output-root or child-process
+activity. Both parsers retain `allow_abbrev=False`.
 
 ## What the language contract does and does not settle
 

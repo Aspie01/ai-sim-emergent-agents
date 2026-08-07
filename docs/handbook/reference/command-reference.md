@@ -28,6 +28,41 @@ python -m thalren_vale \
 
 This creates the required structured artifacts beneath `$run_dir/data/`. Do not reuse that directory for the same or another direct run when evidence integrity matters.
 
+## Enable a newer engineering-only control family
+
+Every family below is off by default and vetoes V2 readiness when touched. Each
+has a paired `--enable-*` / `--disable-*` flag (mutually exclusive) plus its
+numeric controls, and each has dependencies that silently normalize the gate
+back off when unmet — see
+[configuration reference](configuration-reference.md) for ranges and
+normalization notices.
+
+| Family | Enable flag | Numeric controls (default) | Requires |
+| --- | --- | --- | --- |
+| Compositional protolanguage | `--enable-compositional-protolanguage` | `--maximum-resource-morpheme-length` (`2`), `--modality-morpheme-length` (`1`) | base language |
+| Grammar evolution | `--enable-grammar-evolution` | `--order-adoption-threshold` (`3`) | base language, composition |
+| Language coevolution | `--enable-language-coevolution` | `--intelligibility-reward` (`0.06`), `--intelligibility-penalty` (`0.04`) | base language, partner bias |
+| Coalition intelligibility | `--enable-coalition-intelligibility` | `--coalition-intelligibility-threshold` (`0.50`) | coalition emergence, coevolution |
+| Production trials | `--enable-production-trial` | `--production-trial-interval` (`8`) | base language |
+| Faction relationship trust | `--enable-faction-relationship-trust` | `--faction-relationship-trust-threshold` (`0.40`) | social memory |
+
+A dependency-complete example, still bounded and in a fresh directory:
+
+```bash
+PYTHONHASHSEED=0 python -m thalren_vale \
+  --seed 42 \
+  --condition bounded-composition \
+  --ticks 1 \
+  --log-mode metrics_only \
+  --enable-language-evolution \
+  --enable-compositional-protolanguage \
+  --enable-grammar-evolution
+```
+
+The generic experiment runner rejects every one of these options, in exact,
+equals, and prefix form, before it creates an output root or launches a child.
+They are direct-run engineering controls only.
+
 ## Run tests
 
 ```bash

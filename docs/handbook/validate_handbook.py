@@ -79,9 +79,13 @@ MILESTONE_GATES: dict[str, str | None] = {
     "feature/language-research-readiness-v1": None,
     "feature/language-coevolution-v2": "coalition_intelligibility_enabled",
     "feature/language-coevolution-v3": "production_trial_enabled",
+    "feature/language-coevolution-v4": "faction_relationship_trust_enabled",
 }
 
-MILESTONE_SLUG = re.compile(r"feature/[a-z-]+-v1")
+# Milestones past the first revision of a line are numbered -v2, -v3, -v4, so a
+# pattern anchored on -v1 silently stopped checking every milestone after the
+# first: the -v2 and -v3 entries above were declared but unreachable.
+MILESTONE_SLUG = re.compile(r"feature/[a-z-]+-v\d+")
 PLANNED_CLAIM = re.compile(r"planned,?\s*not\s*implemented", re.IGNORECASE)
 IMPLEMENTED_CLAIM = re.compile(r"\bimplemented\b", re.IGNORECASE)
 

@@ -74,7 +74,9 @@ It does not prove:
 - byte-identical dependencies/platform behavior;
 - replayability or safe continuation.
 
-Important omitted categories include plugin inventory/internal state, RNG state, world noise offsets, several economy/diplomacy/religion caches, active research under its current attribute name, spatial indexes, anti-stagnation locals, and dashboard history. Two equal fingerprints may diverge if execution continues.
+Important omitted categories include plugin internal state, RNG state, world noise offsets, several economy/diplomacy/religion caches, spatial indexes, anti-stagnation locals, and dashboard history. Two equal fingerprints may diverge if execution continues.
+
+In-progress research is no longer omitted. The payload previously read `faction.researching` and `faction.research_progress`, which nothing assigns, so both were permanently `None`; it now reads the authoritative `active_research` mapping owned by `technology.py`, whose `tech`, `progress`, `started`, and `paused` fields all discriminate. Plugin *identity* is still outside the hash, but it is sealed separately: the run manifest's `environment_fingerprint` digests the SHA-256 of every loadable plugin alongside the interpreter and platform.
 
 ## Reset behavior
 
@@ -97,7 +99,10 @@ Same seeds across different conditions are replicate identifiers, not permanentl
 
 ## Limitations and future work
 
-- No environment/dependency/plugin fingerprint in direct run manifests.
+- No dependency or lockfile hash. Direct run manifests do carry an
+  `environment_fingerprint` over the Python version, implementation, system,
+  machine, and plugin inventory, but installed third-party distributions are
+  deliberately excluded because packaging metadata varies by install method.
 - No per-tick hashes, RNG serialization, checkpoint, restore, or event replay.
 - No deterministic-parallelism guarantee.
 - Clean-tag/environment preflight and checkpoint/replay are **Planned, not implemented**.

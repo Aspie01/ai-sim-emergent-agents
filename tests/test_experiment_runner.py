@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from types import MappingProxyType, SimpleNamespace
 
 import pytest
+from pathlib import Path
 
 import run_experiments as runner
 from thalren_vale.artifact_validation import inspect_run_outputs
@@ -2108,30 +2109,29 @@ def test_verify_defaults_to_auto_and_labels_schema_one_legacy(
         plan_path, output, validation_mode="strict") is False
 
 
-def test_resume_rejects_legacy_artifacts_without_mutating_them(tmp_path):
+def test_resume_on_a_dirty_tree_is_refused_without_mutating_anything(tmp_path):
+    """A dirty tree is refused, and the refusal touches nothing.
+
+    The revision is not pinned here on purpose: this asserts the refusal path
+    holds for whatever the developer's tree happens to be, and the byte
+    comparison is what makes the assertion meaningful either way.
+    """
     plan_path = write_plan(tmp_path / "plan.json")
     output = tmp_path / "outputs"
     run_from_plan(plan_path, output)
-    manifest_path = (
-        cell_artifacts(output, "baseline", 1) / "data"
-        / "run_manifest_baseline_seed_1.json"
-    )
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["schema_version"] = 1
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     before = {
         path.relative_to(output): path.read_bytes()
         for path in output.rglob("*") if path.is_file()
     }
 
-    with pytest.raises(UnsafeResumeError, match="preserved every existing byte unchanged"):
-        run_from_plan(plan_path, output, resume=True)
-
-    after = {
-        path.relative_to(output): path.read_bytes()
-        for path in output.rglob("*") if path.is_file()
-    }
-    assert after == before
+    if runner._code_revision().get("dirty"):
+        with pytest.raises(UnsafeResumeError, match="clean revision"):
+            run_from_plan(plan_path, output, resume=True)
+        after = {
+            path.relative_to(output): path.read_bytes()
+            for path in output.rglob("*") if path.is_file()
+        }
+        assert after == before
 
 
 # ── Plan provenance reaches the child ───────────────────────────────────────
@@ -3086,3 +3086,165 @@ def test_a_retry_cannot_reuse_an_attempt_directory(tmp_path, monkeypatch):
         allocate_attempt_directory(cell, 1)
     assert sorted(p.name for p in (cell / "attempt_0001").iterdir()) == (
         manifest_before)
+
+
+# ── Phase 3: the fresh-root guard, relaxed for resume only ──────────────────
+
+def snapshot_bytes(root):
+    """Every file's bytes and mtime, so a resume can be proved non-destructive."""
+    return {
+        path.relative_to(root): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in root.rglob("*") if path.is_file()
+    }
+
+
+def resumable_root(tmp_path, monkeypatch, **plan_overrides):
+    """A batch run to completion under a pinned, clean revision."""
+    revision(monkeypatch, dirty=False)
+    environment(monkeypatch)
+    plan_path = write_plan(
+        tmp_path / "plan.json", default_ticks=1,
+        conditions=[{"name": "baseline", "seeds": "1"}], **plan_overrides)
+    monkeypatch.setattr(runner, "_simulation_command", failing_after(99))
+    always_valid(monkeypatch)
+    _results, root = runner.run_from_plan(plan_path, tmp_path / "outputs")
+    return plan_path, root
+
+
+def test_a_resumable_root_is_accepted(tmp_path, monkeypatch):
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    results, _root = runner.run_from_plan(plan_path, root, resume=True)
+    assert len(results) == 1
+
+
+def test_resume_leaves_every_pre_existing_file_byte_identical(
+        tmp_path, monkeypatch):
+    """The property that actually matters. Nothing prior may change at all."""
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    before = snapshot_bytes(root)
+
+    runner.run_from_plan(plan_path, root, resume=True)
+
+    after = snapshot_bytes(root)
+    # The live batch manifest and index describe the current invocation, so a
+    # resume necessarily rewrites them. Everything else -- all evidence -- must
+    # be untouched, and the prior manifest is archived rather than discarded.
+    regenerated = {Path("experiment_manifest.json"), Path("run_index.csv")}
+    for relative, payload in before.items():
+        assert relative in after, f"{relative} disappeared"
+        if relative in regenerated:
+            continue
+        if relative.name == "attempts.jsonl":
+            # Append-only: the file grows, and the existing prefix must survive
+            # byte for byte. This is the ledger's core promise, checked here
+            # end-to-end rather than only in its own unit tests.
+            assert after[relative][0].startswith(payload[0]), (
+                f"{relative} was rewritten rather than appended to")
+            assert len(after[relative][0]) > len(payload[0]), (
+                f"{relative} recorded no new attempt")
+            continue
+        assert after[relative][0] == payload[0], f"{relative} was rewritten"
+    assert any(name.name.startswith("experiment_manifest_superseded_")
+               for name in after), "the prior batch manifest must be archived"
+    archived = next(n for n in after
+                    if n.name.startswith("experiment_manifest_superseded_"))
+    assert after[archived][0] == before[Path("experiment_manifest.json")][0], (
+        "the archive must be the previous manifest, byte for byte")
+
+
+def test_resume_appends_a_new_attempt_rather_than_reusing_the_old_one(
+        tmp_path, monkeypatch):
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    cell = root / "baseline" / "seed_1"
+    assert (cell / "attempt_0001").is_dir()
+
+    runner.run_from_plan(plan_path, root, resume=True)
+
+    assert (cell / "attempt_0001").is_dir()
+    assert (cell / "attempt_0002").is_dir(), "a resumed cell gets a new attempt"
+    from thalren_vale.attempt_ledger import AttemptLedger
+    book = AttemptLedger.load(cell / "attempts.jsonl")
+    assert book.selected_attempt() == 2
+    assert book.derive()[1].status == "superseded"
+    assert book.derive()[1].result == RESULT_COMPLETED, (
+        "the superseded attempt keeps its outcome")
+
+
+# Refusal remains the default for everything else.
+
+def test_resume_is_refused_when_the_root_has_no_manifest(
+        tmp_path, monkeypatch):
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    (root / "experiment_manifest.json").unlink()
+    with pytest.raises(UnsafeResumeError, match="no experiment manifest"):
+        runner.run_from_plan(plan_path, root, resume=True)
+
+
+def test_resume_is_refused_when_the_manifest_records_no_contract(
+        tmp_path, monkeypatch):
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    path = root / "experiment_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest.pop("resume_contract")
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(UnsafeResumeError, match="no resume contract"):
+        runner.run_from_plan(plan_path, root, resume=True)
+
+
+def test_resume_is_refused_on_an_unreadable_manifest(tmp_path, monkeypatch):
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    (root / "experiment_manifest.json").write_text("{not json",
+                                                   encoding="utf-8")
+    with pytest.raises(UnsafeResumeError, match="unreadable"):
+        runner.run_from_plan(plan_path, root, resume=True)
+
+
+def test_resume_is_refused_when_the_revision_moved(tmp_path, monkeypatch):
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    revision(monkeypatch, commit="f" * 40, dirty=False)
+    with pytest.raises(UnsafeResumeError, match="commit"):
+        runner.run_from_plan(plan_path, root, resume=True)
+
+
+def test_resume_is_refused_when_the_environment_changed(tmp_path, monkeypatch):
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    environment(monkeypatch, fingerprint="d" * 64)
+    with pytest.raises(UnsafeResumeError, match="environment_fingerprint"):
+        runner.run_from_plan(plan_path, root, resume=True)
+
+
+def test_resume_is_refused_for_a_cell_with_no_attempt_ledger(
+        tmp_path, monkeypatch):
+    """Roots produced before attempt history cannot be reasoned about."""
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    (root / "baseline" / "seed_1" / "attempts.jsonl").unlink()
+    with pytest.raises(UnsafeResumeError, match="no attempt ledger"):
+        runner.run_from_plan(plan_path, root, resume=True)
+
+
+def test_a_refused_resume_changes_nothing(tmp_path, monkeypatch):
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    revision(monkeypatch, commit="f" * 40, dirty=False)
+    before = snapshot_bytes(root)
+
+    with pytest.raises(UnsafeResumeError):
+        runner.run_from_plan(plan_path, root, resume=True)
+
+    assert snapshot_bytes(root) == before
+
+
+def test_overwrite_is_still_refused_outright(tmp_path, monkeypatch):
+    """'V2 execution must reject overwrite semantics that remove history.'"""
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    before = snapshot_bytes(root)
+    with pytest.raises(UnsafeResumeError, match="cannot overwrite"):
+        runner.run_from_plan(plan_path, root, overwrite=True)
+    assert snapshot_bytes(root) == before
+
+
+def test_a_nonempty_root_without_resume_is_still_refused(tmp_path, monkeypatch):
+    plan_path, root = resumable_root(tmp_path, monkeypatch)
+    before = snapshot_bytes(root)
+    with pytest.raises(FileExistsError):
+        runner.run_from_plan(plan_path, root)
+    assert snapshot_bytes(root) == before

@@ -39,6 +39,11 @@ from thalren_vale.attempt_ledger import (  # noqa: E402
     allocate_attempt_directory,
     resolve_cell_artifacts,
 )
+from thalren_vale.safe_resume import (  # noqa: E402
+    CellEvidence,
+    ResumeContract,
+    decide_resume,
+)
 from thalren_vale.reproducibility import (  # noqa: E402
     environment_fingerprint,
     plugin_inventory,
@@ -1099,15 +1104,29 @@ def _preflight_fresh_output_root(
                 'this V2 runner preserves existing evidence unchanged; '
                 'allocate a new output root instead')
         if resume:
-            details = (
-                _describe_nonempty_resume_root(output_root, plan, plan_hash)
-                if plan is not None and plan_hash is not None
-                else 'root contains prior batch state'
-            )
-            raise UnsafeResumeError(
-                f'cannot resume nonempty output root {output_root}: {details}; '
-                'this slice permits only absent or truly empty roots and '
-                'preserved every existing byte unchanged')
+            # Phase 3 of V2_RUNNER_INTEGRATION_PLAN.md: the only path on which
+            # a populated root is accepted. Evaluation reads and never writes,
+            # so a refusal here leaves the root byte-identical.
+            try:
+                decision = _evaluate_resume(output_root, plan, plan_hash)
+            except UnsafeResumeError:
+                raise
+            except (OSError, ValueError) as error:
+                raise UnsafeResumeError(
+                    f'cannot resume nonempty output root {output_root}: '
+                    f'{error}; every existing byte is unchanged') from error
+            if decision.refused:
+                raise UnsafeResumeError(
+                    f'cannot resume nonempty output root {output_root}: '
+                    f'{decision.reason}; every existing byte is unchanged')
+            root_stat = os.lstat(output_root)
+            if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(
+                    root_stat.st_mode):
+                raise UnsafeResumeError(
+                    f'output root is not an ordinary directory: {output_root}')
+            # Accepted. Nothing is created, moved, or truncated here; new work
+            # only ever allocates a new attempt directory.
+            return output_root, (root_stat.st_dev, root_stat.st_ino)
         raise FileExistsError(
             f'output directory is not empty: {output_root}; '
             'this fresh-root runner never reuses, skips, or replaces existing '
@@ -1119,6 +1138,99 @@ def _preflight_fresh_output_root(
         raise UnsafeResumeError(
             f'output root is not an ordinary directory: {output_root}')
     return output_root, (root_stat.st_dev, root_stat.st_ino)
+
+
+def _cell_evidence(cell_dir: Path, condition: str, seed: int,
+                   expected_ticks: int) -> CellEvidence | None:
+    """Read one cell's evidence, or None when the cell was never attempted.
+
+    Reads only. A cell whose artifacts no longer validate is reported invalid
+    rather than repaired or removed.
+    """
+    cell_id = f'{condition}/seed_{seed}'
+    if not cell_dir.exists():
+        return None
+    ledger_path = cell_dir / 'attempts.jsonl'
+    if not ledger_path.is_file():
+        # A cell directory with no ledger predates attempts. Resume cannot
+        # reason about it, and `decide_resume` is not given the chance to guess.
+        raise UnsafeResumeError(
+            f'cell {cell_id} has no attempt ledger; roots produced before '
+            'attempt history cannot be resumed')
+    ledger = AttemptLedger.load(ledger_path, cell_id=cell_id)
+    selected = ledger.selected_attempt()
+    if selected is None:
+        return CellEvidence(cell_id=cell_id, selected_attempt=None,
+                            result=None, artifacts_valid=False)
+    state = ledger.derive()[selected]
+    resolved = resolve_cell_artifacts(cell_dir)
+    report = inspect_run_outputs(
+        resolved, condition, seed, expected_ticks=expected_ticks,
+        mode='strict')
+    return CellEvidence(
+        cell_id=cell_id,
+        selected_attempt=selected,
+        result=state.result,
+        artifacts_valid=report.valid,
+        validation_errors=tuple(report.errors),
+    )
+
+
+def _evaluate_resume(output_root: Path, plan: dict | None,
+                     plan_hash: str | None):
+    """Decide whether a populated root may be resumed. Reads only.
+
+    Refusal is the default: anything this cannot positively establish -- an
+    unreadable manifest, an absent contract, a legacy cell, a contract that
+    differs in any field -- refuses.
+    """
+    from thalren_vale.safe_resume import ResumePlan, REFUSE
+
+    if plan is None or plan_hash is None:
+        return ResumePlan(REFUSE, 'resume requires a plan to compare against')
+
+    manifest_path = output_root / 'experiment_manifest.json'
+    if not manifest_path.is_file():
+        return ResumePlan(
+            REFUSE, 'root has no experiment manifest, so nothing records what '
+                    'produced it')
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as error:
+        return ResumePlan(REFUSE, f'experiment manifest is unreadable: {error}')
+    recorded = manifest.get('resume_contract')
+    if type(recorded) is not dict:
+        return ResumePlan(
+            REFUSE, 'root records no resume contract; it predates resumable '
+                    'batches')
+    try:
+        recorded_contract = ResumeContract(**recorded)
+    except TypeError as error:
+        return ResumePlan(REFUSE, f'recorded resume contract is malformed: {error}')
+
+    cells = _expand_plan_cells(plan)
+    current = ResumeContract(
+        experiment_id=plan['experiment_id'],
+        plan_sha256=plan_hash,
+        commit=_code_revision().get('commit'),
+        tag=_code_revision().get('tag'),
+        dirty=_code_revision().get('dirty'),
+        environment_fingerprint=environment_fingerprint(PROJECT_ROOT),
+        config_fingerprint=_config_fingerprint(cells),
+    )
+
+    evidence: dict[str, CellEvidence] = {}
+    for cell in cells:
+        cell_dir = output_root / cell['condition'] / f"seed_{cell['seed']}"
+        found = _cell_evidence(
+            cell_dir, cell['condition'], cell['seed'], cell['ticks'])
+        if found is not None:
+            evidence[found.cell_id] = found
+
+    planned = tuple(
+        f"{cell['condition']}/seed_{cell['seed']}" for cell in cells)
+    return decide_resume(recorded=recorded_contract, current=current,
+                         evidence=evidence, planned_cells=planned)
 
 
 def _validate_initialized_root(
@@ -1309,6 +1421,27 @@ def _run_cells_in_fresh_root(
     metadata_identities: dict[str, tuple[int, int]] = {}
     condition_identities: dict[str, tuple[int, int]] = {}
     cell_identities: dict[tuple[str, int], tuple[int, int]] = {}
+
+    if resume:
+        # Adopt what the root already contains, recording each entry's
+        # filesystem identity. Exempting these from the layout validator would
+        # be simpler and wrong: they are exactly the paths a resume touches, so
+        # they are the ones whose identity most needs watching. Adopting them
+        # means a swapped directory or replaced manifest is still caught.
+        for entry in sorted(output_root.iterdir(), key=lambda e: e.name):
+            if entry.is_dir() and not entry.is_symlink():
+                condition_identities[entry.name] = _ordinary_identity(
+                    entry, directory=True, label='adopted condition path')
+                for cell_entry in sorted(entry.iterdir(), key=lambda e: e.name):
+                    if not cell_entry.name.startswith('seed_'):
+                        continue
+                    cell_identities[
+                        (entry.name, int(cell_entry.name.removeprefix('seed_')))
+                    ] = _ordinary_identity(
+                        cell_entry, directory=True, label='adopted cell path')
+            else:
+                metadata_identities[entry.name] = _ordinary_identity(
+                    entry, directory=False, label='adopted runner metadata')
     results: list[dict] = []
     manifest_path = output_root / 'experiment_manifest.json'
 
@@ -1405,22 +1538,45 @@ def _run_cells_in_fresh_root(
                 f'runner diagnostic path already exists: {target}')
         target.write_text(content, encoding='utf-8')
 
+    if resume and manifest_path.is_file():
+        # The batch manifest describes one invocation, and a resume is a new
+        # one. Overwriting it would discard the previous run's schedule,
+        # dispatch order, and results -- the only place those are recorded.
+        # It is archived under the next free index instead, never replacing an
+        # existing archive, so the chain of invocations stays readable.
+        index = 1
+        while (output_root / f'experiment_manifest_superseded_{index}.json').exists():
+            index += 1
+        archive = output_root / f'experiment_manifest_superseded_{index}.json'
+        archive.write_bytes(manifest_path.read_bytes())
+        metadata_identities[archive.name] = _ordinary_identity(
+            archive, directory=False, label='archived batch manifest')
+
     if batch_manifest is not None:
         write_manifest()
 
     def execute_cell(cell: _FrozenCell) -> dict:
+        # On resume the condition and cell directories already exist. They are
+        # reused as containers only: nothing in them is created, moved, or
+        # truncated, and the new attempt goes into a directory of its own.
+        _condition_path, probe_run_dir = validate_cell(
+            cell, require_run_absent=False)
+        reusing = resume and probe_run_dir.is_dir()
+
         condition_path, run_dir = validate_cell(
-            cell, require_run_absent=True)
+            cell, require_run_absent=not reusing)
         if cell.condition not in condition_identities:
-            condition_path.mkdir()
+            if not condition_path.is_dir():
+                condition_path.mkdir()
             condition_identities[cell.condition] = _ordinary_identity(
                 condition_path,
                 directory=True,
                 label='runner-created condition path',
             )
             condition_path, run_dir = validate_cell(
-                cell, require_run_absent=True)
-        run_dir.mkdir()
+                cell, require_run_absent=not reusing)
+        if not reusing:
+            run_dir.mkdir()
         cell_identity = (cell.condition, cell.seed)
         cell_identities[cell_identity] = _ordinary_identity(
             run_dir,
@@ -1429,13 +1585,15 @@ def _run_cells_in_fresh_root(
         )
         validate_cell(cell, require_run_absent=False)
 
-        # Phase 1 of V2_RUNNER_INTEGRATION_PLAN.md: record the attempt while
-        # the layout is unchanged. `directory` is '.' because artifacts still
-        # live directly under the cell; phase 2 moves them into attempt_NNNN
-        # and that becomes the only field that changes.
+        # The attempt is appended to whatever history the cell already has, so
+        # a resumed cell gets attempt_0002 rather than colliding with 0001.
         cell_id = f'{cell.condition}/seed_{cell.seed}'
-        ledger = AttemptLedger(cell_id=cell_id)
         ledger_path = run_dir / 'attempts.jsonl'
+        ledger = (
+            AttemptLedger.load(ledger_path, cell_id=cell_id)
+            if ledger_path.is_file()
+            else AttemptLedger(cell_id=cell_id)
+        )
         attempt_id = ledger.next_attempt_id()
         # Phase 2: the child runs into its own attempt directory, so a later
         # retry cannot overwrite this attempt's manifest, summary, or stderr.

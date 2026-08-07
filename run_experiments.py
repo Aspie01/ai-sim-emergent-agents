@@ -1403,18 +1403,14 @@ def _write_index(output_root: Path, results: list[dict]) -> None:
         writer.writerows(results)
 
 
-def run_from_plan(
-    plan_path: Path,
-    output_root: Path | None = None,
-    *,
-    resume: bool = False,
-    overwrite: bool = False,
-) -> tuple[list[dict], Path]:
-    plan, plan_hash = load_plan(plan_path)
-    # Before any output root is touched: a contract violation must not leave a
-    # partially created experiment directory behind.
-    revision_contract = _preflight_revision_contract(plan)
-    output_root = output_root or Path('experiment_runs') / plan['experiment_id']
+def _expand_plan_cells(plan: dict) -> list[dict]:
+    """Expand a plan into the exact cell list, in dispatch order.
+
+    Extracted so that the nonexecuting expansion command and real execution
+    cannot drift: an expansion derived from a second implementation would
+    eventually describe cells the runner does not actually dispatch, which is
+    the one thing a preflight listing must never do.
+    """
     default_ticks = int(plan.get('default_ticks', 5000))
     default_timeout = plan.get('timeout_seconds', 86400)
     if default_timeout is not None:
@@ -1446,6 +1442,73 @@ def run_from_plan(
                     if index == 0 else None
                 ),
             })
+    return cells
+
+
+def expand_plan(plan_path: Path, output_root: Path | None = None) -> dict:
+    """Describe exactly what a plan would execute, without executing anything.
+
+    Creates no directory, starts no process, and writes no file. The revision
+    contract is *reported* rather than enforced: the point of an expansion is to
+    inspect a plan before committing to it, and refusing to describe a plan
+    because HEAD is currently dirty would defeat that.
+    """
+    plan, plan_hash = load_plan(plan_path)
+    root = output_root or Path('experiment_runs') / plan['experiment_id']
+    cells = _expand_plan_cells(plan)
+
+    expanded = []
+    for position, cell in enumerate(cells, start=1):
+        run_dir = root / cell['condition'] / f"seed_{cell['seed']}"
+        expanded.append({
+            'dispatch_position': position,
+            'cell_id': f"{cell['condition']}/seed_{cell['seed']}",
+            'condition': cell['condition'],
+            'seed': cell['seed'],
+            'ticks': cell['ticks'],
+            'extra_args': list(cell['extra_args']),
+            'timeout_seconds': cell['timeout_seconds'],
+            'output_dir': str(run_dir),
+            'command': _simulation_command(
+                cell['seed'], cell['condition'], cell['ticks'],
+                tuple(cell['extra_args']),
+                plan_identity=plan.get('experiment_id'),
+                plan_sha256=plan_hash,
+            ),
+        })
+
+    return {
+        'schema_version': RUNNER_SCHEMA_VERSION,
+        'experiment_id': plan['experiment_id'],
+        'plan_path': str(plan_path.resolve()),
+        'plan_sha256': plan_hash,
+        'output_root': str(root),
+        'cell_count': len(expanded),
+        'total_ticks': sum(cell['ticks'] for cell in cells),
+        'revision_contract': {
+            'expected_commit': plan.get('expected_commit'),
+            'expected_tag': plan.get('expected_tag'),
+            'require_clean_revision': plan.get('require_clean_revision'),
+            'declared': _declares_revision_contract(plan),
+            'revision': _code_revision(),
+        },
+        'cells': expanded,
+    }
+
+
+def run_from_plan(
+    plan_path: Path,
+    output_root: Path | None = None,
+    *,
+    resume: bool = False,
+    overwrite: bool = False,
+) -> tuple[list[dict], Path]:
+    plan, plan_hash = load_plan(plan_path)
+    # Before any output root is touched: a contract violation must not leave a
+    # partially created experiment directory behind.
+    revision_contract = _preflight_revision_contract(plan)
+    output_root = output_root or Path('experiment_runs') / plan['experiment_id']
+    cells = _expand_plan_cells(plan)
 
     batch_manifest = {
         'schema_version': RUNNER_SCHEMA_VERSION,
@@ -1540,6 +1603,11 @@ def main() -> int:
     )
     parser.add_argument('--verify', action='store_true')
     parser.add_argument(
+        '--expand', action='store_true',
+        help='Print the exact cells, order, commands, and paths this plan '
+             'would execute, then exit without running anything',
+    )
+    parser.add_argument(
         '--validation-mode', choices=('strict', 'auto', 'legacy'),
         default='auto',
         help='Validation contract for --verify; default auto preserves explicit legacy reads',
@@ -1569,6 +1637,12 @@ def main() -> int:
     plan, _ = load_plan(plan_path)
     output_root = Path(os.path.abspath(
         args.output_dir or Path('experiment_runs') / plan['experiment_id']))
+    if args.expand:
+        # Before --verify and before any execution: an expansion must never
+        # touch the output root, so it returns ahead of everything that does.
+        json.dump(expand_plan(plan_path, output_root), sys.stdout, indent=2)
+        sys.stdout.write('\n')
+        return 0
     if args.verify:
         return 0 if verify_outputs(
             plan_path, output_root,

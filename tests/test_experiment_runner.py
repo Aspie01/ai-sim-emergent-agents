@@ -2337,3 +2337,132 @@ def test_declaring_a_contract_at_all_requires_a_readable_revision(monkeypatch):
     revision(monkeypatch, commit=None, tag=None, dirty=None)
     with pytest.raises(runner.RevisionContractError, match="unverifiable"):
         runner._preflight_revision_contract({"require_clean_revision": False})
+
+
+# ── Nonexecuting matrix expansion ───────────────────────────────────────────
+
+MATRIX = {
+    "default_ticks": 100,
+    "conditions": [
+        {"name": "baseline", "seeds": "1-2"},
+        {"name": "treatment", "seeds": "1-3", "extra_args": ["--disable-raids"]},
+    ],
+}
+
+
+def test_expansion_lists_every_cell_in_dispatch_order(tmp_path):
+    plan_path = write_plan(tmp_path / "plan.json", **MATRIX)
+    report = runner.expand_plan(plan_path, tmp_path / "out")
+
+    assert report["cell_count"] == 5
+    assert report["total_ticks"] == 500
+    assert [c["dispatch_position"] for c in report["cells"]] == [1, 2, 3, 4, 5]
+    assert [c["cell_id"] for c in report["cells"]] == [
+        "baseline/seed_1", "baseline/seed_2",
+        "treatment/seed_1", "treatment/seed_2", "treatment/seed_3",
+    ]
+
+
+def test_expansion_matches_what_would_actually_be_dispatched(tmp_path, monkeypatch):
+    """The listing must come from the same expansion execution uses.
+
+    A preflight listing derived from a second implementation would eventually
+    describe cells the runner does not dispatch, which is the one thing it must
+    never do.
+    """
+    plan_path = write_plan(tmp_path / "plan.json", **MATRIX)
+    captured = {}
+
+    def capture(cells, output_root, **kwargs):
+        captured["cells"] = [dict(c) for c in cells]
+        return [], output_root
+
+    monkeypatch.setattr(runner, "_run_cells_in_fresh_root", capture)
+    runner.run_from_plan(plan_path, tmp_path / "out")
+
+    expanded = runner.expand_plan(plan_path, tmp_path / "out")
+    dispatched = [(c["condition"], c["seed"], c["ticks"], list(c["extra_args"]))
+                  for c in captured["cells"]]
+    listed = [(c["condition"], c["seed"], c["ticks"], c["extra_args"])
+              for c in expanded["cells"]]
+    assert listed == dispatched
+
+
+def test_expansion_reports_the_exact_child_command(tmp_path):
+    plan_path = write_plan(tmp_path / "plan.json", **MATRIX)
+    report = runner.expand_plan(plan_path, tmp_path / "out")
+    treatment = next(c for c in report["cells"]
+                     if c["cell_id"] == "treatment/seed_3")
+
+    expected = runner._simulation_command(
+        3, "treatment", 100, ("--disable-raids",),
+        plan_identity="test-batch-v1", plan_sha256=report["plan_sha256"])
+    assert treatment["command"] == expected
+    assert "--disable-raids" in treatment["command"]
+
+
+def test_expansion_creates_nothing(tmp_path):
+    plan_path = write_plan(tmp_path / "plan.json", **MATRIX)
+    output_root = tmp_path / "out"
+    before = sorted(p.name for p in tmp_path.iterdir())
+
+    runner.expand_plan(plan_path, output_root)
+
+    assert not output_root.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+
+
+def test_expansion_reports_the_revision_contract_without_enforcing_it(
+        tmp_path, monkeypatch):
+    """A dirty tree must not stop you inspecting a plan before committing."""
+    revision(monkeypatch, dirty=True)
+    plan_path = write_plan(
+        tmp_path / "plan.json", require_clean_revision=True, **MATRIX)
+
+    report = runner.expand_plan(plan_path, tmp_path / "out")
+
+    assert report["revision_contract"]["declared"] is True
+    assert report["revision_contract"]["require_clean_revision"] is True
+    assert report["revision_contract"]["revision"]["dirty"] is True
+
+
+def test_expansion_still_rejects_an_invalid_plan(tmp_path):
+    plan_path = write_plan(tmp_path / "plan.json", expected_commit="nope")
+    with pytest.raises(ValueError):
+        runner.expand_plan(plan_path, tmp_path / "out")
+
+
+def test_expansion_respects_per_condition_ticks_and_timeouts(tmp_path):
+    plan_path = write_plan(
+        tmp_path / "plan.json",
+        default_ticks=10, timeout_seconds=60,
+        conditions=[
+            {"name": "fast", "seeds": "1"},
+            {"name": "slow", "seeds": "1", "ticks": 999, "timeout_seconds": 7},
+        ])
+    cells = {c["cell_id"]: c for c in
+             runner.expand_plan(plan_path, tmp_path / "out")["cells"]}
+    assert cells["fast/seed_1"]["ticks"] == 10
+    assert cells["fast/seed_1"]["timeout_seconds"] == 60
+    assert cells["slow/seed_1"]["ticks"] == 999
+    assert cells["slow/seed_1"]["timeout_seconds"] == 7
+
+
+def test_expand_cli_prints_json_and_runs_nothing(tmp_path, monkeypatch, capsys):
+    plan_path = write_plan(tmp_path / "plan.json", **MATRIX)
+    output_root = tmp_path / "out"
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("--expand must not execute anything")
+
+    monkeypatch.setattr(runner, "run_from_plan", forbidden)
+    monkeypatch.setattr(runner, "verify_outputs", forbidden)
+    monkeypatch.setattr(sys, "argv", [
+        "run_experiments.py", "--plan", str(plan_path),
+        "--output-dir", str(output_root), "--expand",
+    ])
+
+    assert runner.main() == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["cell_count"] == 5
+    assert not output_root.exists()

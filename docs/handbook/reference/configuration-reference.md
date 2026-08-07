@@ -1,6 +1,6 @@
 # Configuration reference
 
-`SimulationConfig` is a frozen effective configuration. The simulator parses with `allow_abbrev=False`, normalizes feature dependencies, validates values, updates a small set of compatibility globals, and passes explicit frozen subconfigurations to the newer social, coalition, language, dialect, contact, intergenerational-language, and lexical-evolution systems.
+`SimulationConfig` is a frozen effective configuration. The simulator parses with `allow_abbrev=False`, normalizes feature dependencies, validates values, updates a small set of compatibility globals, and passes explicit frozen subconfigurations to the newer social, coalition, language, dialect, contact, intergenerational-language, lexical-evolution, compositional-protolanguage, grammar-evolution, language-coevolution, coalition-intelligibility, production-trial, and faction-relationship-trust systems.
 
 ## Core fields
 
@@ -149,6 +149,121 @@ the lexical gate off, preserves both submitted numeric controls, and records:
 The feature does not depend on intergenerational language, coalitions, dialect
 influence, language contact, social memory, formal factions, or settlements.
 
+## Compositional-protolanguage controls
+
+| Field | Default | Valid range / dependency |
+| --- | ---: | --- |
+| `compositional_protolanguage_enabled` | `False` | Exact Boolean; requires effective base language evolution |
+| `maximum_resource_morpheme_length` | `2` | Exact non-Boolean integer `1..3` |
+| `modality_morpheme_length` | `1` | Exact non-Boolean integer `1..2` |
+
+CLI forms are `--enable-compositional-protolanguage`,
+`--disable-compositional-protolanguage`,
+`--maximum-resource-morpheme-length`, and `--modality-morpheme-length`.
+
+When composition is effectively enabled, the two morpheme lengths must also sum
+to at most the effective `maximum_signal_length`; a composed signal that could
+not fit in a legal signal is rejected rather than truncated. Requesting
+composition without effective base language normalizes only the composition
+gate off and records:
+
+- `compositional_protolanguage_requested_without_language`
+
+## Grammar-evolution controls
+
+| Field | Default | Valid range / dependency |
+| --- | ---: | --- |
+| `grammar_evolution_enabled` | `False` | Exact Boolean; requires effective base language **and** effective compositional protolanguage |
+| `order_adoption_threshold` | `3` | Exact non-Boolean integer `1..32` |
+
+CLI forms are `--enable-grammar-evolution`, `--disable-grammar-evolution`, and
+`--order-adoption-threshold`.
+
+Normalization runs after composition, so a composition gate that was itself
+normalized off cascades here. Missing effective dependencies normalize grammar
+off and record the sorted applicable notices:
+
+- `grammar_evolution_requested_without_language`
+- `grammar_evolution_requested_without_composition`
+
+## Language-coevolution controls
+
+| Field | Default | Valid range / dependency |
+| --- | ---: | --- |
+| `language_coevolution_enabled` | `False` | Exact Boolean; requires effective base language **and** effective social partner bias |
+| `intelligibility_reward` | exact float `0.06` | Exact finite float `0.0 < x <= 0.25` |
+| `intelligibility_penalty` | exact float `0.04` | Exact finite float `0.0 < x <= 0.25` |
+
+CLI forms are `--enable-language-coevolution`,
+`--disable-language-coevolution`, `--intelligibility-reward`, and
+`--intelligibility-penalty`.
+
+Partner bias is a dependency because coevolution's only effect is to feed
+intelligibility into partner choice; without bias there is nothing for it to
+change. Missing effective dependencies normalize coevolution off and record the
+sorted applicable notices:
+
+- `language_coevolution_requested_without_language`
+- `language_coevolution_requested_without_partner_bias`
+
+## Coalition-intelligibility controls
+
+| Field | Default | Valid range / dependency |
+| --- | ---: | --- |
+| `coalition_intelligibility_enabled` | `False` | Exact Boolean; requires effective coalition emergence **and** effective language coevolution |
+| `coalition_intelligibility_threshold` | exact float `0.50` | Exact finite float `0.0 < x <= 1.0` |
+
+CLI forms are `--enable-coalition-intelligibility`,
+`--disable-coalition-intelligibility`, and
+`--coalition-intelligibility-threshold`.
+
+The threshold is strictly positive by validation: a tie with no communication
+history sits at exactly `0.0`, and silence must not count as understanding.
+Normalization runs after coevolution, so an implicitly disabled coevolution
+cascades. Missing effective dependencies normalize the gate off and record the
+sorted applicable notices:
+
+- `coalition_intelligibility_requested_without_coalitions`
+- `coalition_intelligibility_requested_without_coevolution`
+
+## Production-trial controls
+
+| Field | Default | Valid range / dependency |
+| --- | ---: | --- |
+| `production_trial_enabled` | `False` | Exact Boolean; requires effective base language evolution |
+| `production_trial_interval` | `8` | Exact non-Boolean integer `2..64` |
+
+CLI forms are `--enable-production-trial`, `--disable-production-trial`, and
+`--production-trial-interval`.
+
+The interval floor is 2 rather than 1: an interval of 1 would trial the
+runner-up form on every utterance, which is substitution rather than variation.
+Requesting trials without effective base language normalizes only the trial
+gate off and records:
+
+- `production_trial_requested_without_language`
+
+## Faction relationship-trust controls
+
+This family is not a language family. It selects which social model the formal
+faction layer reads.
+
+| Field | Default | Valid range / dependency |
+| --- | ---: | --- |
+| `faction_relationship_trust_enabled` | `False` | Exact Boolean; requires effective social memory. `False` retains the legacy faction trust model |
+| `faction_relationship_trust_threshold` | exact float `0.40` | Exact finite float `0.0 < x <= 1.0` |
+
+CLI forms are `--enable-faction-relationship-trust`,
+`--disable-faction-relationship-trust`, and
+`--faction-relationship-trust-threshold`.
+
+The threshold applies only to the relationship model; the legacy model keeps
+using the integer `faction_trust_threshold` documented under core fields.
+Requesting the relationship model without effective social memory normalizes it
+back to the legacy model and records:
+
+- `faction_relationship_trust_requested_without_social_memory`
+
 ## Provenance status
 
 Each newer feature family records one of:
@@ -170,16 +285,17 @@ controls use exactly the same statuses:
   uses `engineering_only_uncontracted`.
 
 The generic experiment runner rejects all social, coalition, language, dialect,
-contact, intergenerational, and lexical option families—including exact,
-equals, unambiguous-prefix, and ambiguous-prefix forms—before output-root
-creation or mutation, command construction, verification mutation, or child
-launch. Both simulator and runner parsers reject option abbreviations through
-`allow_abbrev=False`.
+contact, intergenerational, lexical, compositional, grammar, coevolution,
+coalition-intelligibility, production-trial, and faction-relationship-trust
+option families—including exact, equals, unambiguous-prefix, and
+ambiguous-prefix forms—before output-root creation or mutation, command
+construction, verification mutation, or child launch. Both simulator and runner
+parsers reject option abbreviations through `allow_abbrev=False`.
 
-Present contradictions are artifact-invalid. Historically missing
-intergenerational or lexical fields remain schema-valid, but missing, enabled,
-normalized, or nondefault controls in either family veto V2 readiness. An
-`ExpectedRunContract` cannot override either veto.
+Present contradictions are artifact-invalid. Historically missing fields for a
+family added after an artifact was written remain schema-valid, but missing,
+enabled, normalized, or nondefault controls in any family veto V2 readiness. An
+`ExpectedRunContract` cannot override any of those vetoes.
 
 ## Seed and entry-point caveats
 
@@ -197,6 +313,11 @@ example from the repository directory.
 - Tests: `tests/test_config.py`, `tests/test_language_contact.py`,
   `tests/test_intergenerational_language.py`,
   `tests/test_lexical_evolution.py`,
+  `tests/test_compositional_protolanguage.py`,
+  `tests/test_grammar_evolution.py`, `tests/test_language_coevolution.py`,
+  `tests/test_coalition_intelligibility.py`,
+  `tests/test_production_trial.py`, `tests/test_faction_social_model.py`,
+  `tests/test_feature_registration.py`,
   `tests/test_language_reproducibility.py`, `tests/test_reproducibility.py`,
   `tests/test_artifact_validation.py`, `tests/test_experiment_runner.py`.
 - Verified help: `python -m thalren_vale --help`.

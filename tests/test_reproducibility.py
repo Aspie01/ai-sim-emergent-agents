@@ -611,10 +611,16 @@ def test_enabled_coalition_runtime_changes_canonical_hash():
 def test_source_files_keep_their_committed_byte_order_mark_state():
     """Reject accidental BOM drift introduced by rewriting whole files.
 
-    A tool that reads with ``utf-8-sig`` and writes with ``utf-8-sig`` adds a
-    BOM to files that never had one. Python still imports such a file, so the
-    change is invisible to every behavioral test; only ``ast.parse`` on raw
-    text fails. `economy.py` is the one module that legitimately carries a BOM.
+    The rule is an exact match in both directions, not a ban on byte-order
+    marks. The six legacy modules listed in ``expected_bom`` must *keep*
+    theirs; every other module under ``src/``, and ``run_experiments.py``,
+    must have none.
+
+    Both directions drift the same way. A tool that reads with ``utf-8-sig``
+    and writes with ``utf-8-sig`` adds a BOM to files that never had one; one
+    that reads with ``utf-8-sig`` and writes with ``utf-8`` strips it from the
+    files that need it. Python imports either result, so the change is
+    invisible to every behavioral test; only ``ast.parse`` on raw text fails.
     """
     import pathlib
 

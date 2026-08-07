@@ -48,6 +48,13 @@ git diff --check
 | `tests/test_language_contact.py` | Different-coalition qualification, positive acquisition, bounded exposure/provenance, promotion precedence, rollback, summaries, one-pass complexity and causal isolation | Population-level contact effects or research-ready convergence endpoints |
 | `tests/test_intergenerational_language.py` | Sole post-admission birth hook, exact-once sentinel, partial comprehension, parent ordering/salience, duplicate/competing forms, borrowed-form isolation, rollback, saturation, summary complexity, hashing and reset | Long-run intergenerational effect sizes, lexical mutation, genealogy, or research-ready retention endpoints |
 | `tests/test_lexical_evolution.py` | Authentic post-transfer opportunities, pinned SHA-256 vectors, actual descendant emission, provenance copying/coexistence, collisions, depth cap, synchronized saturation, transactionality, one-pass summary and corrected channel/borrowed-source carriers, hashing/reset and containment | Long-run lexical drift, cognate reconstruction, phonology, morphology, grammar, or research-ready lexical endpoints |
+| `tests/test_compositional_protolanguage.py` | Structured `(resource, modality)` meanings, systematic morpheme composition, bounded lengths, hashing and reset | Productive syntax, or research-ready compositionality endpoints |
+| `tests/test_grammar_evolution.py` | Constituent order inferred from minimal pairs, adoption threshold, disabled-state guard, hashing and reset | Parsing, or that agents comprehend order rather than record it |
+| `tests/test_language_coevolution.py` | Bounded intelligibility reward/penalty fed into partner choice, gating, hashing and reset | Population-level coevolution effects or research-ready endpoints |
+| `tests/test_coalition_intelligibility.py` | Coalition edges gated on mutual intelligibility, dependency normalization, runner rejection | That intelligibility-gated coalitions are more realistic or better |
+| `tests/test_production_trial.py` | Interval-scheduled runner-up production, adoption-deadlock behaviour, determinism | Long-run adoption dynamics or research-ready endpoints |
+| `tests/test_faction_social_model.py` | Faction selection between the legacy trust model and `Relationship` records, threshold and normalization | Which social model is more faithful; both are engineering-only |
+| `tests/test_feature_registration.py` | Structural coverage: every control family declared, and every declared hook reached by the dispatch site that matters | Behavioural correctness of any individual family |
 | `tests/test_language_evolution.py` | Language states, signals, learning, reinforcement, forgetting, pruning, transactionality | Scientific claims about language emergence |
 | `tests/test_language_interaction_hooks.py` | Exact authentic committed-transfer communication hooks | Proximity/background conversation, which is intentionally absent |
 | `tests/test_language_reproducibility.py` | Language determinism, hashing, RNG/state isolation | General reproducibility across unrecorded environments/plugins |
@@ -71,6 +78,10 @@ python -m pytest -q tests/test_language_contact.py
 python -m pytest -q tests/test_intergenerational_language.py
 python -m pytest -q tests/test_lexical_evolution.py
 python -m pytest -q tests/test_language_evolution.py tests/test_language_interaction_hooks.py
+python -m pytest -q tests/test_compositional_protolanguage.py tests/test_grammar_evolution.py
+python -m pytest -q tests/test_language_coevolution.py tests/test_coalition_intelligibility.py
+python -m pytest -q tests/test_production_trial.py tests/test_faction_social_model.py
+python -m pytest -q tests/test_feature_registration.py
 python -m pytest -q tests/test_artifact_validation.py tests/test_experiment_runner.py
 python -m pytest -q tests/test_run_termination.py tests/test_reproducibility.py
 ```
@@ -88,11 +99,15 @@ pin trigger/substitution derivation and prove independence from
 dialect/contact feature gates and `PYTHONHASHSEED`.
 
 This supports implementation reproducibility under the tested environment and
-contracts. It does not seal:
+contracts. Every run manifest now records a `code` block with commit, dirty
+status, and the annotated tag naming `HEAD` exactly (`null` when no tag does),
+plus an `environment_fingerprint` over interpreter, platform, and plugin
+digests, so those are no longer unrecorded. What is still unsealed:
 
-- a clean annotated tag;
-- an environment/dependency fingerprint;
-- plugin inventory;
+- a *clean* annotated tag — the tag and dirty status are recorded, never
+  enforced, and nothing refuses to run on a dirty tree;
+- a dependency or lockfile hash, which `environment_fingerprint` deliberately
+  excludes;
 - every platform or Python implementation;
 - scientific replicate independence.
 
@@ -144,7 +159,9 @@ while its gate exists, a milestone whose pages contradict each other, a
 milestone slug that appears in the handbook without being declared, and a
 declared gate that no longer exists in `SimulationConfig`. Checking pages
 against each other alone would not catch a status every page agrees on and
-source disproves.
+source disproves. Its milestone pattern matches any `-v<n>` suffix, not only
+`-v1`; anchoring on `-v1` had silently exempted every milestone past the first
+revision of a line.
 
 ## Important coverage gaps
 
@@ -159,13 +176,18 @@ Current tests do not establish:
 - mythology/network-provider reproducibility;
 - plugin process isolation;
 - performance claims without an authorized controlled benchmark;
-- final language research contracts or planned future language milestones such
-  as coevolution and research readiness.
+- final language research contracts. Language coevolution, language research
+  readiness, coalition intelligibility, and production trials are implemented
+  and covered by the files above; what remains unbuilt is the analysis
+  contract, not the mechanisms.
 
-The accepted Language Research Readiness v1 implementation completed the
-default full engineering suite with **1,789 passed**.
-These verify tested software contracts only; they are not simulation runs,
-research tiers, or scientific results.
+Each accepted milestone recorded its own full-suite result in
+[HANDBOOK_STATUS](../HANDBOOK_STATUS.md) at the time of acceptance. No total is
+repeated here, because the suite grows with every milestone and a number copied
+into this page is stale the moment the next test lands. Run `python -m pytest
+-q` for the current count. Whatever it reports verifies tested software
+contracts only; it is not a simulation run, a research tier, or a scientific
+result.
 
 ## Evidence standard for documentation
 

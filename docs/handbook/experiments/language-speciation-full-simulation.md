@@ -26,6 +26,20 @@ The companion note is
 which characterized the same stack in a synthetic two-group scenario. This note
 is written to be read against it.
 
+> **Partly superseded.** Section 5 attributed the population collapse near tick
+> 520, and the small late-tick populations that follow it, to the
+> anti-stagnation machinery, and narrowed the analysis window to ticks 1 to
+> roughly 500 on that basis. The collapse was later established to be an
+> inhabitant **naming ceiling** — a bug, not a dynamic — and it has been fixed.
+> See
+> [anti-stagnation-and-population-viability.md](anti-stagnation-and-population-viability.md).
+> The tick-1..500 analysis window no longer applies. Every measurement below is
+> left exactly as observed. The 100-, 200-, and 400-tick rows were recorded
+> below the ceiling — 1025 inhabitants had ever existed by tick 400 against a
+> cap of 1215 — and the fix keeps the names before the cap byte-identical, so
+> those rows are unchanged by it. The 700- and 1000-tick rows were recorded
+> under the bug and are not a characterization of the current simulation.
+
 ## 2. The scenario
 
 The full simulation, driven through its real tick loop by `sim.run()` with no
@@ -145,6 +159,24 @@ observing them, not producing them.
 
 ## 5. The collapse, and why late ticks are an artifact
 
+> **Superseded. Do not cite this section's conclusion.** It reads the collapse
+> as a property of the simulation and the late-tick regime as anti-stagnation
+> force-spawning, and narrows the analysis window to ticks 1 to roughly 500 on
+> that basis. The collapse was a **naming ceiling**: `_make_traveler_name`
+> stopped at generation suffix 9, so a run could ever produce only
+> `len(NAMES) * 9` inhabitants — 1215 by default — after which both birth paths
+> broke out of procreation and births stopped permanently. That is why the
+> birth counter freezes at exactly 1185 (1215 minus the 30 initial
+> inhabitants) on every seed: the number is arithmetic, not dynamic. The
+> ceiling has been removed. The superseding characterization is
+> [anti-stagnation-and-population-viability.md](anti-stagnation-and-population-viability.md),
+> which measures the same question with the bug fixed and finds that neither
+> population-propping anti-stagnation intervention fires at all.
+>
+> **The tick-1..500 analysis window no longer applies.** It was drawn around a
+> defect. The measurements below are left unedited because they are what was
+> observed; the interpretation is retracted.
+
 Between ticks 400 and 700 the population collapses. Births stop entirely at
 roughly tick 520 — the cumulative birth counter freezes at 1185 and never moves
 again — and the population falls from 173 to 16.
@@ -205,6 +237,9 @@ would need a design this characterization does not have.
 - Nothing about horizons beyond the collapse. Ticks past ~500 are an
   anti-stagnation regime, so the question of what a long-lived stable
   population would do is untouched — such a population did not occur.
+  (Superseded: the collapse was the naming ceiling described in the section 5
+  note, and with it fixed a long-lived population does occur. The horizon
+  limitation stands; the stated cause does not.)
 - Nothing about the intergenerational effect as an effect, for the confound in
   section 6.
 - Nothing about seeds beyond the four run at 400 ticks, or about population

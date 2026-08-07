@@ -459,7 +459,8 @@ python -m thalren_vale --seed 1 --war-tension-threshold 400
 # Batch run from an experiment plan
 python run_experiments.py --plan experiments.json
 
-# Continue only missing or invalid runs
+# --resume is accepted but does NOT continue a nonempty root; this runner
+# only executes into an absent or empty one. Point --output-dir somewhere new.
 python run_experiments.py --plan experiments.json --resume
 
 # Validate an existing batch without running simulations
@@ -483,7 +484,7 @@ Experiment plans are JSON files specifying conditions, seed ranges, and extra CL
 }
 ```
 
-Outputs are isolated under `experiment_runs/<experiment_id>/<condition>/seed_<N>/`. The runner refuses to reuse a non-empty experiment directory unless `--resume` or `--overwrite` is explicit. `experiment_manifest.json` records the plan hash, code revision, timestamps, commands, per-run state hashes, validation failures, and completion state; `run_index.csv` provides a flat analysis index.
+Outputs are isolated under `experiment_runs/<experiment_id>/<condition>/seed_<N>/`. This is a fresh-root engineering runner: it executes only into an absent or truly empty output root, and it refuses every non-empty experiment directory without changing a byte of it. `--resume` and `--overwrite` are accepted but do **not** relax that contract — there is no continuation or replacement mode. Safe nonempty-root resume and immutable attempt history are planned Core Replication V2 work and are **not implemented**. Allocate a new output root instead. `experiment_manifest.json` records the plan hash, code revision, timestamps, commands, per-run state hashes, validation failures, and completion state; `run_index.csv` provides a flat analysis index.
 
 Each run produces:
 - Tick-level metrics CSV (`data/metrics_<condition>_seed_<N>.csv`)

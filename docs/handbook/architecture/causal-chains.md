@@ -167,10 +167,12 @@ The generic runner currently records only part of the complete provenance shown.
 | Different active coalitions -> positive contact acquisition/borrowing | Causal one-way within language |
 | Committed birth + exact parents -> child comprehension | Causal one-way within language after birth admission |
 | Committed transfer + selected usable form -> lexical descendant emission | Causal one-way within language after transfer commit |
-| Language -> economy/coalitions/survival | Intentionally isolated |
+| Language -> economy/combat/diplomacy/religion/survival | Intentionally isolated |
+| Utterance outcome -> directed relationship ties -> partner choice | Causal when language coevolution is effective; the first deliberate break in language isolation |
+| Mutual intelligibility -> coalition edge qualification | Causal when coalition intelligibility is effective; gating only ever narrows |
 | State -> metrics/events/dashboard | Diagnostic/observational |
 | Plan -> child process/artifacts | Operational causal chain |
-| Future language feedback/research contracts | Planned, not implemented |
+| Research analysis contracts | Planned, not implemented |
 
 ## Implementation evidence
 

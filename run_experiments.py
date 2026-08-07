@@ -835,7 +835,9 @@ def _preflight_fresh_output_root(
                 'preserved every existing byte unchanged')
         raise FileExistsError(
             f'output directory is not empty: {output_root}; '
-            'use --resume or --overwrite')
+            'this fresh-root runner never reuses, skips, or replaces existing '
+            'output, and neither resume nor overwrite relaxes that; '
+            'allocate a new output root instead')
     output_root.mkdir(parents=True, exist_ok=True)
     root_stat = os.lstat(output_root)
     if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
@@ -1413,8 +1415,18 @@ def main() -> int:
     parser.add_argument('--ticks', type=int, default=5000)
     parser.add_argument('--extra-args', default='')
     parser.add_argument('--output-dir', type=Path)
-    parser.add_argument('--resume', action='store_true')
-    parser.add_argument('--overwrite', action='store_true')
+    # Neither flag relaxes the fresh-root contract: _preflight_fresh_output_root
+    # rejects every nonempty root regardless. They remain accepted so existing
+    # invocations keep working, but they do not provide a continuation mode.
+    # Nonempty-root resume is gated Core Replication V2 work (AGENTS.md).
+    parser.add_argument(
+        '--resume', action='store_true',
+        help='Accepted for compatibility; does not permit reuse of a nonempty root',
+    )
+    parser.add_argument(
+        '--overwrite', action='store_true',
+        help='Accepted for compatibility; does not permit reuse of a nonempty root',
+    )
     parser.add_argument('--verify', action='store_true')
     parser.add_argument(
         '--validation-mode', choices=('strict', 'auto', 'legacy'),

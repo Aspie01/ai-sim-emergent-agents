@@ -1,9 +1,10 @@
 # Simulation and tick lifecycle
 
-This page records the executable order in the approved, uncommitted Lexical
-Evolution v1 working tree on branch `feature/lexical-evolution-v1`, based at
-commit `2855bf15a77dffc599f6a0f4ac08721f79a379d4`. Layer-number comments in older
-prose are not authoritative when they differ from this sequence.
+This page records the executable order in the current `main` working tree. The
+handbook's v0.1 base revision is commit
+`2855bf15a77dffc599f6a0f4ac08721f79a379d4`; the milestones merged since it are
+listed in [handbook status](../HANDBOOK_STATUS.md). Layer-number comments in
+older prose are not authoritative when they differ from this sequence.
 
 ## Initialization
 

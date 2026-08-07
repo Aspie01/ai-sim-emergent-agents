@@ -48,7 +48,10 @@ plugin and provenance policy.
 - Belief tracking and LLM mythology: **Disabled by default**.
 - Plugin system: **Implemented but experimental** and causally active when
   plugins are loaded.
-- V2 plugin inventory/provenance policy: **Planned, not implemented**.
+- V2 plugin inventory/provenance: **Implemented**. Every run manifest carries an
+  `environment_fingerprint` digesting each loadable plugin's SHA-256 alongside
+  interpreter and platform.
+- An enforced plugin load *policy* at preflight: **Planned, not implemented**.
 
 ## 5. State owned
 
@@ -291,15 +294,28 @@ the resource consequence.
   even when no plugin interval is due.
 - Plugin code is arbitrary process-level Python. The immutable bridge and
   command validation are an API discipline, not a security sandbox.
-- Current provenance does not seal plugins despite their causal effects.
+- Provenance now seals plugin *identity*: every run manifest carries an
+  `environment_fingerprint` that digests the SHA-256 of each loadable
+  `plugins/*.py`, so two runs with different plugin bytes no longer fingerprint
+  alike. It does not seal plugin *behaviour* — the digest is not a sandbox, and
+  plugin internal state stays outside the selected-state hash.
 - There is no typed plugin event.
 - “Off” log mode still writes required structured artifacts.
 
 ## 19. Future extensions
 
-The active V2 plan requires a plugin policy/inventory and environment
-fingerprint before research execution. Those are **Planned, not implemented**.
-No plugin-based treatment should be treated as a registered V2 factor under the
+The active V2 plan requires a plugin inventory and environment fingerprint
+before research execution. Both are implemented:
+`reproducibility.plugin_inventory()` lists every plugin `load_plugins` would
+load with its SHA-256, and `reproducibility.environment_fingerprint()` folds
+that inventory together with the Python version, implementation, system, and
+machine into one digest recorded in every run manifest. Installed third-party
+distributions are deliberately excluded, so this is not a dependency lockfile
+hash.
+
+A declared plugin *policy* — which plugins a research cell is permitted to
+load, enforced at preflight — is still **Planned, not implemented**. No
+plugin-based treatment should be treated as a registered V2 factor under the
 current runner.
 
 ## 20. Implementation evidence

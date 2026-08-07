@@ -755,7 +755,7 @@ def mythology_tick(factions: list, all_dead: list,
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# Structured era summary builder (for final LLM prompt)
+# Structured era summary builder (currently unused)
 # ══════════════════════════════════════════════════════════════════════════
 
 _FALLEN_RE = re.compile(r'💀\s+(\w+)')
@@ -763,9 +763,15 @@ _FALLEN_RE = re.compile(r'💀\s+(\w+)')
 
 def _build_structured_summary(event_log: list, ticks: int,
                                era_summaries: list) -> str:
-    """
-    Build a structured, era-by-era text summary for the final LLM prompt.
-    Never passes raw event_log; extracts named, specific facts per era.
+    """Build a structured, era-by-era text summary from the event log.
+
+    Extracts named, specific facts per era rather than passing the raw
+    event_log anywhere.
+
+    Nothing calls this. `mythology_final_summary` builds the final
+    prompt from the already-generated era chronicle prose instead, so
+    this builder is retained as an alternative source-text path and is
+    not on any executed code path.
     """
     try:
         from . import combat as _cbt
@@ -986,7 +992,8 @@ RULES:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# Mythology report (called from display.final_report via display.py)
+# Mythology report (not currently called; display.final_report does not
+# invoke it, unlike economy/combat/diplomacy_report)
 # ══════════════════════════════════════════════════════════════════════════
 
 def mythology_report() -> None:

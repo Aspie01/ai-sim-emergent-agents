@@ -1,14 +1,31 @@
 """Tests for explicit simulation state ownership and lifecycle."""
 
+import ast
 import copy
+import importlib
+import pathlib
 import sys
 
 import pytest
 
-from thalren_vale import combat, diplomacy, economy, factions, religion, sim
+from thalren_vale import (
+    combat,
+    diplomacy,
+    display,
+    economy,
+    factions,
+    mythology,
+    religion,
+    sim,
+)
 from thalren_vale.events import JournalClaimError
-from thalren_vale.coalitions import CoalitionCandidate, InformalCoalition
+from thalren_vale.coalitions import (
+    CoalitionCandidate,
+    CoalitionRuntimeState,
+    InformalCoalition,
+)
 from thalren_vale.inhabitants import Inhabitant
+from thalren_vale.state import SimulationState
 from thalren_vale.language import (
     AgentLanguageState,
     AssociationOrigin,
@@ -73,17 +90,217 @@ def assert_failed_reset_state_unchanged(before: dict[str, object]) -> None:
     assert sim.state.language_contact == before["contact_runtime"]
 
 
-def test_domain_modules_share_state_owned_collections():
-    assert combat.active_wars is sim.state.active_wars
-    assert combat.war_history is sim.state.war_history
-    assert factions.RIVALRIES is sim.state.rivalries
-    assert diplomacy._treaties is sim.state.treaties
-    assert diplomacy.treaty_log is sim.state.treaty_log
-    assert diplomacy._reputation is sim.state.reputation
-    assert economy.faction_currencies is sim.state.faction_currencies
-    assert economy.trade_routes is sim.state.trade_routes
-    assert religion._religions is sim.state.religions
-    assert religion._HOLY_WARS is sim.state.holy_wars
+# ── State ownership tables ──────────────────────────────────────────────────
+
+# Every mutable collection `SimulationState` owns, mapped to the module global
+# that aliases it. `state.reset()` clears each one *in place* rather than
+# rebinding it, precisely so these aliases survive repeated in-process runs; a
+# store that is rebound instead silently detaches its layer from the run.
+#
+# The table is enumerated rather than derived because the owning attribute
+# names do not follow one convention (`factions.RIVALRIES`,
+# `diplomacy._treaties`, `sim._key_events_archive`).
+# `test_every_state_owned_collection_is_declared` keeps it from falling behind.
+STATE_COLLECTION_ALIASES = {
+    "people": (sim, "people"),
+    "factions": (sim, "factions"),
+    "all_dead": (sim, "all_dead"),
+    "event_log": (sim, "event_log"),
+    "loaded_plugins": (sim, "_loaded_plugins"),
+    "era_summaries": (sim, "era_summaries"),
+    "key_events_archive": (sim, "_key_events_archive"),
+    "dead_factions": (sim, "_dead_factions"),
+    "active_wars": (combat, "active_wars"),
+    "war_history": (combat, "war_history"),
+    "rivalries": (factions, "RIVALRIES"),
+    "treaties": (diplomacy, "_treaties"),
+    "treaty_log": (diplomacy, "treaty_log"),
+    "reputation": (diplomacy, "_reputation"),
+    "faction_currencies": (economy, "faction_currencies"),
+    "faction_prices": (economy, "faction_prices"),
+    "price_history": (economy, "price_history"),
+    "trade_routes": (economy, "trade_routes"),
+    "raid_log": (economy, "raid_log"),
+    "scarcity_events": (economy, "scarcity_events"),
+    "religions": (religion, "_religions"),
+    "holy_wars": (religion, "_HOLY_WARS"),
+}
+
+# Collections whose contents are validated during reset, or that are not a
+# plain list, so the generic seeder below cannot fill them with a sentinel.
+MANUALLY_SEEDED_COLLECTIONS = frozenset({"people", "all_dead", "event_log"})
+
+# Run-scoped globals that `SimulationState` does *not* own, so `state.reset()`
+# cannot clear them and `reset_runtime_state` has to clear each one by hand.
+# That hand-written list is exactly the kind that falls behind a new store, so
+# enumerate it here: (module, attribute, dirty value, value after reset).
+RESET_MODULE_GLOBALS = (
+    (sim, "_last_dynamic_t", 5, 0),
+    (combat, "_alliances", {"reset probe": ["probe"]}, {}),
+    (factions, "_ra_tracker", "reset probe", None),
+    (economy, "_last_shock_res", "reset probe", ""),
+    (diplomacy, "_faction_propose_cd", {"reset probe": 1}, {}),
+    (diplomacy, "_faction_break_cd", {"reset probe": 1}, {}),
+    (diplomacy, "_last_neg_tick", {"reset probe": 1}, {}),
+    (diplomacy, "_ra_tracker", "reset probe", None),
+    (mythology, "chronicles", ["reset probe"], []),
+    (mythology, "faction_myths", {"reset probe": ["probe"]}, {}),
+    (mythology, "epitaphs", {"reset probe": "probe"}, {}),
+    (mythology, "_epitaphed", {"reset probe"}, set()),
+    (mythology, "_myth_last_t", {"reset probe": 1}, {}),
+    (mythology, "_last_chr_t", 5, 0),
+    (mythology, "_llm_fired", True, False),
+    (display, "_FACT_ABBREV", {"reset probe": "probe"}, {}),
+)
+
+
+def _seed_state_collection(field_name: str) -> None:
+    """Put one recognisable entry into a state-owned collection."""
+    store = getattr(sim.state, field_name)
+    if isinstance(store, dict):
+        store["reset probe"] = "reset probe"
+    elif isinstance(store, set):
+        store.add("reset probe")
+    else:
+        list.append(store, "reset probe")
+
+
+def _seed_module_global(module, attribute: str, dirty) -> None:
+    """Dirty one module global, mutating containers rather than rebinding.
+
+    Rebinding would hand `reset_runtime_state` a different object from the one
+    the owning layer holds, so a reset that cleared nothing would still look
+    clean here.
+    """
+    current = getattr(module, attribute)
+    if isinstance(current, dict):
+        current.update(dirty)
+    elif isinstance(current, set):
+        current.update(dirty)
+    elif isinstance(current, list):
+        current.extend(dirty)
+    else:
+        setattr(module, attribute, dirty)
+
+
+def _sim_tree() -> ast.Module:
+    source = (
+        pathlib.Path(sim.__file__).read_text(encoding="utf-8-sig"))
+    return ast.parse(source)
+
+
+def _sim_module_aliases() -> dict[str, object]:
+    """Map every ``from . import x [as y]`` alias in sim.py to its module."""
+    aliases: dict[str, object] = {}
+    for node in ast.walk(_sim_tree()):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.level != 1 or node.module:
+            continue
+        for entry in node.names:
+            aliases[entry.asname or entry.name] = importlib.import_module(
+                f"thalren_vale.{entry.name}")
+    return aliases
+
+
+def _reset_touched_module_globals() -> set[tuple[str, str]]:
+    """Return every ``(module, attribute)`` `reset_runtime_state` clears.
+
+    Derived from the source rather than declared, so `RESET_MODULE_GLOBALS`
+    cannot quietly fall behind a newly added store.
+    """
+    aliases = _sim_module_aliases()
+    for node in ast.walk(_sim_tree()):
+        if (
+            isinstance(node, ast.FunctionDef)
+            and node.name == "reset_runtime_state"
+        ):
+            reset = node
+            break
+    else:
+        raise AssertionError("sim.py defines no reset_runtime_state")
+
+    rebound_globals = {
+        name
+        for statement in ast.walk(reset)
+        if isinstance(statement, ast.Global)
+        for name in statement.names
+    }
+    touched: set[tuple[str, str]] = set()
+    for statement in ast.walk(reset):
+        if isinstance(statement, ast.Assign):
+            for target in statement.targets:
+                if (
+                    isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id in aliases
+                ):
+                    touched.add(
+                        (aliases[target.value.id].__name__, target.attr))
+                elif (
+                    isinstance(target, ast.Name)
+                    and target.id in rebound_globals
+                ):
+                    touched.add((sim.__name__, target.id))
+        elif isinstance(statement, ast.Call):
+            call = statement.func
+            if (
+                isinstance(call, ast.Attribute)
+                and call.attr == "clear"
+                and isinstance(call.value, ast.Attribute)
+                and isinstance(call.value.value, ast.Name)
+                and call.value.value.id in aliases
+            ):
+                touched.add(
+                    (aliases[call.value.value.id].__name__, call.value.attr))
+    return touched
+
+
+def test_every_hand_cleared_module_global_is_declared():
+    """`RESET_MODULE_GLOBALS` must not fall behind `reset_runtime_state`.
+
+    A store `SimulationState` does not own is only cleared because someone
+    remembered to add a line to `reset_runtime_state`. Nothing else notices a
+    line that was never added, or one whose store the reset guard below never
+    seeds, so compare the declared list against the source itself.
+    """
+    declared = {
+        (module.__name__, attribute)
+        for module, attribute, _, _ in RESET_MODULE_GLOBALS
+    }
+    touched = _reset_touched_module_globals()
+    undeclared = sorted(touched - declared)
+    stale = sorted(declared - touched)
+    assert not undeclared, (
+        f"globals reset_runtime_state clears but nothing checks: {undeclared}")
+    assert not stale, (
+        f"declared globals reset_runtime_state no longer clears: {stale}")
+
+
+def test_every_state_owned_collection_is_declared():
+    """`STATE_COLLECTION_ALIASES` must not fall behind `SimulationState`.
+
+    A collection missing from the table is a store nothing proves is shared
+    with its layer and nothing proves `reset_runtime_state` clears, which is
+    how a store leaks across in-process runs unnoticed.
+    """
+    owned = {
+        name
+        for name, spec in SimulationState.__dataclass_fields__.items()
+        if spec.default_factory in (list, dict, set)
+    }
+    undeclared = sorted(owned - set(STATE_COLLECTION_ALIASES))
+    stale = sorted(set(STATE_COLLECTION_ALIASES) - owned)
+    assert not undeclared, f"state collections with no alias entry: {undeclared}"
+    assert not stale, f"alias entries with no state collection: {stale}"
+
+
+@pytest.mark.parametrize("field_name", sorted(STATE_COLLECTION_ALIASES))
+def test_domain_modules_share_state_owned_collections(field_name):
+    module, attribute = STATE_COLLECTION_ALIASES[field_name]
+    assert getattr(module, attribute) is getattr(sim.state, field_name), (
+        f"{module.__name__}.{attribute} is no longer "
+        f"state.{field_name}; reset will not reach it")
 
 
 def test_reset_runtime_state_clears_core_and_domain_stores():
@@ -130,9 +347,35 @@ def test_reset_runtime_state_clears_core_and_domain_stores():
     sim.state.coalitions.candidate_formation_count = 1
     sim.state.coalitions.last_observation_tick = 1
     sim.state.coalitions.last_active_inhabitant_ids = (1, 2, 3, 4, 5, 6)
+    sim.state.coalitions.split_event_count = 2
+    sim.state.coalitions.split_child_count = 4
+    sim.state.coalitions.dissolution_count = 1
+    sim.state.coalitions.last_qualifying_reciprocal_edge_count = 9
+    sim.state.next_inhabitant_id = 41
+    # Every remaining owned collection and hand-cleared global, so the guard
+    # covers the whole reset surface rather than the handful seeded above.
+    for name in sorted(
+        set(STATE_COLLECTION_ALIASES) - MANUALLY_SEEDED_COLLECTIONS
+    ):
+        _seed_state_collection(name)
+    for module, attribute, dirty, _ in RESET_MODULE_GLOBALS:
+        _seed_module_global(module, attribute, dirty)
 
     sim.reset_runtime_state()
 
+    for name, (module, attribute) in sorted(STATE_COLLECTION_ALIASES.items()):
+        store = getattr(sim.state, name)
+        assert len(store) == 0, f"state.{name} survived reset_runtime_state()"
+        assert getattr(module, attribute) is store, (
+            f"reset rebound {module.__name__}.{attribute} instead of "
+            f"clearing state.{name} in place")
+    for module, attribute, _, cleared in RESET_MODULE_GLOBALS:
+        assert getattr(module, attribute) == cleared, (
+            f"{module.__name__}.{attribute} survived reset_runtime_state()")
+    assert sim.state.next_inhabitant_id == 0
+    # Compared whole rather than field by field so a new coalition counter is
+    # covered on the day it is added.
+    assert sim.state.coalitions == CoalitionRuntimeState()
     assert sim.people == []
     assert sim.event_log == []
     assert combat.active_wars == []

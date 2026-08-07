@@ -19,10 +19,12 @@ schema, determinism, and approved controls — not that an analysis plan exists.
 
 ## 2. The contracted mechanism
 
-Only base language is contracted. The five later milestones — coalition
-dialects, language contact, intergenerational language, lexical evolution,
-compositional protolanguage, grammar evolution, and language coevolution —
-remain engineering-only and continue to veto V2 readiness.
+Only base language is contracted. The nine later language milestones —
+coalition dialects, language contact, intergenerational language, lexical
+evolution, compositional protolanguage, grammar evolution, language
+coevolution, coalition intelligibility, and production trials — remain
+engineering-only and continue to veto V2 readiness, as does the non-language
+faction relationship-trust model.
 
 A first contract admitting one mechanism is defensible; one admitting several
 interacting mechanisms would make any observed effect impossible to attribute.
@@ -158,24 +160,31 @@ The following are **Planned, not implemented** and each requires separate,
 explicit authorization:
 
 - estimand, contrast, estimator, uncertainty method, multiplicity rules;
-- child manifests carrying plan identity, plan hash, code tag, and
-  environment/plugin fingerprint;
 - immutable attempt directories, append-only attempt ledger, and
   contract-matched resume;
 - clean annotated-tag and environment preflight;
 - nonexecuting V2 matrix expansion and quota enforcement;
 - any execution of an S0, S1, P1, P2, Full, pilot, or replication cell.
 
+Child-manifest provenance is **no longer** on that list. Every run manifest now
+carries `plan_identity`, `plan_sha256`, `environment_fingerprint`, and a `code`
+record with commit, annotated tag, and dirty status; the runner passes
+`--plan-identity` and `--plan-sha256` to each child, and
+`environment_fingerprint` digests the interpreter, platform, and the SHA-256 of
+every loadable plugin. A direct run leaves the two plan fields `null`, which is
+why a direct run still cannot be `v2_ready`.
+
 A run cannot presently reach `v2_ready` through the generic runner, because
-the runner does not yet supply a complete `ExpectedRunContract`. The contract
-machinery is testable today; the orchestration that would satisfy it is not
-built.
+the runner does not yet supply a complete `ExpectedRunContract` — it accepts
+one but never constructs it. The contract machinery is testable today; the
+orchestration that would satisfy it is not built.
 
 ## 9. Language roadmap
 
 Implemented: Endogenous Language, Coalition Dialects, Language Contact,
 Intergenerational Language, Lexical Evolution, Compositional Protolanguage,
-Grammar Evolution, Language Coevolution, Language Research Readiness.
+Grammar Evolution, Language Coevolution, Language Research Readiness,
+Coalition Intelligibility, Production Trials.
 
 The language milestone sequence is complete. Every further step is a research
 authorization decision rather than an engineering one.
